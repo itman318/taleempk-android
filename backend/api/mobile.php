@@ -293,9 +293,9 @@ if ($action === 'messages') {
 
 if ($action === 'file') {
     $id = max(0, (int) ($_GET['id'] ?? 0));
-    $m = fetch_one('SELECT m.attachment,m.attachment_name,m.attachment_type,m.conversation_id
+    $m = fetch_one("SELECT m.attachment,m.attachment_name,m.attachment_type,m.conversation_id
                       FROM messages m JOIN conversation_members cm ON cm.conversation_id=m.conversation_id
-                     WHERE m.id=? AND m.status='sent' AND cm.user_id=? LIMIT 1', [$id,$uid]);
+                     WHERE m.id=? AND m.status='sent' AND cm.user_id=? LIMIT 1", [$id,$uid]);
     if (!$m || empty($m['attachment'])) { http_response_code(404); exit; }
     $base = realpath(UPLOAD_PATH . '/chat');
     $file = realpath(UPLOAD_PATH . '/' . ltrim((string)$m['attachment'],'/'));
