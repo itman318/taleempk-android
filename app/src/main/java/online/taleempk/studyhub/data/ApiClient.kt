@@ -22,6 +22,23 @@ class ApiClient(private val context: Context, private val session: SessionStore)
             "device" to "TaleemPK Android")
     ))
 
+    fun register(
+        role: String,
+        name: String,
+        username: String,
+        email: String,
+        phone: String,
+        dob: String,
+        password: String
+    ): String {
+        val data = request(mapOf(
+            "action" to "register", "role" to role, "name" to name,
+            "username" to username, "email" to email, "phone" to phone,
+            "dob" to dob, "password" to password, "device" to "TaleemPK Android"
+        )).getJSONObject("data")
+        return data.optString("message", "Account created. You can now sign in.")
+    }
+
     fun verifyTwoFactor(challenge: String, code: String): AuthResult = authResult(request(
         mapOf("action" to "verify_2fa", "challenge" to challenge, "code" to code,
             "device" to "TaleemPK Android")

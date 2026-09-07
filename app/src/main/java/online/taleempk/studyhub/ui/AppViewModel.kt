@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 import online.taleempk.studyhub.data.*
 
 enum class RootScreen { HOME, FEED, CHATS, PROFILE }
-enum class AuthStage { STARTING, LOGIN, TWO_FACTOR, SIGNED_IN }
+enum class AuthStage { STARTING, LOGIN, REGISTER, TWO_FACTOR, SIGNED_IN }
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val session = SessionStore(application)
@@ -23,6 +23,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var screen by mutableStateOf(RootScreen.HOME); private set
     var busy by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
+    var notice by mutableStateOf<String?>(null); private set
     var challenge by mutableStateOf<String?>(null); private set
     var bootstrap by mutableStateOf<Bootstrap?>(null); private set
     var posts by mutableStateOf<List<FeedPost>>(emptyList()); private set
@@ -33,6 +34,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     init { restore() }
 
     fun clearError() { error = null }
+    fun clearNotice() { notice = null }
+    fun showLogin() { error = null; authStage = AuthStage.LOGIN }
+    fun showRegister() { error = null; notice = null; authStage = AuthStage.REGISTER }
     fun authHeaders(): Map<String, String> = session.token?.let { mapOf("Authorization" to "Bearer $it") } ?: emptyMap()
 
     private fun restore() {
@@ -52,6 +56,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             bootstrap = withContext(Dispatchers.IO) { api.bootstrap() }
             authStage = AuthStage.SIGNED_IN
         }
+    }
+
+    fun register(role: String, name: String, username: String, email: String, phone: String, dob: String, password: String) = launch {
+        notice = withContext(Dispatchers.IO) {
+            api.register(role, name.trim(), username.trim(), email.trim(), phone.trim(), dob.trim(), password)
+        }
+        authStage = AuthStage.LOGIN
     }
 
     fun verify(code: String) = launch {
@@ -120,6 +131,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         finally {
             bootstrap = null; posts = emptyList(); conversations = emptyList(); messages = emptyList()
             selectedConversation = null; authStage = AuthStage.LOGIN
+            notice = null
         }
     }
 

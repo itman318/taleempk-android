@@ -129,6 +129,97 @@ if ($action === 'health') {
     mobile_out(['service' => 'TaleemPK mobile API', 'version' => defined('APP_VERSION') ? APP_VERSION : 'unknown']);
 }
 
+if ($action === 'register') {
+    if (!api_burst_limit('mobile_register', 3)) {
+        mobile_error('Too many accounts were created from this connection. Wait a minute and try again.', 429);
+    }
+    if ((int) setting('allow_registration', 1) !== 1) {
+        mobile_error('New registrations are temporarily closed.', 403);
+    }
+    if (ip_is_banned()) {
+        mobile_error('Registration is not available from this connection.', 403);
+    }
+
+    $role = strtolower(trim((string) ($_POST['role'] ?? 'student')));
+    $name = mail_header_safe(trim((string) ($_POST['name'] ?? '')));
+    $username = strtolower(trim((string) ($_POST['username'] ?? '')));
+    $email = strtolower(trim((string) ($_POST['email'] ?? '')));
+    $phone = trim((string) ($_POST['phone'] ?? ''));
+    $dobInput = trim((string) ($_POST['dob'] ?? ''));
+    $password = (string) ($_POST['password'] ?? '');
+
+    if (!in_array($role, ['student', 'teacher', 'institute'], true)) { $role = 'student'; }
+    if (mb_strlen($name) < 3) { mobile_error('Enter your full name.'); }
+    if (!preg_match('/^[a-zA-Z0-9_]{3,30}$/', $username)) {
+        mobile_error('Username must contain 3 to 30 letters, numbers or underscores.');
+    }
+    if ((int) fetch_col('SELECT COUNT(*) FROM users WHERE username=?', [$username]) > 0) {
+        mobile_error('That username is already taken.', 409);
+    }
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { mobile_error('Enter a valid email address.'); }
+    if ((int) fetch_col('SELECT COUNT(*) FROM users WHERE email=?', [$email]) > 0) {
+        mobile_error('An account already uses this email address.', 409);
+    }
+    [$passwordOk, $passwordReason] = password_quality($password, [
+        'name' => $name, 'username' => $username, 'email' => $email,
+    ]);
+    if (!$passwordOk) { mobile_error($passwordReason); }
+
+    $phoneE164 = null;
+    if (phone_enabled() && $phone !== '') {
+        $phoneE164 = phone_normalize($phone);
+        if ($phoneE164 === '') { mobile_error('Enter a valid phone number, for example 03001234567.'); }
+        if (phone_taken($phoneE164)) { mobile_error('That phone number is already confirmed on another account.', 409); }
+    } elseif (phone_enabled() && (int) setting('phone_required', 0) === 1) {
+        mobile_error('Enter your phone number.');
+    }
+
+    $dob = parse_dmy_date($dobInput);
+    if (!$dob) { mobile_error('Enter a valid date of birth as DD-MM-YYYY.'); }
+    $born = DateTime::createFromFormat('!Y-m-d', $dob);
+    $today = new DateTime('today');
+    if (!$born || $born > $today) { mobile_error('Enter a valid date of birth.'); }
+    $age = $today->diff($born)->y;
+    if ($age < (int) setting('min_age', 13)) {
+        mobile_error('You do not meet the minimum age required to join.', 403);
+    }
+
+    $isMinor = $age < 18;
+    $safeDefaults = $isMinor ? [
+        'allow_dm' => 'following', 'allow_comments' => 'followers',
+        'profile_privacy' => 'members', 'searchable' => 0,
+        'show_online' => 0, 'allow_calls' => 'following',
+    ] : [];
+    $needsReview = ($role === 'teacher' && (int) setting('teacher_needs_review', 1) === 1)
+        || ($role === 'institute' && (int) setting('institute_needs_review', 1) === 1);
+    $verifyEmail = (int) setting('require_email_verify', 1) === 1;
+
+    $userId = insert_row('users', $safeDefaults + [
+        'role' => $role, 'name' => $name, 'username' => $username, 'email' => $email,
+        'phone' => $phone !== '' ? $phone : null, 'phone_e164' => $phoneE164 ?: null,
+        'dob' => $dob, 'password_hash' => password_hash($password, PASSWORD_DEFAULT),
+        'status' => $needsReview ? 'pending' : 'active',
+        'status_reason' => $needsReview ? 'Waiting for an admin to review this account.' : null,
+        'email_verified' => $verifyEmail ? 0 : 1,
+    ]);
+    insert_row('profiles', ['user_id' => $userId]);
+    log_activity($userId, 'mobile_register', 'New ' . $role . ' account from Android app');
+
+    if ($verifyEmail) {
+        send_verify_code(['id' => $userId, 'name' => $name, 'email' => $email, 'verify_sent_at' => null], true);
+    } else {
+        [$subject, $html] = mail_msg_welcome($name, url('feed.php'), url('library.php'), url('edit-profile.php'));
+        queue_mail($email, $subject, $html, $name, 'account');
+    }
+
+    $message = $needsReview
+        ? 'Account created. Our team will review it and email you when it is ready.'
+        : ($verifyEmail
+            ? 'Account created. Check your email to verify it, then sign in.'
+            : 'Account created successfully. You can now sign in.');
+    mobile_out(['message' => $message, 'needs_review' => $needsReview, 'needs_email_verification' => $verifyEmail], 201);
+}
+
 if ($action === 'login') {
     if (!api_burst_limit('mobile_login', 10)) { mobile_error('Too many attempts. Wait a minute.', 429); }
     $identifier = strtolower(trim((string) ($_POST['identifier'] ?? '')));

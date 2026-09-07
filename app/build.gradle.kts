@@ -12,8 +12,8 @@ android {
         applicationId = "online.taleempk.studyhub"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.1.0"
         vectorDrawables.useSupportLibrary = true
         buildConfigField("String", "API_URL", "\"https://taleempk.online/api/mobile.php\"")
     }

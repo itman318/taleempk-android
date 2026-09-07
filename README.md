@@ -1,6 +1,6 @@
 # TaleemPK Android
 
-Current app version: **1.0.1**
+Current app version: **1.1.0**
 
 Professional native Android client for **TaleemPK / StudyHub**.
 
@@ -9,7 +9,8 @@ Professional native Android client for **TaleemPK / StudyHub**.
 - Minimum Android: 7.0 (API 24)
 - Production API: `https://taleempk.online/api/mobile.php`
 - Existing website accounts, roles and data are shared through the same backend.
-- Native email/username login, email 2FA, encrypted device token storage, dashboard,
+- Premium native login and account registration, email/username sign-in, email 2FA,
+  encrypted device token storage, dashboard,
   feed, conversations, text messages, attachments and voice-note recording/playback.
 - HTTPS-only network policy and verified TaleemPK App Link foundation.
 - The app requests only network and microphone permissions; microphone access is
