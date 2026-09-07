@@ -172,12 +172,27 @@ class ApiClient(private val context: Context, private val session: SessionStore)
     }
 
     private fun parseResponse(conn: HttpURLConnection): JSONObject {
-        val status = conn.responseCode
-        val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-        val raw = stream?.use { BufferedInputStream(it).readBytes().toString(Charsets.UTF_8) }.orEmpty()
+        val status: Int
+        val raw: String
+        try {
+            status = conn.responseCode
+            val stream = if (status in 200..299) conn.inputStream else conn.errorStream
+            raw = stream?.use { BufferedInputStream(it).readBytes().toString(Charsets.UTF_8) }
+                .orEmpty()
+                .trimStart('\uFEFF')
+                .trim()
+        } finally {
+            conn.disconnect()
+        }
         val json = try { JSONObject(raw) } catch (_: Exception) {
-            throw ApiException("Server returned an unreadable response.", status)
-        } finally { conn.disconnect() }
+            val message = when {
+                status >= 500 -> "TaleemPK mobile service is temporarily unavailable. Please try again shortly. (HTTP $status)"
+                status == 404 -> "The TaleemPK mobile service is not installed correctly. (HTTP 404)"
+                raw.isBlank() -> "The server returned an empty response. (HTTP $status)"
+                else -> "The server returned an invalid response. (HTTP $status)"
+            }
+            throw ApiException(message, status)
+        }
         if (status !in 200..299 || !json.optBoolean("ok")) {
             throw ApiException(json.optString("error", "Request failed."), status)
         }

@@ -1,5 +1,7 @@
 # TaleemPK Android
 
+Current app version: **1.0.1**
+
 Professional native Android client for **TaleemPK / StudyHub**.
 
 - Kotlin and Jetpack Compose; no WebView or PWA wrapper.
