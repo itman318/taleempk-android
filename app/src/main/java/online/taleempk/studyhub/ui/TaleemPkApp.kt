@@ -407,6 +407,7 @@ private fun MessageBubble(m: ChatMessage, headers: Map<String, String>) {
 
 @Composable
 private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>) {
+    val context = LocalContext.current
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var playing by remember { mutableStateOf(false) }
     DisposableEffect(url) { onDispose { player?.release(); player = null } }
@@ -414,14 +415,23 @@ private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>
         IconButton({
             if (playing) { player?.pause(); playing = false }
             else if (url != null) {
-                val current = player ?: MediaPlayer().also { mp ->
-                    mp.setDataSource(url, headers)
-                    mp.setOnPreparedListener { it.start(); playing = true }
-                    mp.setOnCompletionListener { playing = false; it.seekTo(0) }
-                    mp.prepareAsync()
-                    player = mp
+                val current = player
+                if (current != null) {
+                    try { current.start(); playing = true } catch (_: Exception) { }
+                } else try {
+                    MediaPlayer().also { mp ->
+                        mp.setDataSource(context, Uri.parse(url), headers)
+                        mp.setOnPreparedListener { it.start(); playing = true }
+                        mp.setOnCompletionListener { playing = false; it.seekTo(0) }
+                        mp.setOnErrorListener { failed, _, _ ->
+                            failed.release(); player = null; playing = false; true
+                        }
+                        player = mp
+                        mp.prepareAsync()
+                    }
+                } catch (_: Exception) {
+                    player?.release(); player = null; playing = false
                 }
-                if (current !== player || current.duration > 0) { try { current.start(); playing = true } catch (_: Exception) { } }
             }
         }) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause voice" else "Play voice") }
         Icon(Icons.Default.GraphicEq, null, Modifier.width(90.dp)); Text(" ${seconds}s", fontSize = 12.sp)
