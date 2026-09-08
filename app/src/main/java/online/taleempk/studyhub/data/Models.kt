@@ -73,6 +73,13 @@ data class Conversation(
 
 data class ChatReaction(val emoji: String, val count: Int, val mine: Boolean)
 
+data class ChatPresence(
+    val active: Boolean = false,
+    val kind: String = "",
+    val name: String = "",
+    val readThrough: Long = 0
+)
+
 data class ReplyPreview(
     val id: Long,
     val sender: String,

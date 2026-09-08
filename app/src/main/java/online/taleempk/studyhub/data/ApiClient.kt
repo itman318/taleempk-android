@@ -1,6 +1,9 @@
 package online.taleempk.studyhub.data
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
 import android.provider.OpenableColumns
 import online.taleempk.studyhub.BuildConfig
@@ -123,8 +126,9 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         ) }
     }
 
-    fun messages(conversationId: Long): List<ChatMessage> {
-        val arr = request(mapOf("action" to "messages", "conversation_id" to conversationId.toString()), true)
+    fun messages(conversationId: Long, afterId: Long = 0): List<ChatMessage> {
+        val arr = request(mapOf("action" to "messages", "conversation_id" to conversationId.toString(),
+            "after_id" to afterId.toString()), true)
             .getJSONObject("data").optJSONArray("messages") ?: JSONArray()
         return arr.toObjects { o ->
             val reply = o.optJSONObject("reply")?.let { r -> ReplyPreview(
@@ -151,16 +155,17 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         request(fields, true)
     }
 
-    fun sendVoice(conversationId: Long, clip: VoiceClip) {
+    fun sendVoice(conversationId: Long, clip: VoiceClip, progress: (Float) -> Unit = {}) {
         val file = File(clip.filePath)
         multipart(
             fields = mapOf("action" to "send", "conversation_id" to conversationId.toString(),
                 "voice_seconds" to clip.seconds.toString(), "client_token" to UUID.randomUUID().toString()),
-            fieldName = "voice", fileName = "voice.m4a", mime = "audio/mp4", bytes = file.readBytes()
+            fieldName = "voice", fileName = "voice.m4a", mime = "audio/mp4", bytes = file.readBytes(),
+            onProgress = progress
         )
     }
 
-    fun sendAttachment(conversationId: Long, uri: Uri) {
+    fun sendAttachment(conversationId: Long, uri: Uri, progress: (Float) -> Unit = {}) {
         val resolver = context.contentResolver
         val mime = resolver.getType(uri) ?: "application/octet-stream"
         val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
@@ -183,7 +188,52 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         }
             ?: throw ApiException("Could not read that file.")
         multipart(mapOf("action" to "send", "conversation_id" to conversationId.toString(),
-            "client_token" to UUID.randomUUID().toString()), "attachment", name, mime, bytes)
+            "client_token" to UUID.randomUUID().toString()), "attachment", name, mime, bytes, progress)
+    }
+
+    fun sendEditedImage(
+        conversationId: Long,
+        uri: Uri,
+        rotation: Int,
+        squareCrop: Boolean,
+        caption: String,
+        progress: (Float) -> Unit = {}
+    ) {
+        val bitmap = decodeForUpload(uri, 2048)
+        val rotated = if (rotation % 360 == 0) bitmap else Bitmap.createBitmap(
+            bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply { postRotate(rotation.toFloat()) }, true
+        ).also { if (it !== bitmap) bitmap.recycle() }
+        val edited = if (squareCrop) {
+            val side = minOf(rotated.width, rotated.height)
+            Bitmap.createBitmap(rotated, (rotated.width - side) / 2, (rotated.height - side) / 2, side, side)
+                .also { if (it !== rotated) rotated.recycle() }
+        } else rotated
+        val bytes = ByteArrayOutputStream().use { output ->
+            if (!edited.compress(Bitmap.CompressFormat.JPEG, 90, output)) {
+                edited.recycle(); throw ApiException("The edited photo could not be prepared.")
+            }
+            edited.recycle(); output.toByteArray()
+        }
+        if (bytes.size > 10 * 1024 * 1024) throw ApiException("The edited photo is larger than 10 MB.")
+        multipart(mapOf("action" to "send", "conversation_id" to conversationId.toString(),
+            "content" to caption.trim(), "client_token" to UUID.randomUUID().toString()),
+            "attachment", "TaleemPK-photo-${System.currentTimeMillis()}.jpg", "image/jpeg", bytes, progress)
+    }
+
+    private fun decodeForUpload(uri: Uri, maxSide: Int): Bitmap {
+        val resolver = context.contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw ApiException("That photo could not be opened.")
+        var sample = 1
+        while (bounds.outWidth / sample > maxSide * 2 || bounds.outHeight / sample > maxSide * 2) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 }
+        val decoded = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            ?: throw ApiException("That photo could not be opened.")
+        if (maxOf(decoded.width, decoded.height) <= maxSide) return decoded
+        val ratio = maxSide.toFloat() / maxOf(decoded.width, decoded.height)
+        return Bitmap.createScaledBitmap(decoded, (decoded.width * ratio).toInt().coerceAtLeast(1),
+            (decoded.height * ratio).toInt().coerceAtLeast(1), true).also { if (it !== decoded) decoded.recycle() }
     }
 
     fun react(messageId: Long, emoji: String) {
@@ -210,6 +260,18 @@ class ApiClient(private val context: Context, private val session: SessionStore)
 
     fun toggleMute(conversationId: Long) {
         request(mapOf("action" to "manage_chat", "do" to "toggle_mute", "id" to conversationId.toString()), true)
+    }
+
+    fun forwardMessage(messageId: Long, conversationId: Long) {
+        request(mapOf("action" to "message_action", "do" to "forward", "id" to messageId.toString(),
+            "to" to conversationId.toString()), true)
+    }
+
+    fun presence(conversationId: Long, kind: String): ChatPresence {
+        val data = request(mapOf("action" to "presence", "conversation_id" to conversationId.toString(),
+            "kind" to kind), true).getJSONObject("data")
+        return ChatPresence(data.optBoolean("active"), data.optString("kind"), data.optString("name"),
+            data.optLong("read_through"))
     }
 
     fun downloadAttachment(message: ChatMessage): File {
@@ -272,7 +334,14 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         return parseResponse(conn)
     }
 
-    private fun multipart(fields: Map<String, String>, fieldName: String, fileName: String, mime: String, bytes: ByteArray) {
+    private fun multipart(
+        fields: Map<String, String>,
+        fieldName: String,
+        fileName: String,
+        mime: String,
+        bytes: ByteArray,
+        onProgress: (Float) -> Unit = {}
+    ) {
         val boundary = "TaleemPK-${UUID.randomUUID()}"
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; connectTimeout = 20_000; readTimeout = 60_000; doOutput = true
@@ -288,7 +357,13 @@ class ApiClient(private val context: Context, private val session: SessionStore)
             }
             text("--$boundary\r\nContent-Disposition: form-data; name=\"$fieldName\"; filename=\"${fileName.replace("\"", "")}\"\r\n")
             text("Content-Type: $mime\r\n\r\n")
-            out.write(bytes)
+            var sent = 0
+            while (sent < bytes.size) {
+                val count = minOf(32 * 1024, bytes.size - sent)
+                out.write(bytes, sent, count)
+                sent += count
+                onProgress(sent.toFloat() / bytes.size.coerceAtLeast(1))
+            }
             text("\r\n--$boundary--\r\n")
         }
         parseResponse(conn)

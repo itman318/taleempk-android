@@ -43,12 +43,12 @@ jobs:
         run: gradle --no-daemon :app:lintDebug :app:assembleDebug
 
       - name: Name APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk TaleemPK-v1.3.0.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk TaleemPK-v1.4.0.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: TaleemPK-Android-APK
-          path: TaleemPK-v1.3.0.apk
+          path: TaleemPK-v1.4.0.apk
           if-no-files-found: error
           retention-days: 30

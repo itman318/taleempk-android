@@ -2,6 +2,9 @@ package online.taleempk.studyhub.ui
 
 import android.Manifest
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.SystemClock
@@ -12,11 +15,17 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,9 +39,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -48,9 +61,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import online.taleempk.studyhub.data.*
 import online.taleempk.studyhub.media.VoiceRecorder
 import java.io.File
+import kotlin.math.abs
 
 private val Navy = Color(0xFF12213E)
 private val Navy2 = Color(0xFF1D3156)
@@ -875,7 +891,10 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     var recording by remember { mutableStateOf(false) }
     var recordingStart by remember { mutableLongStateOf(0L) }
     var elapsed by remember { mutableIntStateOf(0) }
+    var liveWave by remember { mutableStateOf<List<Int>>(emptyList()) }
     var preview by remember { mutableStateOf<VoiceClip?>(null) }
+    var imageToEdit by remember { mutableStateOf<Uri?>(null) }
+    var forwarding by remember { mutableStateOf<ChatMessage?>(null) }
     var text by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
     var emojiOpen by remember { mutableStateOf(false) }
@@ -883,6 +902,7 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     var replyTo by remember { mutableStateOf<ChatMessage?>(null) }
     var editing by remember { mutableStateOf<ChatMessage?>(null) }
     var deleteForEveryone by remember { mutableStateOf<ChatMessage?>(null) }
+    var didInitialScroll by remember(chat.id) { mutableStateOf(false) }
 
     val shown = remember(vm.messages, query) {
         if (query.length < 2) vm.messages else vm.messages.filter {
@@ -892,14 +912,31 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     }
     DisposableEffect(Unit) { onDispose { recorder.cancel(); preview?.let { File(it.filePath).delete() } } }
     LaunchedEffect(chat.id) {
-        while (true) { delay(5_000); vm.refreshMessages() }
+        while (true) {
+            vm.refreshMessages()
+            delay(if (vm.remotePresence.active) 2_200 else 4_000)
+        }
+    }
+    LaunchedEffect(chat.id) {
+        while (true) {
+            val kind = if (recording) "voice" else if (text.isNotBlank()) "text" else ""
+            vm.syncPresence(kind)
+            delay(if (kind.isNotEmpty()) 2_500 else 4_500)
+        }
     }
     LaunchedEffect(shown.size) {
-        if (shown.isNotEmpty()) listState.animateScrollToItem(shown.lastIndex)
+        if (shown.isNotEmpty()) {
+            if (!didInitialScroll) { listState.scrollToItem(shown.lastIndex); didInitialScroll = true }
+            else if (listState.firstVisibleItemIndex >= (shown.lastIndex - 6).coerceAtLeast(0)) {
+                listState.animateScrollToItem(shown.lastIndex)
+            }
+        }
     }
     LaunchedEffect(recording) {
         while (recording) {
             elapsed = ((SystemClock.elapsedRealtime() - recordingStart) / 1000L).toInt()
+            val level = (recorder.amplitude() / 650).coerceIn(2, 42)
+            liveWave = (liveWave + level).takeLast(44)
             if (elapsed >= 120) {
                 try { preview = recorder.stop() } catch (_: Exception) { recorder.cancel() }
                 recording = false
@@ -909,10 +946,11 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         if (allowed) try {
-            recorder.start(); recordingStart = SystemClock.elapsedRealtime(); elapsed = 0; recording = true
+            recorder.start(); recordingStart = SystemClock.elapsedRealtime(); elapsed = 0; liveWave = emptyList(); recording = true
         } catch (_: Exception) { }
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::sendAttachment) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> imageToEdit = uri }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::sendAttachment) }
 
     Column(Modifier.fillMaxSize().background(Color(0xFFF5F7FB))) {
         if (searchOpen) {
@@ -931,7 +969,13 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
             itemsIndexed(shown, key = { _, item -> item.id }) { index, message ->
                 if (index == 0 || shown[index - 1].dateLabel != message.dateLabel) DatePill(message.dateLabel)
                 MessageBubble(message, vm.authHeaders(), onLongPress = { selected = message },
-                    onReaction = { vm.react(message, it) }, onAttachment = { vm.openAttachment(message) })
+                    onReaction = { vm.react(message, it) }, onAttachment = { vm.openAttachment(message) },
+                    onReply = { replyTo = message; editing = null }, onForward = { forwarding = message },
+                    showSender = !message.mine && (index == 0 || shown[index - 1].senderId != message.senderId ||
+                        shown[index - 1].dateLabel != message.dateLabel))
+            }
+            if (vm.remotePresence.active) item(key = "typing") {
+                RemotePresenceBubble(vm.remotePresence)
             }
             if (shown.isEmpty()) item {
                 Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
@@ -939,11 +983,12 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
                 }
             }
         }
+        vm.uploadProgress?.let { progress -> UploadProgressBar(vm.uploadLabel, progress) }
         when {
             preview != null -> VoicePreview(preview!!, onDelete = {
                 File(preview!!.filePath).delete(); preview = null
             }, onSend = { val clip = preview!!; vm.sendVoice(clip) { preview = null } })
-            recording -> RecordingBar(elapsed, onCancel = { recorder.cancel(); recording = false }, onStop = {
+            recording -> RecordingBar(elapsed, liveWave, onCancel = { recorder.cancel(); recording = false }, onStop = {
                 try { preview = recorder.stop() } catch (_: Exception) { }; recording = false
             })
             else -> PremiumComposer(
@@ -951,7 +996,9 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
                 emojiOpen = emojiOpen, toggleEmoji = { emojiOpen = !emojiOpen },
                 reply = replyTo, editing = editing,
                 cancelContext = { replyTo = null; editing = null; text = "" },
-                attach = { picker.launch(arrayOf("image/*", "application/pdf", "text/plain", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")) },
+                attachPhoto = { imagePicker.launch(arrayOf("image/*")) },
+                attachFile = { filePicker.launch(arrayOf("application/pdf", "text/plain", "application/msword",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip")) },
                 send = {
                     val edit = editing
                     if (text.isNotBlank() && edit != null) vm.editMessage(edit, text) { text = ""; editing = null }
@@ -962,12 +1009,21 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
         }
     }
 
+    imageToEdit?.let { uri -> ImageEditorDialog(uri, close = { imageToEdit = null }) { rotation, square, caption ->
+        imageToEdit = null
+        vm.sendEditedImage(uri, rotation, square, caption) { }
+    } }
+
+    forwarding?.let { message -> ForwardMessageDialog(message, chat, vm.conversations,
+        close = { forwarding = null }, send = { target -> vm.forwardMessage(message, target) { forwarding = null } }) }
+
     selected?.let { message ->
         MessageActionsSheet(message, close = { selected = null }, reply = {
             replyTo = message; editing = null; selected = null
         }, edit = {
             editing = message; replyTo = null; text = message.content; selected = null
         }, star = { vm.toggleStar(message); selected = null }, pin = { vm.togglePin(message); selected = null },
+            forward = { forwarding = message; selected = null },
             deleteMe = { vm.deleteMessage(message, false); selected = null }, deleteAll = {
                 deleteForEveryone = message; selected = null
             }, react = { vm.react(message, it); selected = null })
@@ -991,6 +1047,154 @@ private fun DatePill(label: String) {
     }
 }
 
+@Composable
+private fun RemotePresenceBubble(presence: ChatPresence) {
+    Row(Modifier.fillMaxWidth().padding(top = 3.dp), horizontalArrangement = Arrangement.Start) {
+        Surface(color = Color.White, shape = RoundedCornerShape(6.dp, 18.dp, 18.dp, 18.dp),
+            border = BorderStroke(1.dp, Line)) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (presence.kind == "voice") {
+                    Icon(Icons.Default.Mic, null, Modifier.size(15.dp), tint = Green)
+                    Spacer(Modifier.width(7.dp)); repeat(4) { i ->
+                        Box(Modifier.padding(horizontal = 1.dp).width(3.dp).height((7 + i * 3).dp)
+                            .clip(RoundedCornerShape(2.dp)).background(Green.copy(alpha = .45f + i * .12f)))
+                    }
+                    Spacer(Modifier.width(8.dp)); Text("${presence.name.substringBefore(' ')} is recording voice…",
+                        color = Muted, fontSize = 11.sp)
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        repeat(3) { i -> Box(Modifier.size(6.dp).offset(y = if (i == 1) (-2).dp else 0.dp)
+                            .clip(CircleShape).background(Green)) }
+                    }
+                    Spacer(Modifier.width(8.dp)); Text("${presence.name.substringBefore(' ')} is typing…",
+                        color = Muted, fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UploadProgressBar(label: String, progress: Float) {
+    Surface(color = Color.White, shadowElevation = 3.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp)) {
+            Row {
+                Text(label.ifBlank { "Uploading…" }, Modifier.weight(1f), fontSize = 11.sp,
+                    color = Ink, fontWeight = FontWeight.SemiBold)
+                Text("${(progress.coerceIn(0f, 1f) * 100).toInt()}%", fontSize = 11.sp, color = Green, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(5.dp))
+            LinearProgressIndicator({ progress.coerceIn(0f, 1f) }, Modifier.fillMaxWidth().height(5.dp).clip(CircleShape),
+                color = Lime, trackColor = Line)
+        }
+    }
+}
+
+@Composable
+private fun ForwardMessageDialog(
+    message: ChatMessage,
+    current: Conversation,
+    conversations: List<Conversation>,
+    close: () -> Unit,
+    send: (Conversation) -> Unit
+) {
+    val targets = conversations.filter { it.id != current.id }
+    AlertDialog(
+        onDismissRequest = close,
+        icon = { Icon(Icons.Default.Forward, null, tint = Navy) },
+        title = { Text("Forward message", fontWeight = FontWeight.Black) },
+        text = { Column {
+            Surface(color = Mist, shape = RoundedCornerShape(13.dp)) {
+                Text(message.content.ifBlank { message.attachmentName ?: "Voice message" },
+                    Modifier.fillMaxWidth().padding(11.dp), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    color = Muted, fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(9.dp))
+            if (targets.isEmpty()) Text("No other conversation is available.", color = Muted)
+            else LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(targets, key = { it.id }) { chat ->
+                    Surface(Modifier.fillMaxWidth().clickable { send(chat) }, color = Color.White,
+                        shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Line)) {
+                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            InitialAvatar(chat.title, 38); Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(chat.title, fontWeight = FontWeight.Bold, maxLines = 1)
+                                Text(if (chat.group) "Study group" else "Private conversation", color = Muted, fontSize = 10.sp)
+                            }
+                            Icon(Icons.Default.Send, null, Modifier.size(18.dp), tint = Navy)
+                        }
+                    }
+                }
+            }
+        } },
+        confirmButton = {},
+        dismissButton = { TextButton(close) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun ImageEditorDialog(
+    uri: Uri,
+    close: () -> Unit,
+    send: (rotation: Int, squareCrop: Boolean, caption: String) -> Unit
+) {
+    val context = LocalContext.current
+    var rotation by remember(uri) { mutableIntStateOf(0) }
+    var square by remember(uri) { mutableStateOf(false) }
+    var caption by remember(uri) { mutableStateOf("") }
+    val preview by produceState<Bitmap?>(null, uri, rotation, square) {
+        value = withContext(Dispatchers.IO) { loadImagePreview(context, uri, rotation, square) }
+    }
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Column {
+            Text("Edit photo", fontWeight = FontWeight.Black)
+            Text("Preview and adjust before sending", color = Muted, fontSize = 11.sp)
+        } },
+        text = { Column {
+            Surface(Modifier.fillMaxWidth().height(270.dp), color = Color(0xFF0C1426), shape = RoundedCornerShape(18.dp)) {
+                if (preview == null) Box(contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Lime) }
+                else Image(preview!!.asImageBitmap(), "Photo preview", Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit)
+            }
+            Spacer(Modifier.height(9.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                OutlinedButton({ rotation = (rotation + 90) % 360 }, Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                    Icon(Icons.Default.RotateRight, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("Rotate")
+                }
+                OutlinedButton({ square = !square }, Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                    Icon(Icons.Default.Crop, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text(if (square) "Original" else "Square")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(caption, { if (it.length <= 4000) caption = it }, Modifier.fillMaxWidth(),
+                placeholder = { Text("Add a caption…") }, minLines = 1, maxLines = 3, shape = RoundedCornerShape(14.dp))
+        } },
+        confirmButton = { Button({ send(rotation, square, caption) }, enabled = preview != null,
+            colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Icon(Icons.Default.Send, null); Spacer(Modifier.width(6.dp)); Text("Send") } },
+        dismissButton = { TextButton(close) { Text("Cancel") } }
+    )
+}
+
+private fun loadImagePreview(context: android.content.Context, uri: Uri, rotation: Int, square: Boolean): Bitmap? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (bounds.outWidth / sample > 1200 || bounds.outHeight / sample > 1200) sample *= 2
+        var bitmap = context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        } ?: return null
+        if (rotation % 360 != 0) bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height,
+            Matrix().apply { postRotate(rotation.toFloat()) }, true)
+        if (square) {
+            val side = minOf(bitmap.width, bitmap.height)
+            bitmap = Bitmap.createBitmap(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side)
+        }
+        bitmap
+    } catch (_: Exception) { null }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
@@ -998,19 +1202,50 @@ private fun MessageBubble(
     headers: Map<String, String>,
     onLongPress: () -> Unit,
     onReaction: (String) -> Unit,
-    onAttachment: () -> Unit
+    onAttachment: () -> Unit,
+    onReply: () -> Unit,
+    onForward: () -> Unit,
+    showSender: Boolean
 ) {
     val bubble = if (m.mine) Navy else Color.White
     val foreground = if (m.mine) Color.White else Ink
+    var dragX by remember(m.id) { mutableFloatStateOf(0f) }
+    val replyDirection = if (m.mine) -1 else 1
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (m.mine) Alignment.End else Alignment.Start) {
-        Surface(
-            color = bubble, contentColor = foreground,
-            shape = if (m.mine) RoundedCornerShape(20.dp, 6.dp, 20.dp, 20.dp) else RoundedCornerShape(6.dp, 20.dp, 20.dp, 20.dp),
-            shadowElevation = if (m.mine) 0.dp else 1.dp,
-            modifier = Modifier.widthIn(max = 320.dp).combinedClickable(onClick = {}, onLongClick = onLongPress)
-        ) {
-            Column(Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
-                if (!m.mine) Text(m.sender, color = Green, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+        Box(Modifier.fillMaxWidth(), contentAlignment = if (m.mine) Alignment.CenterEnd else Alignment.CenterStart) {
+            if (abs(dragX) > 14f) {
+                val isReply = dragX * replyDirection > 0
+                Surface(
+                    modifier = Modifier.align(if (dragX > 0) Alignment.CenterStart else Alignment.CenterEnd).size(35.dp),
+                    color = if (isReply) SoftLime else Navy.copy(.10f), shape = CircleShape
+                ) { Box(contentAlignment = Alignment.Center) { Icon(
+                    if (isReply) Icons.Default.Reply else Icons.Default.Forward,
+                    if (isReply) "Swipe to reply" else "Swipe to forward", Modifier.size(18.dp), tint = Navy
+                ) } }
+            Surface(
+                color = bubble, contentColor = foreground,
+                shape = if (m.mine) RoundedCornerShape(20.dp, 6.dp, 20.dp, 20.dp) else RoundedCornerShape(6.dp, 20.dp, 20.dp, 20.dp),
+                shadowElevation = if (m.mine) 0.dp else 1.dp,
+                modifier = Modifier.widthIn(max = 320.dp)
+                    .graphicsLayer { translationX = dragX }
+                    .pointerInput(m.id) {
+                        detectHorizontalDragGestures(
+                            onHorizontalDrag = { change, amount ->
+                                change.consume(); dragX = (dragX + amount).coerceIn(-88f, 88f)
+                            },
+                            onDragCancel = { dragX = 0f },
+                            onDragEnd = {
+                                if (!m.deleted && abs(dragX) >= 56f) {
+                                    if (dragX * replyDirection > 0) onReply() else onForward()
+                                }
+                                dragX = 0f
+                            }
+                        )
+                    }
+                    .combinedClickable(onClick = {}, onLongClick = onLongPress)
+            ) {
+                Column(Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
+                if (showSender) Text(m.sender, color = Green, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 if (m.forwarded) MetaLabel(Icons.Default.Forward, "Forwarded", m.mine)
                 m.reply?.let { ReplyCard(it, m.mine) }
                 if (m.deleted) {
@@ -1030,6 +1265,7 @@ private fun MessageBubble(
                     Text(m.time, color = foreground.copy(.57f), fontSize = 9.sp)
                     if (m.mine) { Spacer(Modifier.width(3.dp)); Icon(if (m.read) Icons.Default.DoneAll else Icons.Default.Done,
                         if (m.read) "Read" else "Sent", Modifier.size(14.dp), tint = if (m.read) Lime else foreground.copy(.58f)) }
+                }
                 }
             }
         }
@@ -1162,9 +1398,14 @@ private fun PremiumComposer(
     reply: ChatMessage?,
     editing: ChatMessage?,
     cancelContext: () -> Unit,
-    attach: () -> Unit,
+    attachPhoto: () -> Unit,
+    attachFile: () -> Unit,
     send: () -> Unit
 ) {
+    var attachmentMenu by remember { mutableStateOf(false) }
+    var emojiCategory by remember { mutableIntStateOf(0) }
+    var recentEmojis by remember { mutableStateOf<List<String>>(emptyList()) }
+    val groups = remember { fullEmojiGroups() }
     Surface(color = Color.White, shadowElevation = 10.dp) {
         Column(Modifier.navigationBarsPadding()) {
             val contextMessage = editing ?: reply
@@ -1182,16 +1423,31 @@ private fun PremiumComposer(
                 }
             }
             if (emojiOpen) {
-                val emojis = listOf("😀","😂","🥰","😍","😎","🤔","😢","😭","😮","😡","👍","👏","🙏","❤️","🔥","🎉","✅","📚")
-                Column(Modifier.fillMaxWidth().background(Color(0xFFFAFBFD)).padding(horizontal = 14.dp, vertical = 8.dp)) {
-                    emojis.chunked(9).forEach { row ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            row.forEach { emoji -> Text(emoji, Modifier.size(36.dp).clickable { onText(text + emoji) }.padding(5.dp), fontSize = 20.sp) }
+                Column(Modifier.fillMaxWidth().heightIn(max = 330.dp).background(Color(0xFFFAFBFD))) {
+                    LazyRow(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        items(groups.size) { index ->
+                            val selected = emojiCategory == index
+                            Surface(Modifier.clickable { emojiCategory = index },
+                                color = if (selected) Lime else Color.White,
+                                shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, if (selected) Lime else Line)) {
+                                Text(groups[index].second.first(), Modifier.padding(horizontal = 11.dp, vertical = 7.dp), fontSize = 18.sp)
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = Line)
+                    LazyVerticalGrid(GridCells.Fixed(8), Modifier.fillMaxWidth().height(240.dp).padding(horizontal = 8.dp),
+                        contentPadding = PaddingValues(vertical = 7.dp)) {
+                        gridItems(groups[emojiCategory].second) { emoji ->
+                            Text(emoji, Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)).clickable {
+                                onText(text + emoji)
+                                recentEmojis = (listOf(emoji) + recentEmojis.filterNot { it == emoji }).take(24)
+                            }.padding(7.dp), fontSize = 21.sp, textAlign = TextAlign.Center)
                         }
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 9.dp), verticalAlignment = Alignment.Bottom) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.Bottom) {
                 IconButton(toggleEmoji, Modifier.size(42.dp)) {
                     Icon(if (emojiOpen) Icons.Default.Keyboard else Icons.Default.SentimentSatisfiedAlt,
                         if (emojiOpen) "Keyboard" else "Emoji", tint = Navy)
@@ -1204,7 +1460,19 @@ private fun PremiumComposer(
                                 focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
                             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences))
-                        IconButton(attach) { Icon(Icons.Default.AttachFile, "Attach file", tint = Navy) }
+                        Box {
+                            IconButton({ attachmentMenu = true }) { Icon(Icons.Default.AddCircleOutline, "Add photo or file", tint = Navy) }
+                            DropdownMenu(attachmentMenu, { attachmentMenu = false }) {
+                                DropdownMenuItem(text = { Text("Photo · edit before sending") },
+                                    leadingIcon = { Icon(Icons.Default.AddPhotoAlternate, null) }, onClick = {
+                                        attachmentMenu = false; attachPhoto()
+                                    })
+                                DropdownMenuItem(text = { Text("Document or file") },
+                                    leadingIcon = { Icon(Icons.Default.AttachFile, null) }, onClick = {
+                                        attachmentMenu = false; attachFile()
+                                    })
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.width(7.dp))
@@ -1217,6 +1485,18 @@ private fun PremiumComposer(
         }
     }
 }
+
+private fun fullEmojiGroups(): List<Pair<String, List<String>>> = listOf(
+    "Faces" to "😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫣 🤭 🫢 🫡 🤫 🫠 🤥 😶 🫥 😐 🫤 😑 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕".split(" "),
+    "People" to "👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦿 🦵 🦶 👂 👃 🧠 🫀 🫁 👀 👁️ 👅 👄 🫦 👶 🧒 👦 👧 🧑 👱 👨 🧔 👩 🧓 👴 👵 🙍 🙎 🙅 🙆 💁 🙋 🧏 🙇 🤦 🤷 👮 👷 💂 🕵️ 👩‍⚕️ 👩‍🎓 👩‍🏫 👩‍⚖️ 👩‍🌾 👩‍🍳 👩‍🔧 👩‍💻 👩‍🎨 👩‍🚀 👩‍🚒 🧕 👳 🤵 👰 🤰 🫃 🫄 🤱".split(" "),
+    "Animals" to "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐻‍❄️ 🐨 🐯 🦁 🐮 🐷 🐽 🐸 🐵 🙈 🙉 🙊 🐒 🐔 🐧 🐦 🐤 🐣 🐥 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪱 🐛 🦋 🐌 🐞 🐜 🪰 🪲 🪳 🦟 🦗 🕷️ 🦂 🐢 🐍 🦎 🐙 🦑 🦐 🦞 🦀 🐠 🐟 🐡 🐬 🐳 🐋 🦈 🐊 🐅 🐆 🦓 🦍 🦧 🐘 🦛 🦏 🐪 🐫 🦒 🦬 🐃 🐂 🐄 🐎 🐖 🐏 🐑 🦙 🐐 🦌 🐕 🐩 🦮 🐕‍🦺 🐈 🐈‍⬛ 🪶 🐓 🦃 🦚 🦜 🦢 🦩 🕊️ 🐇 🦝 🦨 🦡 🦫 🦦 🦥 🐁 🐀 🐿️ 🦔".split(" "),
+    "Food" to "🍏 🍎 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🫘 🥐 🥯 🍞 🥖 🫓 🥨 🧀 🥚 🍳 🧈 🥞 🧇 🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🫔 🌮 🌯 🥙 🧆 🥪 🥫 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🍯 🥛 ☕ 🫖 🍵 🧃 🥤 🧋 🧊 🥄 🍴 🍽️".split(" "),
+    "Activities" to "⚽ 🏀 🏈 ⚾ 🥎 🎾 🏐 🏉 🥏 🎱 🪀 🏓 🏸 🏒 🏑 🥍 🏏 🪃 🥅 ⛳ 🪁 🛝 🏹 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🛷 ⛸️ 🥌 🎿 ⛷️ 🏂 🪂 🏋️ 🤼 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🏄 🏊 🤽 🚣 🧗 🚵 🚴 🏆 🥇 🥈 🥉 🏅 🎖️ 🏵️ 🎗️ 🎫 🎟️ 🎪 🤹 🎭 🩰 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🪘 🎷 🎺 🪗 🎸 🪕 🎻 🎲 ♟️ 🎯 🎳 🎮 🧩".split(" "),
+    "Travel" to "🚗 🚕 🚙 🚌 🚎 🏎️ 🚓 🚑 🚒 🚐 🛻 🚚 🚛 🚜 🛵 🏍️ 🛺 🚲 🛴 🚨 🚔 🚍 🚘 🚖 ✈️ 🛫 🛬 🛩️ 💺 🚁 🚀 🛸 🚂 🚆 🚇 🚊 🚉 🚢 ⛵ 🚤 🛥️ 🛳️ ⛴️ ⚓ 🛟 ⛽ 🚧 🚦 🗺️ 🗿 🗽 🗼 🏰 🏯 🏟️ 🎡 🎢 🎠 ⛲ ⛱️ 🏖️ 🏝️ 🏜️ 🌋 ⛰️ 🏕️ ⛺ 🏠 🏡 🏢 🏥 🏦 🏨 🏪 🏫 🕋 🕌 ⛪ 🛕 🕍 🌁 🌃 🏙️ 🌄 🌅 🌆 🌇 🌉 🌌".split(" "),
+    "Objects" to "⌚ 📱 💻 ⌨️ 🖥️ 🖨️ 🖱️ 💾 💿 📷 📹 🎥 📞 ☎️ 📺 📻 🎙️ ⏰ ⏳ 📡 🔋 🔌 💡 🔦 🕯️ 🧯 🛢️ 💸 💵 💴 💶 💷 🪙 💳 💎 ⚖️ 🪜 🧰 🔧 🔨 ⚒️ 🛠️ ⛏️ 🔩 ⚙️ 🧱 ⛓️ 🧲 🔫 💣 🧨 🪓 🔪 🗡️ 🛡️ 🚬 ⚰️ 🪦 ⚱️ 🏺 🔮 📿 🧿 🪬 💈 🧪 🔬 🔭 📚 📖 📝 ✏️ 🖊️ 🖌️ 🖍️ 📌 📍 📎 🖇️ 📏 📐 ✂️ 🗃️ 🗄️ 🗑️ 🔒 🔓 🔐 🔑 🗝️ 🔨 🪄 🎁 🎈 ✉️ 📩 📨 📧 💌 📥 📤 📦 🏷️ 🪧 📪 📫 📬 📭 📮 📜 📄 📃 📑 📊 📈 📉 🗒️ 🗓️ 📆 📅".split(" "),
+    "Symbols" to "❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ☮️ ✝️ ☪️ 🕉️ ☸️ ✡️ 🔯 🕎 ☯️ ☦️ 🛐 ⛎ ♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ 🆔 ⚛️ ☢️ ☣️ 📴 📳 🈶 🈚 🈸 🈺 🈷️ ✴️ 🆚 💮 🉐 ㊙️ ㊗️ 🈴 🈵 🈹 🈲 🅰️ 🅱️ 🆎 🆑 🅾️ 🆘 ❌ ⭕ 🛑 ⛔ 📛 🚫 💯 💢 ♨️ 🚷 🚯 🚳 🚱 🔞 📵 ❗ ❕ ❓ ❔ ‼️ ⁉️ 🔅 🔆 ⚠️ 🚸 🔱 ⚜️ 🔰 ♻️ ✅ 🈯 💹 ❇️ ✳️ ❎ 🌐 💠 Ⓜ️ 🌀 💤 🏧 🚾 ♿ 🅿️ 🛗 🈳 🈂️ 🛂 🛃 🛄 🛅 🚹 🚺 🚼 ⚧️ 🚻 🚮 🎦 📶 🈁 🔣 ℹ️ 🔤 🔡 🔠 🆖 🆗 🆙 🆒 🆕 🆓 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 ▶️ ⏸️ ⏯️ ⏹️ ⏺️ ⏭️ ⏮️ ⏩ ⏪ 🔀 🔁 🔂 ➕ ➖ ➗ ✖️ ♾️ 💲 ©️ ®️ ™️".split(" "),
+    "Flags" to "🇵🇰 🇦🇪 🇸🇦 🇶🇦 🇰🇼 🇹🇷 🇦🇫 🇧🇩 🇮🇳 🇨🇳 🇯🇵 🇰🇷 🇲🇾 🇸🇬 🇦🇺 🇳🇿 🇬🇧 🇺🇸 🇨🇦 🇩🇪 🇫🇷 🇮🇹 🇪🇸 🇵🇹 🇳🇱 🇧🇪 🇨🇭 🇦🇹 🇸🇪 🇳🇴 🇩🇰 🇫🇮 🇵🇱 🇬🇷 🇮🇪 🇧🇷 🇦🇷 🇲🇽 🇿🇦 🇪🇬 🇲🇦 🇳🇬 🇰🇪 🇮🇩 🇹🇭 🇻🇳 🇵🇭 🏳️ 🏴 🏁 🚩 🏳️‍🌈".split(" ")
+)
 
 @Composable private fun VoicePreview(clip: VoiceClip, onDelete: () -> Unit, onSend: () -> Unit) {
     Surface(color = Color.White, shadowElevation = 10.dp) {
@@ -1234,16 +1514,34 @@ private fun PremiumComposer(
     }
 }
 
-@Composable private fun RecordingBar(seconds: Int, onCancel: () -> Unit, onStop: () -> Unit) {
+@Composable private fun RecordingBar(seconds: Int, wave: List<Int>, onCancel: () -> Unit, onStop: () -> Unit) {
     Surface(color = Color.White, shadowElevation = 10.dp) {
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFE53935)))
-            Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) {
-                Text("Recording voice…", fontWeight = FontWeight.Bold, color = Ink)
-                Text("${formatDuration(seconds)} / 2:00", color = Muted, fontSize = 10.sp)
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(Modifier.size(38.dp), color = Color(0xFFFFE8E8), shape = RoundedCornerShape(12.dp)) {
+                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Mic, null, tint = Color(0xFFD92D20)) }
+                }
+                Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFFD92D20)))
+                        Spacer(Modifier.width(6.dp)); Text("Recording voice…", fontWeight = FontWeight.Bold, color = Ink)
+                    }
+                    Text("${formatDuration(seconds)} / 2:00 · Live microphone level", color = Muted, fontSize = 10.sp)
+                }
+                TextButton(onCancel) { Text("Discard", color = MaterialTheme.colorScheme.error) }
+                FilledIconButton(onStop, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy)) {
+                    Icon(Icons.Default.Check, "Finish and review")
+                }
             }
-            TextButton(onCancel) { Text("Cancel", color = MaterialTheme.colorScheme.error) }
-            FilledIconButton(onStop, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy)) { Icon(Icons.Default.Stop, "Stop recording") }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth().height(34.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                val bars = if (wave.isEmpty()) List(34) { 3 } else wave.takeLast(34)
+                bars.forEach { level -> Box(Modifier.weight(1f).height(level.coerceIn(3, 30).dp)
+                    .clip(RoundedCornerShape(2.dp)).background(if (level > 6) Green else Line)) }
+            }
+            LinearProgressIndicator({ seconds.coerceIn(0, 120) / 120f }, Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                color = Lime, trackColor = Line)
         }
     }
 }
@@ -1256,6 +1554,7 @@ private fun PremiumComposer(
     edit: () -> Unit,
     star: () -> Unit,
     pin: () -> Unit,
+    forward: () -> Unit,
     deleteMe: () -> Unit,
     deleteAll: () -> Unit,
     react: (String) -> Unit
@@ -1276,6 +1575,7 @@ private fun PremiumComposer(
             clipboard.setText(AnnotatedString(message.content)); close()
         })
         if (message.canEdit && message.content.isNotBlank()) ActionRow(Icons.Default.Edit, "Edit message", edit)
+        if (!message.deleted) ActionRow(Icons.Default.Forward, "Forward message", forward)
         if (!message.deleted) ActionRow(if (message.starred) Icons.Default.StarBorder else Icons.Default.Star,
             if (message.starred) "Remove star" else "Star message", star)
         if (!message.deleted) ActionRow(Icons.Default.PushPin, if (message.pinned) "Unpin message" else "Pin message", pin)

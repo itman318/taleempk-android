@@ -1,6 +1,6 @@
 <?php
 /**
- * TaleemPK native Android API v1.3.
+ * TaleemPK native Android API v1.4.
  *
  * Browser sessions are never exported to a phone. A successful native sign-in
  * receives a random bearer token; the database stores only its SHA-256 digest.
@@ -550,9 +550,35 @@ if ($action === 'conversations') {
     mobile_out(['conversations'=>$items]);
 }
 
+if ($action === 'presence') {
+    require_feature('feature_chat');
+    $cid = (int)($_POST['conversation_id'] ?? 0);
+    $member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+    if (!$member) mobile_error('That conversation is not yours.', 403);
+    $kind = strtolower(trim((string)($_POST['kind'] ?? '')));
+    if (!in_array($kind, ['text','voice'], true)) $kind = '';
+    if ((int)($u['show_typing'] ?? 1) === 1 && $kind !== '') {
+        q('UPDATE conversation_members SET typing_at=NOW(),typing_kind=? WHERE conversation_id=? AND user_id=?', [$kind,$cid,$uid]);
+    } else {
+        q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+    }
+    $other = fetch_one("SELECT cm.typing_kind,u.name FROM conversation_members cm
+                         JOIN users u ON u.id=cm.user_id
+                        WHERE cm.conversation_id=? AND cm.user_id<>? AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
+                        ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]);
+    $readThrough = (int)fetch_col('SELECT COALESCE(MAX(last_read_id),0) FROM conversation_members WHERE conversation_id=? AND user_id<>?', [$cid,$uid]);
+    mobile_out([
+        'active'=>(bool)$other,
+        'kind'=>$other ? (string)($other['typing_kind'] ?: 'text') : '',
+        'name'=>$other ? (string)$other['name'] : '',
+        'read_through'=>$readThrough,
+    ]);
+}
+
 if ($action === 'messages') {
     require_feature('feature_chat');
     $cid = (int) ($_POST['conversation_id'] ?? 0);
+    $afterId = max(0, (int)($_POST['after_id'] ?? 0));
     $member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
     if (!$member) { mobile_error('That conversation is not yours.', 403); }
     $rows = fetch_all(
@@ -563,8 +589,9 @@ if ($action === 'messages') {
            LEFT JOIN messages rm ON rm.id=m.reply_to_id
            LEFT JOIN users ru ON ru.id=rm.sender_id
           WHERE m.conversation_id=?
+            AND (?=0 OR m.id>?)
             AND NOT EXISTS(SELECT 1 FROM message_hides h WHERE h.message_id=m.id AND h.user_id=?)
-          ORDER BY m.id DESC LIMIT 150', [$uid,$cid,$uid]
+          ORDER BY m.id DESC LIMIT 150', [$uid,$cid,$afterId,$afterId,$uid]
     );
     $newest = $rows ? (int) $rows[0]['id'] : 0;
     if ($newest) {

@@ -44,6 +44,8 @@ class VoiceRecorder(private val context: Context) {
         return VoiceClip(output.absolutePath, elapsed)
     }
 
+    fun amplitude(): Int = try { recorder?.maxAmplitude ?: 0 } catch (_: Exception) { 0 }
+
     fun cancel() {
         try { recorder?.stop() } catch (_: Exception) { }
         recorder?.release()

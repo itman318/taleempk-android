@@ -13,6 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import online.taleempk.studyhub.data.*
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class RootScreen { HOME, FEED, CHATS, PROFILE }
 enum class AuthStage { STARTING, LOGIN, REGISTER, TWO_FACTOR, SIGNED_IN }
@@ -34,6 +37,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var conversations by mutableStateOf<List<Conversation>>(emptyList()); private set
     var selectedConversation by mutableStateOf<Conversation?>(null); private set
     var messages by mutableStateOf<List<ChatMessage>>(emptyList()); private set
+    var remotePresence by mutableStateOf(ChatPresence()); private set
+    var uploadProgress by mutableStateOf<Float?>(null); private set
+    var uploadLabel by mutableStateOf(""); private set
     var activeModule by mutableStateOf<ModuleContent?>(null); private set
 
     init { restore() }
@@ -182,39 +188,108 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openConversation(item: Conversation) {
         selectedConversation = item
+        remotePresence = ChatPresence()
         launch { messages = withContext(Dispatchers.IO) { api.messages(item.id) } }
     }
 
-    fun closeConversation() { selectedConversation = null; messages = emptyList(); refreshChats() }
+    fun closeConversation() {
+        selectedConversation?.let { sendPresence(it.id, "") }
+        selectedConversation = null; messages = emptyList(); remotePresence = ChatPresence(); refreshChats()
+    }
     fun refreshMessages() { selectedConversation?.let { c -> launch(showSpinner = false) {
-        messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+        val after = messages.maxOfOrNull { it.id } ?: 0L
+        val fresh = withContext(Dispatchers.IO) { api.messages(c.id, after) }
+        if (fresh.isNotEmpty()) messages = (messages + fresh).distinctBy { it.id }.sortedBy { it.id }
     } } }
+
+    fun syncPresence(kind: String) {
+        val c = selectedConversation ?: return
+        viewModelScope.launch {
+            try {
+                val presence = withContext(Dispatchers.IO) { api.presence(c.id, kind) }
+                remotePresence = presence
+                if (presence.readThrough > 0) messages = messages.map { m ->
+                    if (m.mine && m.id <= presence.readThrough && !m.read) m.copy(read = true) else m
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    private fun sendPresence(conversationId: Long, kind: String) {
+        viewModelScope.launch(Dispatchers.IO) { try { api.presence(conversationId, kind) } catch (_: Exception) { } }
+    }
 
     fun sendText(text: String, replyTo: Long? = null, after: () -> Unit) {
         val c = selectedConversation ?: return
+        val body = text.trim()
+        if (body.isEmpty()) return
+        val pendingId = -System.nanoTime()
+        val replyMessage = messages.firstOrNull { it.id == replyTo }
+        messages = messages + ChatMessage(
+            id = pendingId, senderId = bootstrap?.user?.id ?: 0, sender = bootstrap?.user?.name ?: "You",
+            content = body, time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date()), mine = true,
+            voiceSeconds = 0, attachmentUrl = null, attachmentName = null, read = false,
+            dateLabel = "Today", reply = replyMessage?.let { ReplyPreview(it.id, it.sender,
+                it.content.ifBlank { it.attachmentName ?: "Voice message" }) }
+        )
+        after()
         launch(showSpinner = false) {
-            withContext(Dispatchers.IO) { api.sendText(c.id, text.trim(), replyTo) }
-            messages = withContext(Dispatchers.IO) { api.messages(c.id) }
-            after()
+            try {
+                withContext(Dispatchers.IO) { api.sendText(c.id, body, replyTo) }
+                messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+            } catch (e: Exception) {
+                messages = messages.filterNot { it.id == pendingId }
+                throw e
+            }
         }
     }
 
     fun sendVoice(clip: VoiceClip, after: () -> Unit) {
         val c = selectedConversation ?: return
-        launch {
-            withContext(Dispatchers.IO) { api.sendVoice(c.id, clip) }
-            messages = withContext(Dispatchers.IO) { api.messages(c.id) }
-            java.io.File(clip.filePath).delete()
-            after()
+        launch(showSpinner = false) {
+            uploadLabel = "Sending voice message…"; uploadProgress = 0f
+            try {
+                withContext(Dispatchers.IO) { api.sendVoice(c.id, clip) { p ->
+                    viewModelScope.launch { uploadProgress = p }
+                } }
+                messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+                java.io.File(clip.filePath).delete()
+                after()
+            } finally { uploadProgress = null; uploadLabel = "" }
         }
     }
 
     fun sendAttachment(uri: Uri) {
         val c = selectedConversation ?: return
-        launch {
-            withContext(Dispatchers.IO) { api.sendAttachment(c.id, uri) }
-            messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+        launch(showSpinner = false) {
+            uploadLabel = "Uploading attachment…"; uploadProgress = 0f
+            try {
+                withContext(Dispatchers.IO) { api.sendAttachment(c.id, uri) { p ->
+                    viewModelScope.launch { uploadProgress = p }
+                } }
+                messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+            } finally { uploadProgress = null; uploadLabel = "" }
         }
+    }
+
+    fun sendEditedImage(uri: Uri, rotation: Int, squareCrop: Boolean, caption: String, after: () -> Unit) {
+        val c = selectedConversation ?: return
+        launch(showSpinner = false) {
+            uploadLabel = "Optimising photo…"; uploadProgress = 0f
+            try {
+                withContext(Dispatchers.IO) { api.sendEditedImage(c.id, uri, rotation, squareCrop, caption) { p ->
+                    viewModelScope.launch { uploadLabel = "Uploading photo…"; uploadProgress = p }
+                } }
+                messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+                after()
+            } finally { uploadProgress = null; uploadLabel = "" }
+        }
+    }
+
+    fun forwardMessage(message: ChatMessage, to: Conversation, after: () -> Unit) = launch(showSpinner = false) {
+        withContext(Dispatchers.IO) { api.forwardMessage(message.id, to.id) }
+        after()
+        notice = "Message forwarded to ${to.title}."
     }
 
     fun openAttachment(message: ChatMessage) {
@@ -264,7 +339,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         try { withContext(Dispatchers.IO) { api.logout() } }
         finally {
             bootstrap = null; posts = emptyList(); commentPost = null; feedComments = emptyList()
-            conversations = emptyList(); messages = emptyList(); activeModule = null
+            conversations = emptyList(); messages = emptyList(); remotePresence = ChatPresence()
+            uploadProgress = null; uploadLabel = ""; activeModule = null
             selectedConversation = null; authStage = AuthStage.LOGIN
             notice = null
         }

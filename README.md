@@ -1,6 +1,6 @@
 # TaleemPK Android
 
-Current app version: **1.3.0**
+Current app version: **1.4.0**
 
 Professional native Android client for **TaleemPK / StudyHub**.
 
@@ -15,7 +15,10 @@ Professional native Android client for **TaleemPK / StudyHub**.
   reactions, stars, pins, attachments and voice recording/playback with speed control.
 - Native feed publishing, likes and replies; native study, library, quiz, group,
   planner, result, notification, profile, settings and support screens.
-- Companion website backend **v23.44 or newer is required**. Upload it before
+- Chat photo editor (preview, rotate, crop and caption), upload progress, full
+  categorized emoji picker, typing/voice presence, live recording level,
+  directional reply/forward swipes and incremental low-latency message sync.
+- Companion website backend **v23.45 or newer is required**. Upload it before
   installing this APK; the app cannot repair an older server from the phone.
 - HTTPS-only network policy and verified TaleemPK App Link foundation.
 - The app requests only network and microphone permissions; microphone access is
