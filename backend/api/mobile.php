@@ -557,15 +557,31 @@ if ($action === 'presence') {
     if (!$member) mobile_error('That conversation is not yours.', 403);
     $kind = strtolower(trim((string)($_POST['kind'] ?? '')));
     if (!in_array($kind, ['text','voice'], true)) $kind = '';
-    if ((int)($u['show_typing'] ?? 1) === 1 && $kind !== '') {
-        q('UPDATE conversation_members SET typing_at=NOW(),typing_kind=? WHERE conversation_id=? AND user_id=?', [$kind,$cid,$uid]);
-    } else {
-        q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+    $sharesTyping = (int)($u['show_typing'] ?? 1) === 1;
+    try {
+        if ($sharesTyping && $kind !== '') {
+            q('UPDATE conversation_members SET typing_at=NOW(),typing_kind=? WHERE conversation_id=? AND user_id=?', [$kind,$cid,$uid]);
+        } else {
+            q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+        }
+        $other = fetch_one("SELECT cm.typing_kind,u.name FROM conversation_members cm
+                             JOIN users u ON u.id=cm.user_id
+                            WHERE cm.conversation_id=? AND cm.user_id<>? AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
+                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]);
+    } catch (PDOException $e) {
+        /* Graceful compatibility for a host where the schema migration has
+           not run yet. Typing still works; voice is displayed as typing until
+           the normal TaleemPK migrator adds typing_kind. */
+        if ($sharesTyping && $kind !== '') {
+            q('UPDATE conversation_members SET typing_at=NOW() WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+        } else {
+            q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+        }
+        $other = fetch_one("SELECT 'text' typing_kind,u.name FROM conversation_members cm
+                             JOIN users u ON u.id=cm.user_id
+                            WHERE cm.conversation_id=? AND cm.user_id<>? AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
+                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]);
     }
-    $other = fetch_one("SELECT cm.typing_kind,u.name FROM conversation_members cm
-                         JOIN users u ON u.id=cm.user_id
-                        WHERE cm.conversation_id=? AND cm.user_id<>? AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
-                        ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]);
     $readThrough = (int)fetch_col('SELECT COALESCE(MAX(last_read_id),0) FROM conversation_members WHERE conversation_id=? AND user_id<>?', [$cid,$uid]);
     mobile_out([
         'active'=>(bool)$other,
