@@ -30,7 +30,32 @@ data class FeedPost(
     val createdAt: String,
     val likes: Int,
     val comments: Int,
-    val solved: Boolean
+    val solved: Boolean,
+    val liked: Boolean = false
+)
+
+data class FeedComment(
+    val id: Long,
+    val author: String,
+    val content: String,
+    val createdAt: String,
+    val mine: Boolean = false
+)
+
+data class ModuleItem(
+    val id: Long,
+    val title: String,
+    val subtitle: String,
+    val meta: String,
+    val kind: String,
+    val done: Boolean = false
+)
+
+data class ModuleContent(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val items: List<ModuleItem>
 )
 
 data class Conversation(

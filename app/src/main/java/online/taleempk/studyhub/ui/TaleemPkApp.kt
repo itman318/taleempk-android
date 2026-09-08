@@ -387,18 +387,23 @@ private fun TwoFactorScreen(vm: AppViewModel) {
 
 @Composable
 private fun MainShell(vm: AppViewModel) {
-    val context = LocalContext.current
     val activeChat = vm.selectedConversation
+    val activeModule = vm.activeModule
     var chatSearch by remember(activeChat?.id) { mutableStateOf(false) }
-    BackHandler(enabled = activeChat != null) { vm.closeConversation() }
+    BackHandler(enabled = activeChat != null || activeModule != null) {
+        if (activeChat != null) vm.closeConversation() else vm.closeModule()
+    }
     Scaffold(
         containerColor = Mist,
         topBar = {
-            if (activeChat == null) AppTopBar(vm.bootstrap?.user?.name ?: "TaleemPK")
-            else ChatTopBar(activeChat, vm::closeConversation, { chatSearch = !chatSearch }, vm::toggleMute)
+            when {
+                activeChat != null -> ChatTopBar(activeChat, vm::closeConversation, { chatSearch = !chatSearch }, vm::toggleMute)
+                activeModule != null -> NativeModuleTopBar(activeModule.title, vm::closeModule, vm::refreshModule)
+                else -> AppTopBar(vm.bootstrap?.user?.name ?: "TaleemPK")
+            }
         },
         bottomBar = {
-            if (activeChat == null) NavigationBar(containerColor = Color.White, tonalElevation = 8.dp) {
+            if (activeChat == null && activeModule == null) NavigationBar(containerColor = Color.White, tonalElevation = 8.dp) {
                 NavItem("Home", Icons.Default.Home, RootScreen.HOME, vm)
                 NavItem("Feed", Icons.Default.DynamicFeed, RootScreen.FEED, vm)
                 NavItem("Chat", Icons.Default.ChatBubble, RootScreen.CHATS, vm)
@@ -407,22 +412,17 @@ private fun MainShell(vm: AppViewModel) {
         }
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
-            when (vm.screen) {
-                RootScreen.HOME -> HomeScreen(vm.bootstrap, vm::refreshHome) { route ->
-                    when (route) {
-                        "feed.php" -> vm.selectScreen(RootScreen.FEED)
-                        "chat.php" -> vm.selectScreen(RootScreen.CHATS)
-                        else -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://taleempk.online/$route")))
-                    }
-                }
-                RootScreen.FEED -> FeedScreen(vm.posts, vm::refreshFeed) {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://taleempk.online/post-new.php")))
-                }
-                RootScreen.CHATS -> if (activeChat == null) ChatList(vm.conversations, vm::refreshChats, vm::openConversation)
-                    else ChatThread(vm, activeChat, chatSearch)
-                RootScreen.PROFILE -> ProfileScreen(vm.bootstrap?.user, vm::logout) { route ->
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://taleempk.online/$route")))
-                }
+            if (activeModule != null) NativeModuleScreen(
+                activeModule, vm::moduleItemAction, vm::updateProfile, vm::createTicket
+            )
+            else when (vm.screen) {
+                RootScreen.HOME -> HomeScreen(vm.bootstrap, vm::refreshHome, vm::openNativeRoute)
+                RootScreen.FEED -> FeedScreen(
+                    vm.posts, vm.commentPost, vm.feedComments, vm::refreshFeed, vm::createPost,
+                    vm::togglePostLike, vm::openComments, vm::closeComments, vm::addComment
+                )
+                RootScreen.CHATS -> if (activeChat == null) ChatList(vm.conversations, vm::refreshChats, vm::openConversation) else ChatThread(vm, activeChat, chatSearch)
+                RootScreen.PROFILE -> ProfileScreen(vm.bootstrap?.user, vm::logout, vm::openNativeRoute)
             }
             if (vm.busy && vm.authStage == AuthStage.SIGNED_IN) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter), color = Lime)
             vm.error?.let { Snackbar(Modifier.align(Alignment.BottomCenter).padding(16.dp), action = {
@@ -445,6 +445,154 @@ private fun AppTopBar(name: String) {
             InitialAvatar(name, 38)
         }
     }
+}
+
+@Composable
+private fun NativeModuleTopBar(title: String, back: () -> Unit, refresh: () -> Unit) {
+    Surface(color = Navy, shadowElevation = 5.dp) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().height(68.dp).padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(back) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+            Text(title, Modifier.weight(1f), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            IconButton(refresh) { Icon(Icons.Default.Refresh, "Refresh", tint = Color.White) }
+        }
+    }
+}
+
+@Composable
+private fun NativeModuleScreen(
+    content: ModuleContent,
+    itemAction: (ModuleItem) -> Unit,
+    updateProfile: (String, String, String, String, () -> Unit) -> Unit,
+    createTicket: (String, String, String, () -> Unit) -> Unit
+) {
+    var profileEditor by remember(content.key) { mutableStateOf(false) }
+    var supportComposer by remember(content.key) { mutableStateOf(false) }
+    val actionable: (ModuleItem) -> Boolean = {
+        it.kind == "task" || it.kind == "notification" || (it.kind == "setting" && it.id in 2L..3L)
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Surface(Modifier.fillMaxWidth(), color = Navy, shape = RoundedCornerShape(24.dp)) {
+                Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(Modifier.size(52.dp), color = Lime, shape = RoundedCornerShape(16.dp)) {
+                        Box(contentAlignment = Alignment.Center) { Icon(moduleIcon(content.key), null, tint = Navy) }
+                    }
+                    Spacer(Modifier.width(14.dp)); Column {
+                        Text(content.title, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Black)
+                        Text(content.subtitle, color = Color.White.copy(.67f), fontSize = 12.sp, lineHeight = 17.sp)
+                    }
+                }
+            }
+        }
+        if (content.key == "profile" || content.key == "support") item {
+            Button(
+                onClick = { if (content.key == "profile") profileEditor = true else supportComposer = true },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Navy)
+            ) {
+                Icon(if (content.key == "profile") Icons.Default.Edit else Icons.Default.AddComment, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (content.key == "profile") "Edit profile in app" else "New support request", fontWeight = FontWeight.Bold)
+            }
+        }
+        if (content.items.isEmpty()) item {
+            Surface(Modifier.fillMaxWidth(), color = Color.White, shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Inbox, null, Modifier.size(42.dp), tint = Navy.copy(.35f))
+                    Spacer(Modifier.height(10.dp)); Text("Nothing here yet", fontWeight = FontWeight.Bold)
+                    Text("New items will appear here automatically.", color = Muted, fontSize = 12.sp)
+                }
+            }
+        }
+        items(content.items, key = { "${it.kind}-${it.id}" }) { item ->
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable(enabled = actionable(item)) { itemAction(item) },
+                color = Color.White, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)
+            ) {
+                Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(Modifier.size(44.dp), color = if (item.done) SoftLime else Mist, shape = RoundedCornerShape(13.dp)) {
+                        Box(contentAlignment = Alignment.Center) { Icon(
+                            if (item.kind == "task") (if (item.done) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked)
+                            else moduleItemIcon(item.kind), null, tint = if (item.done) Green else Navy
+                        ) }
+                    }
+                    Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) {
+                        Text(item.title, fontWeight = FontWeight.Bold, color = if (item.done) Muted else Ink,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (item.subtitle.isNotBlank()) Text(item.subtitle, color = Muted, fontSize = 11.sp,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (item.meta.isNotBlank()) Text(item.meta, color = Green, fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    if (actionable(item)) Icon(Icons.Default.ChevronRight, null, tint = Navy.copy(.35f))
+                }
+            }
+        }
+        item { Spacer(Modifier.height(8.dp)) }
+    }
+
+    if (profileEditor) {
+        val identity = content.items.firstOrNull { it.id == 1L }
+        val location = content.items.firstOrNull { it.id == 2L }
+        val about = content.items.firstOrNull { it.id == 3L }
+        var name by remember { mutableStateOf(identity?.title.orEmpty()) }
+        var city by remember { mutableStateOf(location?.subtitle?.takeUnless { it == "Not added" }.orEmpty()) }
+        var headline by remember { mutableStateOf(identity?.meta.orEmpty()) }
+        var bio by remember { mutableStateOf(about?.subtitle?.takeUnless { it == "Add a short introduction" }.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { profileEditor = false },
+            icon = { Icon(Icons.Default.Badge, null, tint = Navy) },
+            title = { Text("Edit your profile", fontWeight = FontWeight.Black) },
+            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                OutlinedTextField(name, { if (it.length <= 120) name = it }, label = { Text("Full name") }, singleLine = true)
+                OutlinedTextField(headline, { if (it.length <= 160) headline = it }, label = { Text("Headline") }, singleLine = true)
+                OutlinedTextField(city, { if (it.length <= 80) city = it }, label = { Text("City") }, singleLine = true)
+                OutlinedTextField(bio, { if (it.length <= 480) bio = it }, label = { Text("About you") }, minLines = 3, maxLines = 6)
+            } },
+            confirmButton = { Button({ updateProfile(name, city, headline, bio) { profileEditor = false } },
+                enabled = name.trim().length >= 3, colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Text("Save") } },
+            dismissButton = { TextButton({ profileEditor = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (supportComposer) {
+        var topic by remember { mutableStateOf("bug") }
+        var subject by remember { mutableStateOf("") }
+        var body by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { supportComposer = false },
+            icon = { Icon(Icons.Default.SupportAgent, null, tint = Navy) },
+            title = { Text("Contact TaleemPK support", fontWeight = FontWeight.Black) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    FilterChip(topic == "bug", { topic = "bug" }, { Text("Bug") })
+                    FilterChip(topic == "access", { topic = "access" }, { Text("Access") })
+                    FilterChip(topic == "other", { topic = "other" }, { Text("Other") })
+                }
+                OutlinedTextField(subject, { if (it.length <= 180) subject = it }, label = { Text("Subject") }, singleLine = true)
+                OutlinedTextField(body, { if (it.length <= 5000) body = it }, label = { Text("Describe the issue") }, minLines = 4, maxLines = 8)
+            } },
+            confirmButton = { Button({ createTicket(topic, subject, body) { supportComposer = false } },
+                enabled = subject.trim().length >= 5 && body.trim().length >= 10,
+                colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Text("Send") } },
+            dismissButton = { TextButton({ supportComposer = false }) { Text("Cancel") } }
+        )
+    }
+}
+
+private fun moduleIcon(key: String): ImageVector = when (key) {
+    "library" -> Icons.Default.LocalLibrary; "quizzes" -> Icons.Default.Quiz; "groups" -> Icons.Default.Groups
+    "planner" -> Icons.Default.EventNote; "results" -> Icons.Default.Assessment; "notifications" -> Icons.Default.Notifications
+    "support" -> Icons.Default.SupportAgent; "profile" -> Icons.Default.Badge; "settings" -> Icons.Default.Security
+    else -> Icons.Default.AutoStories
+}
+
+private fun moduleItemIcon(kind: String): ImageVector = when (kind) {
+    "resource" -> Icons.Default.Description; "quiz" -> Icons.Default.Quiz; "group" -> Icons.Default.Groups
+    "board" -> Icons.Default.School; "notification" -> Icons.Default.Notifications; "ticket" -> Icons.Default.SupportAgent
+    "setting" -> Icons.Default.Security; "profile" -> Icons.Default.Person; else -> Icons.Default.AutoStories
 }
 
 @Composable
@@ -540,8 +688,20 @@ private fun HomeScreen(data: Bootstrap?, refresh: () -> Unit, open: (String) -> 
 }
 
 @Composable
-private fun FeedScreen(posts: List<FeedPost>, refresh: () -> Unit, ask: () -> Unit) {
-    if (posts.isEmpty()) { EmptyState("Your feed is ready to refresh.", Icons.Default.DynamicFeed, refresh); return }
+private fun FeedScreen(
+    posts: List<FeedPost>,
+    commentPost: FeedPost?,
+    comments: List<FeedComment>,
+    refresh: () -> Unit,
+    create: (String, Boolean, () -> Unit) -> Unit,
+    like: (FeedPost) -> Unit,
+    openComments: (FeedPost) -> Unit,
+    closeComments: () -> Unit,
+    addComment: (String, () -> Unit) -> Unit
+) {
+    var composer by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
+    var question by remember { mutableStateOf(true) }
     LazyColumn(contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -553,12 +713,21 @@ private fun FeedScreen(posts: List<FeedPost>, refresh: () -> Unit, ask: () -> Un
             }
         }
         item {
-            Surface(Modifier.fillMaxWidth().clickable(onClick = ask), color = Color.White,
+            Surface(Modifier.fillMaxWidth().clickable { composer = true }, color = Color.White,
                 shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     InitialAvatar("You", 40); Spacer(Modifier.width(11.dp))
                     Text("Ask a question or share an update…", Modifier.weight(1f), color = Muted, fontSize = 13.sp)
                     Icon(Icons.Default.Edit, null, tint = Navy, modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+        if (posts.isEmpty()) item {
+            Surface(Modifier.fillMaxWidth(), color = Color.White, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line)) {
+                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.DynamicFeed, null, Modifier.size(38.dp), tint = Navy.copy(.35f))
+                    Spacer(Modifier.height(8.dp)); Text("Your feed is ready", fontWeight = FontWeight.Bold)
+                    Text("Refresh or start the first conversation.", color = Muted, fontSize = 12.sp)
                 }
             }
         }
@@ -577,12 +746,75 @@ private fun FeedScreen(posts: List<FeedPost>, refresh: () -> Unit, ask: () -> Un
                         }
                     }
                     if (p.content.isNotBlank()) { Spacer(Modifier.height(14.dp)); Text(p.content, lineHeight = 22.sp) }
-                    Spacer(Modifier.height(12.dp)); HorizontalDivider(color = Mist); Spacer(Modifier.height(8.dp))
-                    Row { Icon(Icons.Default.ThumbUp, null, Modifier.size(18.dp), tint = Color.Gray); Text(" ${p.likes}", color = Color.Gray)
-                        Spacer(Modifier.width(26.dp)); Icon(Icons.Default.ChatBubbleOutline, null, Modifier.size(18.dp), tint = Color.Gray); Text(" ${p.comments}", color = Color.Gray) }
+                    Spacer(Modifier.height(12.dp)); HorizontalDivider(color = Mist); Spacer(Modifier.height(5.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable { like(p) }.padding(9.dp),
+                            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            Icon(if (p.liked) Icons.Default.ThumbUp else Icons.Default.ThumbUpOffAlt, null,
+                                Modifier.size(18.dp), tint = if (p.liked) Green else Muted)
+                            Spacer(Modifier.width(6.dp)); Text("Helpful · ${p.likes}", color = if (p.liked) Green else Muted,
+                                fontSize = 12.sp, fontWeight = if (p.liked) FontWeight.Bold else FontWeight.Medium)
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Row(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable { openComments(p) }.padding(9.dp),
+                            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.ChatBubbleOutline, null, Modifier.size(18.dp), tint = Muted)
+                            Spacer(Modifier.width(6.dp)); Text("Replies · ${p.comments}", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
                 }
             }
         }
+    }
+    if (composer) AlertDialog(
+        onDismissRequest = { composer = false },
+        icon = { Surface(Modifier.size(44.dp), color = SoftLime, shape = CircleShape) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Edit, null, tint = Navy) } } },
+        title = { Text(if (question) "Ask the community" else "Share an update", fontWeight = FontWeight.Black) },
+        text = { Column {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(question, { question = true }, { Text("Question") }, leadingIcon = { Icon(Icons.Default.HelpOutline, null) })
+                FilterChip(!question, { question = false }, { Text("Update") }, leadingIcon = { Icon(Icons.Default.Campaign, null) })
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(draft, { if (it.length <= 8000) draft = it }, Modifier.fillMaxWidth(),
+                placeholder = { Text(if (question) "What would you like help with?" else "Share something useful…") },
+                minLines = 4, maxLines = 8, shape = RoundedCornerShape(16.dp))
+        } },
+        confirmButton = { Button({ create(draft, question) { draft = ""; composer = false } }, enabled = draft.isNotBlank(),
+            colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Text("Publish") } },
+        dismissButton = { TextButton({ composer = false }) { Text("Cancel") } }
+    )
+    commentPost?.let { post ->
+        var reply by remember(post.id) { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = closeComments,
+            icon = { Icon(Icons.Default.Forum, null, tint = Navy) },
+            title = { Column {
+                Text("Community replies", fontWeight = FontWeight.Black)
+                Text("${post.author}'s ${if (post.type == "question") "question" else "post"}", color = Muted, fontSize = 11.sp)
+            } },
+            text = { Column {
+                if (comments.isEmpty()) Text("No replies yet. Be the first to help.", color = Muted, modifier = Modifier.padding(vertical = 12.dp))
+                else LazyColumn(Modifier.heightIn(max = 300.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(comments, key = { it.id }) { c ->
+                        Surface(color = Mist, shape = RoundedCornerShape(14.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(11.dp)) {
+                                Row { Text(c.author, Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text(c.createdAt, color = Muted, fontSize = 9.sp) }
+                                Spacer(Modifier.height(3.dp)); Text(c.content, fontSize = 13.sp, lineHeight = 18.sp)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(reply, { if (it.length <= 5000) reply = it }, Modifier.fillMaxWidth(),
+                    placeholder = { Text("Write a thoughtful reply…") }, minLines = 2, maxLines = 5,
+                    shape = RoundedCornerShape(15.dp))
+            } },
+            confirmButton = { Button({ addComment(reply) { reply = "" } }, enabled = reply.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Text("Reply") } },
+            dismissButton = { TextButton(closeComments) { Text("Close") } }
+        )
     }
 }
 
@@ -699,7 +931,7 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
             itemsIndexed(shown, key = { _, item -> item.id }) { index, message ->
                 if (index == 0 || shown[index - 1].dateLabel != message.dateLabel) DatePill(message.dateLabel)
                 MessageBubble(message, vm.authHeaders(), onLongPress = { selected = message },
-                    onReaction = { vm.react(message, it) })
+                    onReaction = { vm.react(message, it) }, onAttachment = { vm.openAttachment(message) })
             }
             if (shown.isEmpty()) item {
                 Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
@@ -765,7 +997,8 @@ private fun MessageBubble(
     m: ChatMessage,
     headers: Map<String, String>,
     onLongPress: () -> Unit,
-    onReaction: (String) -> Unit
+    onReaction: (String) -> Unit,
+    onAttachment: () -> Unit
 ) {
     val bubble = if (m.mine) Navy else Color.White
     val foreground = if (m.mine) Color.White else Ink
@@ -774,7 +1007,7 @@ private fun MessageBubble(
             color = bubble, contentColor = foreground,
             shape = if (m.mine) RoundedCornerShape(20.dp, 6.dp, 20.dp, 20.dp) else RoundedCornerShape(6.dp, 20.dp, 20.dp, 20.dp),
             shadowElevation = if (m.mine) 0.dp else 1.dp,
-            modifier = Modifier.fillMaxWidth(.84f).combinedClickable(onClick = {}, onLongClick = onLongPress)
+            modifier = Modifier.widthIn(max = 320.dp).combinedClickable(onClick = {}, onLongClick = onLongPress)
         ) {
             Column(Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
                 if (!m.mine) Text(m.sender, color = Green, fontWeight = FontWeight.Bold, fontSize = 11.sp)
@@ -787,7 +1020,7 @@ private fun MessageBubble(
                     }
                 } else {
                     if (m.voiceSeconds > 0) VoicePlayer(m.attachmentUrl, m.voiceSeconds, headers, m.mine)
-                    else if (m.attachmentUrl != null) AttachmentCard(m, m.mine)
+                    else if (m.attachmentUrl != null) AttachmentCard(m, m.mine, onAttachment)
                     if (m.content.isNotBlank()) Text(m.content, fontSize = 15.sp, lineHeight = 20.sp)
                 }
                 Row(Modifier.align(Alignment.End).padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -832,9 +1065,10 @@ private fun MessageBubble(
     }
 }
 
-@Composable private fun AttachmentCard(m: ChatMessage, mine: Boolean) {
+@Composable private fun AttachmentCard(m: ChatMessage, mine: Boolean, open: () -> Unit) {
     val image = m.attachmentType?.lowercase() in listOf("jpg", "jpeg", "png", "gif", "webp")
-    Surface(color = if (mine) Color.White.copy(.10f) else Mist, shape = RoundedCornerShape(13.dp), modifier = Modifier.padding(bottom = 5.dp)) {
+    Surface(color = if (mine) Color.White.copy(.10f) else Mist, shape = RoundedCornerShape(13.dp),
+        modifier = Modifier.padding(bottom = 5.dp).clickable(onClick = open)) {
         Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(Modifier.size(38.dp), color = if (mine) Color.White.copy(.12f) else SoftLime, shape = RoundedCornerShape(11.dp)) {
                 Box(contentAlignment = Alignment.Center) { Icon(if (image) Icons.Default.Image else Icons.Default.Description, null, tint = if (mine) Lime else Navy) }
@@ -845,7 +1079,7 @@ private fun MessageBubble(
                 Text(if (image) "Image" else (m.attachmentType?.uppercase() ?: "File"),
                     color = if (mine) Color.White.copy(.58f) else Muted, fontSize = 9.sp)
             }
-            Icon(Icons.Default.Download, "Download", Modifier.size(18.dp))
+            Icon(Icons.Default.OpenInNew, "Open attachment", Modifier.size(18.dp))
         }
     }
 }

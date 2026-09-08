@@ -1,7 +1,9 @@
 package online.taleempk.studyhub.ui
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -27,9 +29,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var challenge by mutableStateOf<String?>(null); private set
     var bootstrap by mutableStateOf<Bootstrap?>(null); private set
     var posts by mutableStateOf<List<FeedPost>>(emptyList()); private set
+    var commentPost by mutableStateOf<FeedPost?>(null); private set
+    var feedComments by mutableStateOf<List<FeedComment>>(emptyList()); private set
     var conversations by mutableStateOf<List<Conversation>>(emptyList()); private set
     var selectedConversation by mutableStateOf<Conversation?>(null); private set
     var messages by mutableStateOf<List<ChatMessage>>(emptyList()); private set
+    var activeModule by mutableStateOf<ModuleContent?>(null); private set
 
     init { restore() }
 
@@ -89,6 +94,92 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshFeed() = launch { posts = withContext(Dispatchers.IO) { api.feed() } }
     fun refreshChats() = launch { conversations = withContext(Dispatchers.IO) { api.conversations() } }
 
+    fun openNativeRoute(route: String) {
+        when (route.substringBefore('?')) {
+            "feed.php" -> selectScreen(RootScreen.FEED)
+            "chat.php" -> selectScreen(RootScreen.CHATS)
+            "study.php" -> openModule("study")
+            "library.php" -> openModule("library")
+            "quiz.php" -> openModule("quizzes")
+            "groups.php" -> openModule("groups")
+            "planner.php" -> openModule("planner")
+            "results.php" -> openModule("results")
+            "edit-profile.php" -> openModule("profile")
+            "settings.php" -> openModule("settings")
+            "notifications.php" -> openModule("notifications")
+            "support.php" -> openModule("support")
+            else -> error = "This section is being prepared for the native app."
+        }
+    }
+
+    fun openModule(key: String) = launch {
+        activeModule = withContext(Dispatchers.IO) { api.module(key) }
+    }
+    fun closeModule() { activeModule = null }
+    fun refreshModule() { activeModule?.key?.let(::openModule) }
+
+    fun createPost(content: String, question: Boolean, after: () -> Unit) = launch {
+        withContext(Dispatchers.IO) { api.createPost(content.trim(), question) }
+        posts = withContext(Dispatchers.IO) { api.feed() }
+        after()
+    }
+
+    fun togglePostLike(post: FeedPost) = launch(showSpinner = false) {
+        withContext(Dispatchers.IO) { api.togglePostLike(post.id) }
+        posts = withContext(Dispatchers.IO) { api.feed() }
+    }
+
+    fun openComments(post: FeedPost) {
+        commentPost = post
+        feedComments = emptyList()
+        launch(showSpinner = false) { feedComments = withContext(Dispatchers.IO) { api.comments(post.id) } }
+    }
+
+    fun closeComments() { commentPost = null; feedComments = emptyList() }
+
+    fun addComment(content: String, after: () -> Unit) {
+        val post = commentPost ?: return
+        launch(showSpinner = false) {
+            withContext(Dispatchers.IO) { api.addComment(post.id, content.trim()) }
+            feedComments = withContext(Dispatchers.IO) { api.comments(post.id) }
+            posts = withContext(Dispatchers.IO) { api.feed() }
+            commentPost = posts.firstOrNull { it.id == post.id } ?: post
+            after()
+        }
+    }
+
+    fun toggleTask(item: ModuleItem) = launch(showSpinner = false) {
+        withContext(Dispatchers.IO) { api.toggleTask(item.id) }
+        activeModule?.key?.let { activeModule = withContext(Dispatchers.IO) { api.module(it) } }
+    }
+
+    fun moduleItemAction(item: ModuleItem) {
+        val action = when (item.kind) {
+            "task" -> "toggle_task"
+            "notification" -> "read_notification"
+            "setting" -> when (item.id) { 2L -> "cycle_privacy"; 3L -> "toggle_online"; else -> null }
+            else -> null
+        } ?: return
+        launch(showSpinner = false) {
+            withContext(Dispatchers.IO) { api.moduleAction(action, item.id) }
+            activeModule?.key?.let { activeModule = withContext(Dispatchers.IO) { api.module(it) } }
+        }
+    }
+
+    fun updateProfile(name: String, city: String, headline: String, bio: String, after: () -> Unit) = launch {
+        withContext(Dispatchers.IO) { api.updateProfile(name.trim(), city.trim(), headline.trim(), bio.trim()) }
+        activeModule = withContext(Dispatchers.IO) { api.module("profile") }
+        bootstrap = withContext(Dispatchers.IO) { api.bootstrap() }
+        notice = "Profile updated."
+        after()
+    }
+
+    fun createTicket(topic: String, subject: String, body: String, after: () -> Unit) = launch {
+        notice = withContext(Dispatchers.IO) { api.createTicket(topic, subject.trim(), body.trim()) }
+        activeModule = withContext(Dispatchers.IO) { api.module("support") }
+        after()
+    }
+
     fun openConversation(item: Conversation) {
         selectedConversation = item
         launch { messages = withContext(Dispatchers.IO) { api.messages(item.id) } }
@@ -126,6 +217,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun openAttachment(message: ChatMessage) {
+        launch {
+            val file = withContext(Dispatchers.IO) { api.downloadAttachment(message) }
+            val app = getApplication<Application>()
+            val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+            val mime = when (message.attachmentType?.lowercase()) {
+                "jpg", "jpeg" -> "image/jpeg"; "png" -> "image/png"; "gif" -> "image/gif"; "webp" -> "image/webp"
+                "pdf" -> "application/pdf"; "txt" -> "text/plain"; "doc" -> "application/msword"
+                "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                else -> "application/octet-stream"
+            }
+            val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(Intent.createChooser(intent, "Open attachment").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
     fun react(message: ChatMessage, emoji: String) = chatAction { api.react(message.id, emoji) }
     fun toggleStar(message: ChatMessage) = chatAction { api.toggleStar(message.id) }
     fun togglePin(message: ChatMessage) = chatAction { api.togglePin(message.id) }
@@ -155,7 +263,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() = launch {
         try { withContext(Dispatchers.IO) { api.logout() } }
         finally {
-            bootstrap = null; posts = emptyList(); conversations = emptyList(); messages = emptyList()
+            bootstrap = null; posts = emptyList(); commentPost = null; feedComments = emptyList()
+            conversations = emptyList(); messages = emptyList(); activeModule = null
             selectedConversation = null; authStage = AuthStage.LOGIN
             notice = null
         }

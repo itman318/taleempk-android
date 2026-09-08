@@ -62,9 +62,55 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         return arr.toObjects { o -> FeedPost(
             o.optLong("id"), o.optString("author"), o.optString("username"), o.nullable("avatar"),
             o.optString("type", "post"), o.optString("content"), o.optString("created_at"),
-            o.optInt("likes"), o.optInt("comments"), o.optBoolean("solved")
+            o.optInt("likes"), o.optInt("comments"), o.optBoolean("solved"), o.optBoolean("liked")
         ) }
     }
+
+    fun createPost(content: String, question: Boolean) {
+        request(mapOf("action" to "create_post", "content" to content,
+            "type" to if (question) "question" else "text", "visibility" to "public"), true)
+    }
+
+    fun togglePostLike(postId: Long) {
+        request(mapOf("action" to "react_post", "target" to "post:$postId", "type" to "like"), true)
+    }
+
+    fun comments(postId: Long): List<FeedComment> {
+        val arr = request(mapOf("action" to "feed_comments", "post_id" to postId.toString()), true)
+            .getJSONObject("data").optJSONArray("comments") ?: JSONArray()
+        return arr.toObjects { o -> FeedComment(o.optLong("id"), o.optString("author"),
+            o.optString("content"), o.optString("created_at"), o.optBoolean("mine")) }
+    }
+
+    fun addComment(postId: Long, content: String) {
+        request(mapOf("action" to "create_comment", "post_id" to postId.toString(), "content" to content), true)
+    }
+
+    fun module(key: String): ModuleContent {
+        val data = request(mapOf("action" to "module", "module" to key), true).getJSONObject("data")
+        val items = (data.optJSONArray("items") ?: JSONArray()).toObjects { o -> ModuleItem(
+            o.optLong("id"), o.optString("title"), o.optString("subtitle"), o.optString("meta"),
+            o.optString("kind"), o.optBoolean("done")
+        ) }
+        return ModuleContent(data.optString("key", key), data.optString("title"), data.optString("subtitle"), items)
+    }
+
+    fun toggleTask(taskId: Long) {
+        request(mapOf("action" to "module_action", "do" to "toggle_task", "id" to taskId.toString()), true)
+    }
+
+    fun moduleAction(action: String, id: Long = 0) {
+        request(mapOf("action" to "module_action", "do" to action, "id" to id.toString()), true)
+    }
+
+    fun updateProfile(name: String, city: String, headline: String, bio: String) {
+        request(mapOf("action" to "update_profile", "name" to name, "city" to city,
+            "headline" to headline, "bio" to bio), true)
+    }
+
+    fun createTicket(topic: String, subject: String, body: String): String = request(
+        mapOf("action" to "create_ticket", "topic" to topic, "subject" to subject, "body" to body), true
+    ).getJSONObject("data").optString("message", "Support request created.")
 
     fun conversations(): List<Conversation> {
         val arr = request(mapOf("action" to "conversations"), true)
@@ -166,6 +212,26 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         request(mapOf("action" to "manage_chat", "do" to "toggle_mute", "id" to conversationId.toString()), true)
     }
 
+    fun downloadAttachment(message: ChatMessage): File {
+        val safeName = (message.attachmentName ?: "attachment.${message.attachmentType ?: "bin"}")
+            .replace(Regex("[^A-Za-z0-9._ -]"), "_").take(160)
+        val directory = File(context.cacheDir, "shared").apply { mkdirs() }
+        val target = File(directory, "${message.id}-$safeName")
+        val conn = (URL("$endpoint?action=file&id=${message.id}").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"; connectTimeout = 15_000; readTimeout = 60_000
+            setRequestProperty("User-Agent", "TaleemPK-Android/${BuildConfig.VERSION_NAME}")
+            session.token?.let { setRequestProperty("Authorization", "Bearer $it") }
+        }
+        try {
+            val status = conn.responseCode
+            if (status !in 200..299) throw ApiException("That attachment is no longer available.", status)
+            conn.inputStream.buffered().use { input ->
+                target.outputStream().buffered().use { output -> input.copyTo(output) }
+            }
+        } finally { conn.disconnect() }
+        return target
+    }
+
     fun logout() {
         try { request(mapOf("action" to "logout"), true) } finally { session.token = null }
     }
@@ -251,6 +317,7 @@ class ApiClient(private val context: Context, private val session: SessionStore)
                 status >= 500 -> "TaleemPK mobile service is temporarily unavailable. Please try again shortly. (HTTP $status)"
                 status == 404 -> "The TaleemPK mobile service is not installed correctly. (HTTP 404)"
                 raw.isBlank() -> "The server returned an empty response. (HTTP $status)"
+                status == 200 -> "The website mobile backend is outdated or incomplete. Upload the latest TaleemPK backend update."
                 else -> "The server returned an invalid response. (HTTP $status)"
             }
             throw ApiException(message, status)

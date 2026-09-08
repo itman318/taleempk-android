@@ -1,6 +1,6 @@
 <?php
 /**
- * TaleemPK native Android API v1.1.
+ * TaleemPK native Android API v1.3.
  *
  * Browser sessions are never exported to a phone. A successful native sign-in
  * receives a random bearer token; the database stores only its SHA-256 digest.
@@ -288,7 +288,7 @@ $uid = (int) $u['id'];
    checks; only the browser-only CSRF check is bypassed for this authenticated
    first-party client. Keeping one mutation path also keeps Android and web
    behaviour identical. */
-$nativeChatHandlers = [
+$nativeSharedHandlers = [
     'send'           => 'chat_send.php',
     'reaction'       => 'chat_reaction.php',
     'star'           => 'chat_star.php',
@@ -296,12 +296,14 @@ $nativeChatHandlers = [
     'message_action' => 'chat_message.php',
     'manage_chat'    => 'chat_manage.php',
     'search_chat'    => 'chat_search.php',
+    'create_post'    => 'post_create.php',
+    'react_post'     => 'react.php',
+    'create_comment' => 'comment_create.php',
 ];
-if (isset($nativeChatHandlers[$action])) {
-    require_feature('feature_chat');
+if (isset($nativeSharedHandlers[$action])) {
     $_SESSION['uid'] = $uid;
     if (!defined('NATIVE_API_AUTHENTICATED')) { define('NATIVE_API_AUTHENTICATED', true); }
-    require __DIR__ . '/' . $nativeChatHandlers[$action];
+    require __DIR__ . '/' . $nativeSharedHandlers[$action];
 }
 
 if ($action === 'bootstrap') {
@@ -330,20 +332,188 @@ if ($action === 'feed') {
     $limit = 20; $offset = ($page - 1) * $limit;
     $rows = fetch_all(
         "SELECT p.id,p.type,p.content,p.created_at,p.likes_count,p.comments_count,p.is_solved,
+                EXISTS(SELECT 1 FROM reactions r WHERE r.target_type='post' AND r.target_id=p.id
+                        AND r.user_id=? AND r.type='like') liked,
                 u.name,u.username,u.avatar
            FROM posts p JOIN users u ON u.id=p.user_id
           WHERE p.status='active' AND p.visibility='public' AND p.group_id IS NULL
             AND u.status='active'
           ORDER BY p.is_pinned DESC,p.id DESC LIMIT $limit OFFSET $offset"
-    );
+    , [$uid]);
     $posts = array_map(static fn(array $p): array => [
         'id'=>(int)$p['id'], 'author'=>$p['name'], 'username'=>$p['username'],
         'avatar'=>!empty($p['avatar']) ? upload_url($p['avatar']) : null,
         'type'=>$p['type'], 'content'=>(string)($p['content'] ?? ''),
         'created_at'=>time_ago($p['created_at']), 'likes'=>(int)$p['likes_count'],
-        'comments'=>(int)$p['comments_count'], 'solved'=>(int)$p['is_solved']===1,
+        'comments'=>(int)$p['comments_count'], 'solved'=>(int)$p['is_solved']===1, 'liked'=>(bool)$p['liked'],
     ], $rows);
     mobile_out(['posts'=>$posts, 'page'=>$page]);
+}
+
+if ($action === 'feed_comments') {
+    require_feature('feature_comments');
+    $postId = (int)($_POST['post_id'] ?? 0);
+    $post = fetch_one("SELECT id FROM posts WHERE id=? AND status='active' AND visibility='public' AND group_id IS NULL", [$postId]);
+    if (!$post) mobile_error('That post is not available.', 404);
+    $rows = fetch_all("SELECT c.id,c.content,c.created_at,c.user_id,u.name
+                       FROM comments c JOIN users u ON u.id=c.user_id
+                       WHERE c.post_id=? AND c.status='active'
+                       ORDER BY c.id LIMIT 200", [$postId]);
+    $comments = array_map(static fn(array $c): array => [
+        'id'=>(int)$c['id'], 'author'=>(string)$c['name'], 'content'=>(string)$c['content'],
+        'created_at'=>time_ago($c['created_at']), 'mine'=>(int)$c['user_id']===$uid,
+    ], $rows);
+    mobile_out(['comments'=>$comments]);
+}
+
+if ($action === 'module') {
+    $key = strtolower(trim((string)($_POST['module'] ?? 'study')));
+    $items = []; $title = 'Learning'; $subtitle = 'Your TaleemPK learning space';
+    if ($key === 'study') {
+        $title = 'Study dashboard'; $subtitle = 'Today’s plan and recent learning activity';
+        $rows = fetch_all("SELECT id,title,subject,minutes,priority,status,task_date FROM study_tasks
+                           WHERE user_id=? AND task_date BETWEEN DATE_SUB(CURDATE(),INTERVAL 7 DAY)
+                           AND DATE_ADD(CURDATE(),INTERVAL 14 DAY)
+                           ORDER BY task_date,FIELD(priority,'high','normal','low'),id LIMIT 60", [$uid]);
+        foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['title'],
+            'subtitle'=>trim((string)($r['subject'] ?: 'Study task')),
+            'meta'=>$r['task_date'].' · '.(int)$r['minutes'].' min · '.ucfirst($r['priority']),
+            'kind'=>'task','done'=>$r['status']==='done'];
+    } elseif ($key === 'library') {
+        require_feature('feature_library'); $title = 'Study library'; $subtitle = 'Books, notes, papers and assignments';
+        $rows = fetch_all("SELECT id,title,type,subject,class_grade,downloads,rating_avg FROM resources
+                            WHERE status='approved' ORDER BY is_featured DESC,id DESC LIMIT 60");
+        foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['title'],
+            'subtitle'=>ucwords(str_replace('_',' ',$r['type'])).($r['subject']?' · '.$r['subject']:''),
+            'meta'=>($r['class_grade']?:'All levels').' · '.(int)$r['downloads'].' downloads · '.number_format((float)$r['rating_avg'],1).' ★',
+            'kind'=>'resource','done'=>false];
+    } elseif ($key === 'quizzes') {
+        require_feature('feature_quizzes'); $title = 'Quizzes'; $subtitle = 'Practice and test your knowledge';
+        $rows = fetch_all("SELECT q.id,q.title,q.subject,q.class_grade,q.time_limit,q.attempts_count,
+                           (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id=q.id) questions
+                           FROM quizzes q WHERE q.status='approved' AND q.is_public=1
+                           ORDER BY q.attempts_count DESC,q.id DESC LIMIT 60");
+        foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['title'],
+            'subtitle'=>(string)($r['subject']?:'General knowledge'),
+            'meta'=>(int)$r['questions'].' questions'.((int)$r['time_limit']?' · '.(int)$r['time_limit'].' min':'').' · '.(int)$r['attempts_count'].' attempts',
+            'kind'=>'quiz','done'=>false];
+    } elseif ($key === 'groups') {
+        require_feature('feature_groups'); $title = 'Study groups'; $subtitle = 'Learn together by subject';
+        $rows = fetch_all("SELECT g.id,g.name,g.subject,g.level,g.members_count,gm.role
+                           FROM study_groups g LEFT JOIN group_members gm ON gm.group_id=g.id AND gm.user_id=? AND gm.status='approved'
+                           WHERE g.status='active' AND (g.privacy='public' OR gm.id IS NOT NULL)
+                           ORDER BY (gm.id IS NOT NULL) DESC,g.members_count DESC LIMIT 60", [$uid]);
+        foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['name'],
+            'subtitle'=>(string)($r['subject']?:ucfirst($r['level'])),
+            'meta'=>(int)$r['members_count'].' members'.($r['role']?' · You are '.$r['role']:''),'kind'=>'group','done'=>false];
+    } elseif ($key === 'planner') {
+        require_feature('feature_planner'); $title = 'Study planner'; $subtitle = 'Daily goals and upcoming tasks';
+        $rows = fetch_all("SELECT t.id,t.title,t.subject,t.task_date,t.minutes,t.priority,t.status,p.title plan_title
+                           FROM study_tasks t JOIN study_plans p ON p.id=t.plan_id
+                           WHERE t.user_id=? ORDER BY t.status='done',t.task_date,FIELD(t.priority,'high','normal','low') LIMIT 80", [$uid]);
+        foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['title'],
+            'subtitle'=>$r['plan_title'].($r['subject']?' · '.$r['subject']:''),
+            'meta'=>$r['task_date'].' · '.(int)$r['minutes'].' min · '.ucfirst($r['priority']),
+            'kind'=>'task','done'=>$r['status']==='done'];
+    } elseif ($key === 'results') {
+        $title = 'Results & boards'; $subtitle = 'Official boards and saved result alerts';
+        $rows = fetch_all("SELECT b.id,b.name,b.short_name,b.type,
+                           (SELECT COUNT(*) FROM result_alerts a WHERE a.board_id=b.id AND a.user_id=?) alerts
+                           FROM boards b WHERE b.status='active' ORDER BY b.sort_order,b.name LIMIT 80", [$uid]);
+        foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>(string)($r['short_name']?:$r['name']),
+            'subtitle'=>$r['name'],'meta'=>ucfirst($r['type']).' · '.(int)$r['alerts'].' saved alerts','kind'=>'board','done'=>false];
+    } elseif ($key === 'notifications') {
+        $title = 'Notifications'; $subtitle = 'Recent activity on your account';
+        $rows = fetch_all("SELECT id,message,type,is_read,created_at FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 80", [$uid]);
+        foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['message'],'subtitle'=>ucfirst($r['type']),
+            'meta'=>time_ago($r['created_at']),'kind'=>'notification','done'=>(int)$r['is_read']===1];
+    } elseif ($key === 'support') {
+        $title = 'Help & support'; $subtitle = 'Your support requests and appeals';
+        $rows = fetch_all("SELECT id,subject,topic,status,priority,ref,last_reply,created_at FROM tickets
+                           WHERE user_id=? ORDER BY id DESC LIMIT 50", [$uid]);
+        foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['subject'],'subtitle'=>'#'.$r['ref'].' · '.ucfirst($r['topic']),
+            'meta'=>ucfirst($r['status']).' · '.ucfirst($r['priority']).' priority · '.time_ago($r['last_reply']?:$r['created_at']),
+            'kind'=>'ticket','done'=>$r['status']==='closed'];
+    } elseif ($key === 'profile' || $key === 'settings') {
+        $title = $key === 'profile' ? 'Edit profile' : 'Privacy & security';
+        $subtitle = $key === 'profile' ? 'Your public TaleemPK identity' : 'Account protection and privacy choices';
+        $items = $key === 'profile' ? [
+            ['id'=>1,'title'=>$u['name'],'subtitle'=>'@'.$u['username'],'meta'=>(string)($u['headline']?:$u['role']),'kind'=>'profile','done'=>(bool)$u['is_verified']],
+            ['id'=>2,'title'=>'Location','subtitle'=>(string)($u['city']?:'Not added'),'meta'=>(string)$u['country'],'kind'=>'profile','done'=>false],
+            ['id'=>3,'title'=>'About you','subtitle'=>(string)($u['bio']?:'Add a short introduction'),'meta'=>'Visible on your public profile','kind'=>'profile','done'=>!empty($u['bio'])],
+        ] : [
+            ['id'=>1,'title'=>'Two-step verification','subtitle'=>'Extra email code at sign in','meta'=>(int)$u['two_factor']===1?'Enabled':'Not enabled','kind'=>'setting','done'=>(int)$u['two_factor']===1],
+            ['id'=>2,'title'=>'Profile privacy','subtitle'=>'Who can see your profile','meta'=>ucfirst($u['profile_privacy']),'kind'=>'setting','done'=>false],
+            ['id'=>3,'title'=>'Online status','subtitle'=>'Show when you are active','meta'=>(int)$u['show_online']===1?'Visible':'Hidden','kind'=>'setting','done'=>(int)$u['show_online']===1],
+        ];
+    } else { mobile_error('That app section is not available.', 404); }
+    mobile_out(['key'=>$key,'title'=>$title,'subtitle'=>$subtitle,'items'=>$items]);
+}
+
+if ($action === 'module_action') {
+    $do = (string)($_POST['do'] ?? ''); $id = (int)($_POST['id'] ?? 0);
+    if ($do === 'toggle_task') {
+        $task = fetch_one('SELECT id,status FROM study_tasks WHERE id=? AND user_id=?', [$id,$uid]);
+        if (!$task) mobile_error('That task is not available.', 404);
+        $next = $task['status']==='done' ? 'pending' : 'done';
+        q('UPDATE study_tasks SET status=?,completed_at=? WHERE id=?', [$next,$next==='done'?date('Y-m-d H:i:s'):null,$id]);
+        mobile_out(['done'=>$next==='done']);
+    }
+    if ($do === 'toggle_online') {
+        $next = (int)($u['show_online'] ?? 0) === 1 ? 0 : 1;
+        update_row('users', ['show_online'=>$next], 'id=?', [$uid]);
+        mobile_out(['enabled'=>$next===1]);
+    }
+    if ($do === 'cycle_privacy') {
+        $levels = ['public','members','private'];
+        $current = (string)($u['profile_privacy'] ?? 'public');
+        $position = array_search($current, $levels, true);
+        $next = $levels[(($position === false ? 0 : $position) + 1) % count($levels)];
+        update_row('users', ['profile_privacy'=>$next], 'id=?', [$uid]);
+        mobile_out(['privacy'=>$next]);
+    }
+    if ($do === 'read_notification') {
+        q('UPDATE notifications SET is_read=1 WHERE id=? AND user_id=?', [$id,$uid]);
+        mobile_out(['read'=>true]);
+    }
+    mobile_error('That action is not available.', 404);
+}
+
+if ($action === 'update_profile') {
+    $name = mail_header_safe(trim((string)($_POST['name'] ?? '')));
+    $city = mb_substr(trim((string)($_POST['city'] ?? '')), 0, 80);
+    $headline = mb_substr(trim((string)($_POST['headline'] ?? '')), 0, 160);
+    $bio = mb_substr(trim((string)($_POST['bio'] ?? '')), 0, 480);
+    if (mb_strlen($name) < 3) mobile_error('Enter your full name.');
+    update_row('users', [
+        'name'=>$name, 'city'=>$city !== '' ? $city : null,
+        'headline'=>$headline !== '' ? $headline : null,
+        'bio'=>$bio !== '' ? $bio : null,
+    ], 'id=?', [$uid]);
+    log_activity($uid, 'mobile_profile_update', 'Updated profile in Android app');
+    mobile_out(['message'=>'Profile updated.']);
+}
+
+if ($action === 'create_ticket') {
+    if (!api_burst_limit('mobile_ticket', 4)) mobile_error('Too many support requests. Please wait a minute.', 429);
+    $topics = ticket_topics();
+    $topic = strtolower(trim((string)($_POST['topic'] ?? 'bug')));
+    if (!isset($topics[$topic])) $topic = 'other';
+    $subject = mb_substr(trim((string)($_POST['subject'] ?? '')), 0, 180);
+    $body = mb_substr(trim((string)($_POST['body'] ?? '')), 0, 5000);
+    if (mb_strlen($subject) < 5) mobile_error('Add a short subject for your request.');
+    if (mb_strlen($body) < 10) mobile_error('Please describe the issue in a little more detail.');
+    $priority = ticket_start_priority($topic, true);
+    [$firstDue, $resolutionDue] = ticket_due_dates($priority);
+    $ref = ticket_ref();
+    $ticketId = insert_row('tickets', [
+        'ref'=>$ref, 'user_id'=>$uid, 'topic'=>$topic, 'subject'=>$subject, 'body'=>$body,
+        'device'=>mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? 'TaleemPK Android'),0,180),
+        'priority'=>$priority, 'first_response_due'=>$firstDue, 'resolution_due'=>$resolutionDue,
+        'last_reply'=>date('Y-m-d H:i:s'),
+    ]);
+    log_activity($uid, 'mobile_support_ticket', 'Opened support ticket '.$ref);
+    mobile_out(['id'=>$ticketId, 'ref'=>$ref, 'message'=>'Support request '.$ref.' created.'], 201);
 }
 
 if ($action === 'conversations') {
