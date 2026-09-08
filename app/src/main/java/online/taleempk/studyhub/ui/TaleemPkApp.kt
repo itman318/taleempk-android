@@ -1142,8 +1142,9 @@ private fun ImageEditorDialog(
     var rotation by remember(uri) { mutableIntStateOf(0) }
     var square by remember(uri) { mutableStateOf(false) }
     var caption by remember(uri) { mutableStateOf("") }
-    val preview by produceState<Bitmap?>(null, uri, rotation, square) {
-        value = withContext(Dispatchers.IO) { loadImagePreview(context, uri, rotation, square) }
+    var preview by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(uri, rotation, square) {
+        preview = withContext(Dispatchers.IO) { loadImagePreview(context, uri, rotation, square) }
     }
     AlertDialog(
         onDismissRequest = close,
