@@ -1221,7 +1221,7 @@ private fun MessageBubble(
                 ) { Box(contentAlignment = Alignment.Center) { Icon(
                     if (isReply) Icons.Default.Reply else Icons.Default.Forward,
                     if (isReply) "Swipe to reply" else "Swipe to forward", Modifier.size(18.dp), tint = Navy
-                ) } }
+                ) } } }
             Surface(
                 color = bubble, contentColor = foreground,
                 shape = if (m.mine) RoundedCornerShape(20.dp, 6.dp, 20.dp, 20.dp) else RoundedCornerShape(6.dp, 20.dp, 20.dp, 20.dp),
