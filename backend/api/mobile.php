@@ -1,6 +1,6 @@
 <?php
 /**
- * TaleemPK native Android API v1.4.
+ * TaleemPK native Android API v1.5.
  *
  * Browser sessions are never exported to a phone. A successful native sign-in
  * receives a random bearer token; the database stores only its SHA-256 digest.

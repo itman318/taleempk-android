@@ -48,6 +48,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -63,9 +64,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import online.taleempk.studyhub.R
 import online.taleempk.studyhub.data.*
 import online.taleempk.studyhub.media.VoiceRecorder
 import java.io.File
+import java.io.BufferedInputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.math.abs
 
 private val Navy = Color(0xFF12213E)
@@ -101,12 +106,16 @@ fun TaleemPkRoot(vm: AppViewModel = viewModel()) {
 
 @Composable
 private fun BrandSplash() {
-    Box(Modifier.fillMaxSize().background(Navy), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Image(painterResource(R.drawable.auth_study_wallpaper), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Navy.copy(.54f), Navy.copy(.88f), Navy))))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            BrandMark(82)
+            Surface(shape = RoundedCornerShape(28.dp), color = Navy.copy(.74f), border = BorderStroke(1.dp, Color.White.copy(.18f))) {
+                Box(Modifier.padding(12.dp)) { BrandMark(82) }
+            }
             Spacer(Modifier.height(18.dp))
-            Text("TaleemPK", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
-            Text("Learn. Connect. Grow.", color = Lime, fontWeight = FontWeight.SemiBold)
+            Text("TaleemPK", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
+            Text("Pakistan's learning community", color = Color.White.copy(.72f), fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -127,6 +136,13 @@ private fun LoginScreen(vm: AppViewModel) {
     var password by remember { mutableStateOf("") }
     val context = LocalContext.current
     PremiumAuthLayout {
+        Surface(color = SoftLime, shape = RoundedCornerShape(50)) {
+            Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.AutoStories, null, Modifier.size(14.dp), tint = Navy)
+                Spacer(Modifier.width(6.dp)); Text("YOUR LEARNING SPACE", color = Navy, fontSize = 9.sp, fontWeight = FontWeight.Black)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
         AuthHeading("Welcome back", "Continue your learning journey with your TaleemPK account.")
         Spacer(Modifier.height(24.dp))
         PremiumField(
@@ -258,36 +274,52 @@ private fun RegisterScreen(vm: AppViewModel) {
 
 @Composable
 private fun PremiumAuthLayout(content: @Composable ColumnScope.() -> Unit) {
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(Color(0xFFF8FAFF), Color.White, SoftLime.copy(alpha = .34f)))
+    Box(Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(R.drawable.auth_study_wallpaper), contentDescription = null,
+            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
         )
-    ) {
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(
+            Navy.copy(alpha = .58f), Navy.copy(alpha = .74f), Color(0xFF09152B).copy(alpha = .94f)
+        ))))
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding()
-                .navigationBarsPadding().padding(horizontal = 20.dp, vertical = 24.dp)
+                .navigationBarsPadding().padding(horizontal = 18.dp, vertical = 22.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 BrandMark(48)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("TaleemPK", fontSize = 24.sp, fontWeight = FontWeight.Black, color = Navy)
-                    Text("Learn · Connect · Grow", color = Muted, fontSize = 11.sp)
+                    Text("TaleemPK", fontSize = 25.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    Text("Learn · Connect · Grow", color = Color.White.copy(.68f), fontSize = 11.sp)
                 }
-                Surface(color = SoftLime, shape = RoundedCornerShape(50), contentColor = Navy) {
-                    Text("SECURE", Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                Surface(color = Lime, shape = RoundedCornerShape(50), contentColor = Navy) {
+                    Text("PRIVATE & SECURE", Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                         fontSize = 9.sp, fontWeight = FontWeight.Black)
                 }
             }
-            Spacer(Modifier.height(28.dp))
-            Surface(
-                Modifier.fillMaxWidth(), shape = RoundedCornerShape(26.dp), color = Color.White,
-                border = BorderStroke(1.dp, Line), shadowElevation = 5.dp
-            ) {
-                Column(Modifier.padding(horizontal = 20.dp, vertical = 24.dp), content = content)
-            }
             Spacer(Modifier.height(24.dp))
+            Surface(
+                Modifier.fillMaxWidth(), shape = RoundedCornerShape(30.dp), color = Color.White.copy(alpha = .965f),
+                border = BorderStroke(1.dp, Color.White.copy(.7f)), shadowElevation = 14.dp
+            ) {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 25.dp), content = content)
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                AuthBenefit(Icons.Default.VerifiedUser, "Protected")
+                AuthBenefit(Icons.Default.Groups, "Community")
+                AuthBenefit(Icons.Default.School, "Learning")
+            }
+            Spacer(Modifier.height(18.dp))
         }
+    }
+}
+
+@Composable
+private fun AuthBenefit(icon: ImageVector, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, Modifier.size(15.dp), tint = Lime)
+        Spacer(Modifier.width(5.dp)); Text(label, color = Color.White.copy(.78f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -419,11 +451,16 @@ private fun MainShell(vm: AppViewModel) {
             }
         },
         bottomBar = {
-            if (activeChat == null && activeModule == null) NavigationBar(containerColor = Color.White, tonalElevation = 8.dp) {
-                NavItem("Home", Icons.Default.Home, RootScreen.HOME, vm)
-                NavItem("Feed", Icons.Default.DynamicFeed, RootScreen.FEED, vm)
-                NavItem("Chat", Icons.Default.ChatBubble, RootScreen.CHATS, vm)
-                NavItem("Profile", Icons.Default.Person, RootScreen.PROFILE, vm)
+            if (activeChat == null && activeModule == null) Surface(color = Mist) {
+                NavigationBar(
+                    Modifier.padding(horizontal = 10.dp, vertical = 7.dp).clip(RoundedCornerShape(24.dp)),
+                    containerColor = Color.White, tonalElevation = 10.dp
+                ) {
+                    NavItem("Home", Icons.Default.Home, RootScreen.HOME, vm)
+                    NavItem("Feed", Icons.Default.DynamicFeed, RootScreen.FEED, vm)
+                    NavItem("Chat", Icons.Default.ChatBubble, RootScreen.CHATS, vm)
+                    NavItem("Profile", Icons.Default.Person, RootScreen.PROFILE, vm)
+                }
             }
         }
     ) { pad ->
@@ -450,15 +487,20 @@ private fun MainShell(vm: AppViewModel) {
 
 @Composable
 private fun AppTopBar(name: String) {
-    Surface(color = Navy, shadowElevation = 5.dp) {
+    Surface(color = Navy, shadowElevation = 7.dp) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(72.dp).padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            BrandMark(40); Spacer(Modifier.width(12.dp))
+            Surface(color = Color.White.copy(.08f), shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, Color.White.copy(.12f))) {
+                Box(Modifier.padding(4.dp)) { BrandMark(38) }
+            }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("TaleemPK", color = Color.White, fontWeight = FontWeight.Black, fontSize = 19.sp)
                 Text("Welcome back, ${name.substringBefore(' ')}", color = Color.White.copy(alpha = .68f), fontSize = 11.sp)
             }
-            InitialAvatar(name, 38)
+            Surface(color = Lime.copy(.13f), shape = CircleShape, border = BorderStroke(1.dp, Lime.copy(.45f))) {
+                Box(Modifier.padding(3.dp)) { InitialAvatar(name, 36) }
+            }
         }
     }
 }
@@ -952,7 +994,8 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> imageToEdit = uri }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::sendAttachment) }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFFF5F7FB))) {
+    val pinned = remember(shown) { shown.lastOrNull { it.pinned && !it.deleted } }
+    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFFF8FAFF), Color(0xFFF1F4FA))))) {
         if (searchOpen) {
             Surface(color = Color.White, shadowElevation = 1.dp) {
                 OutlinedTextField(query, { query = it.take(100) }, Modifier.fillMaxWidth().padding(10.dp),
@@ -961,6 +1004,8 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
                     singleLine = true, shape = RoundedCornerShape(16.dp))
             }
         }
+        ChatSecurityBanner()
+        pinned?.let { PinnedMessageBar(it) { replyTo = it; editing = null } }
         LazyColumn(
             Modifier.weight(1f), state = listState,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
@@ -1034,6 +1079,36 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
             text = { Text("The message will be replaced by a deleted-message notice for everyone in this conversation.") },
             confirmButton = { TextButton({ vm.deleteMessage(message, true); deleteForEveryone = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton({ deleteForEveryone = null }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+private fun ChatSecurityBanner() {
+    Row(
+        Modifier.fillMaxWidth().background(Color(0xFFE8F7F2)).padding(horizontal = 14.dp, vertical = 7.dp),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.Lock, null, Modifier.size(13.dp), tint = Green)
+        Spacer(Modifier.width(6.dp))
+        Text("Private conversation · Protected in transit", color = Green, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.width(5.dp)); Icon(Icons.Default.VerifiedUser, null, Modifier.size(13.dp), tint = Green)
+    }
+}
+
+@Composable
+private fun PinnedMessageBar(message: ChatMessage, open: () -> Unit) {
+    Surface(Modifier.fillMaxWidth().clickable(onClick = open), color = Color.White, shadowElevation = 1.dp) {
+        Row(Modifier.padding(horizontal = 13.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(Modifier.size(31.dp), color = SoftLime, shape = RoundedCornerShape(9.dp)) {
+                Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.PushPin, null, Modifier.size(16.dp), tint = Navy) }
+            }
+            Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) {
+                Text("Pinned message", color = Green, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                Text(message.content.ifBlank { message.attachmentName ?: "Voice message" }, color = Ink,
+                    fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Icon(Icons.Default.ChevronRight, null, Modifier.size(18.dp), tint = Muted)
+        }
     }
 }
 
@@ -1256,7 +1331,9 @@ private fun MessageBubble(
                     }
                 } else {
                     if (m.voiceSeconds > 0) VoicePlayer(m.attachmentUrl, m.voiceSeconds, headers, m.mine)
-                    else if (m.attachmentUrl != null) AttachmentCard(m, m.mine, onAttachment)
+                    else if (m.attachmentUrl != null && m.attachmentType?.lowercase() in listOf("jpg", "jpeg", "png", "gif", "webp")) {
+                        ProtectedNetworkImage(m.attachmentUrl, headers, m.mine, onAttachment)
+                    } else if (m.attachmentUrl != null) AttachmentCard(m, m.mine, onAttachment)
                     if (m.content.isNotBlank()) Text(m.content, fontSize = 15.sp, lineHeight = 20.sp)
                 }
                 Row(Modifier.align(Alignment.End).padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1277,6 +1354,42 @@ private fun MessageBubble(
                     Text("${reaction.emoji} ${reaction.count}", Modifier.padding(horizontal = 7.dp, vertical = 3.dp), fontSize = 11.sp)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ProtectedNetworkImage(url: String, headers: Map<String, String>, mine: Boolean, open: () -> Unit) {
+    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
+    var failed by remember(url) { mutableStateOf(false) }
+    LaunchedEffect(url, headers) {
+        bitmap = withContext(Dispatchers.IO) {
+            try {
+                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 12_000; readTimeout = 25_000
+                    headers.forEach { (name, value) -> setRequestProperty(name, value) }
+                }
+                try {
+                    if (connection.responseCode !in 200..299) null
+                    else connection.inputStream.use { BitmapFactory.decodeStream(BufferedInputStream(it)) }
+                } finally { connection.disconnect() }
+            } catch (_: Exception) { null }
+        }
+        failed = bitmap == null
+    }
+    Surface(
+        Modifier.widthIn(min = 210.dp, max = 310.dp).heightIn(min = 120.dp, max = 300.dp)
+            .padding(bottom = 6.dp).clickable(onClick = open),
+        color = if (mine) Color.White.copy(.09f) else Mist, shape = RoundedCornerShape(15.dp)
+    ) {
+        when {
+            bitmap != null -> Image(bitmap!!.asImageBitmap(), "Shared photo", Modifier.fillMaxWidth(), contentScale = ContentScale.Crop)
+            failed -> Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.BrokenImage, null, tint = if (mine) Color.White.copy(.65f) else Muted)
+                Spacer(Modifier.height(6.dp)); Text("Tap to open photo", fontSize = 11.sp,
+                    color = if (mine) Color.White.copy(.65f) else Muted)
+            }
+            else -> Box(contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(25.dp), color = Lime, strokeWidth = 2.dp) }
         }
     }
 }

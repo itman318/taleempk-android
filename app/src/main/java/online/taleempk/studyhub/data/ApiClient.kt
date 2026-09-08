@@ -382,17 +382,18 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         } finally {
             conn.disconnect()
         }
-        val candidate = if (raw.startsWith("{") && raw.endsWith("}")) raw else {
-            val start = raw.indexOf('{')
-            val end = raw.lastIndexOf('}')
-            if (start >= 0 && end > start) raw.substring(start, end + 1) else raw
-        }
-        val json = try { JSONObject(candidate) } catch (_: Exception) {
+        /* Some shared-hosting setups prepend a warning/banner or append a
+           second response around otherwise valid API JSON. Extract balanced
+           objects and choose the final TaleemPK envelope instead of treating
+           a successfully processed message as an outdated backend. */
+        val json = extractJsonEnvelopes(raw).lastOrNull { it.has("ok") } ?: try {
+            JSONObject(raw)
+        } catch (_: Exception) {
             val message = when {
                 status >= 500 -> "TaleemPK mobile service is temporarily unavailable. Please try again shortly. (HTTP $status)"
                 status == 404 -> "The TaleemPK mobile service is not installed correctly. (HTTP 404)"
                 raw.isBlank() -> "The server returned an empty response. (HTTP $status)"
-                status == 200 -> "The website mobile backend is outdated or incomplete. Upload the latest TaleemPK backend update."
+                status == 200 -> "The website returned a page instead of chat data. Upload the included backend update to public_html/api/mobile.php."
                 else -> "The server returned an invalid response. (HTTP $status)"
             }
             throw ApiException(message, status)
@@ -401,6 +402,38 @@ class ApiClient(private val context: Context, private val session: SessionStore)
             throw ApiException(json.optString("error", "Request failed."), status)
         }
         return json
+    }
+
+    private fun extractJsonEnvelopes(raw: String): List<JSONObject> {
+        val found = mutableListOf<JSONObject>()
+        var start = -1
+        var depth = 0
+        var quoted = false
+        var escaped = false
+        raw.forEachIndexed { index, char ->
+            if (start < 0) {
+                if (char == '{') { start = index; depth = 1 }
+                return@forEachIndexed
+            }
+            if (quoted) {
+                if (escaped) escaped = false
+                else if (char == '\\') escaped = true
+                else if (char == '"') quoted = false
+                return@forEachIndexed
+            }
+            when (char) {
+                '"' -> quoted = true
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        try { found += JSONObject(raw.substring(start, index + 1)) } catch (_: Exception) { }
+                        start = -1
+                    }
+                }
+            }
+        }
+        return found
     }
 
     private fun JSONObject.nullable(key: String): String? = if (isNull(key)) null else optString(key).ifBlank { null }
