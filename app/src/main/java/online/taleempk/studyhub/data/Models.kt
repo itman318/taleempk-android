@@ -40,7 +40,18 @@ data class Conversation(
     val lastMessage: String,
     val lastActivity: String,
     val unread: Int,
-    val group: Boolean
+    val group: Boolean,
+    val online: Boolean = false,
+    val statusText: String = "",
+    val muted: Boolean = false
+)
+
+data class ChatReaction(val emoji: String, val count: Int, val mine: Boolean)
+
+data class ReplyPreview(
+    val id: Long,
+    val sender: String,
+    val text: String
 )
 
 data class ChatMessage(
@@ -53,7 +64,17 @@ data class ChatMessage(
     val voiceSeconds: Int,
     val attachmentUrl: String?,
     val attachmentName: String?,
-    val read: Boolean
+    val read: Boolean,
+    val attachmentType: String? = null,
+    val dateLabel: String = "",
+    val deleted: Boolean = false,
+    val edited: Boolean = false,
+    val forwarded: Boolean = false,
+    val starred: Boolean = false,
+    val pinned: Boolean = false,
+    val canEdit: Boolean = false,
+    val reply: ReplyPreview? = null,
+    val reactions: List<ChatReaction> = emptyList()
 )
 
 data class AuthResult(

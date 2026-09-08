@@ -72,23 +72,37 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         return arr.toObjects { o -> Conversation(
             o.optLong("id"), o.optString("title"), o.nullable("avatar"),
             o.optString("last_message"), o.optString("last_activity"), o.optInt("unread"),
-            o.optBoolean("is_group")
+            o.optBoolean("is_group"), o.optBoolean("online"), o.optString("status_text"),
+            o.optBoolean("muted")
         ) }
     }
 
     fun messages(conversationId: Long): List<ChatMessage> {
         val arr = request(mapOf("action" to "messages", "conversation_id" to conversationId.toString()), true)
             .getJSONObject("data").optJSONArray("messages") ?: JSONArray()
-        return arr.toObjects { o -> ChatMessage(
-            o.optLong("id"), o.optLong("sender_id"), o.optString("sender"), o.optString("content"),
-            o.optString("time"), o.optBoolean("mine"), o.optInt("voice_seconds"),
-            o.nullable("attachment_url"), o.nullable("attachment_name"), o.optBoolean("read")
-        ) }
+        return arr.toObjects { o ->
+            val reply = o.optJSONObject("reply")?.let { r -> ReplyPreview(
+                r.optLong("id"), r.optString("sender"), r.optString("text")
+            ) }
+            val reactions = (o.optJSONArray("reactions") ?: JSONArray()).toObjects { r ->
+                ChatReaction(r.optString("emoji"), r.optInt("count"), r.optBoolean("mine"))
+            }
+            ChatMessage(
+                o.optLong("id"), o.optLong("sender_id"), o.optString("sender"), o.optString("content"),
+                o.optString("time"), o.optBoolean("mine"), o.optInt("voice_seconds"),
+                o.nullable("attachment_url"), o.nullable("attachment_name"), o.optBoolean("read"),
+                o.nullable("attachment_type"), o.optString("date_label"), o.optBoolean("deleted"),
+                o.optBoolean("edited"), o.optBoolean("forwarded"), o.optBoolean("starred"),
+                o.optBoolean("pinned"), o.optBoolean("can_edit"), reply, reactions
+            )
+        }
     }
 
-    fun sendText(conversationId: Long, text: String) {
-        request(mapOf("action" to "send", "conversation_id" to conversationId.toString(),
-            "content" to text, "client_token" to UUID.randomUUID().toString()), true)
+    fun sendText(conversationId: Long, text: String, replyTo: Long? = null) {
+        val fields = mutableMapOf("action" to "send", "conversation_id" to conversationId.toString(),
+            "content" to text, "client_token" to UUID.randomUUID().toString())
+        replyTo?.let { fields["reply_to"] = it.toString() }
+        request(fields, true)
     }
 
     fun sendVoice(conversationId: Long, clip: VoiceClip) {
@@ -124,6 +138,32 @@ class ApiClient(private val context: Context, private val session: SessionStore)
             ?: throw ApiException("Could not read that file.")
         multipart(mapOf("action" to "send", "conversation_id" to conversationId.toString(),
             "client_token" to UUID.randomUUID().toString()), "attachment", name, mime, bytes)
+    }
+
+    fun react(messageId: Long, emoji: String) {
+        request(mapOf("action" to "reaction", "message_id" to messageId.toString(), "emoji" to emoji), true)
+    }
+
+    fun toggleStar(messageId: Long) {
+        request(mapOf("action" to "star", "message_id" to messageId.toString()), true)
+    }
+
+    fun togglePin(messageId: Long) {
+        request(mapOf("action" to "pin", "message_id" to messageId.toString()), true)
+    }
+
+    fun editMessage(messageId: Long, content: String) {
+        request(mapOf("action" to "message_action", "do" to "edit", "id" to messageId.toString(),
+            "content" to content), true)
+    }
+
+    fun deleteMessage(messageId: Long, everyone: Boolean) {
+        request(mapOf("action" to "message_action", "do" to "delete", "ids" to messageId.toString(),
+            "scope" to if (everyone) "all" else "me"), true)
+    }
+
+    fun toggleMute(conversationId: Long) {
+        request(mapOf("action" to "manage_chat", "do" to "toggle_mute", "id" to conversationId.toString()), true)
     }
 
     fun logout() {
@@ -201,7 +241,12 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         } finally {
             conn.disconnect()
         }
-        val json = try { JSONObject(raw) } catch (_: Exception) {
+        val candidate = if (raw.startsWith("{") && raw.endsWith("}")) raw else {
+            val start = raw.indexOf('{')
+            val end = raw.lastIndexOf('}')
+            if (start >= 0 && end > start) raw.substring(start, end + 1) else raw
+        }
+        val json = try { JSONObject(candidate) } catch (_: Exception) {
             val message = when {
                 status >= 500 -> "TaleemPK mobile service is temporarily unavailable. Please try again shortly. (HTTP $status)"
                 status == 404 -> "The TaleemPK mobile service is not installed correctly. (HTTP 404)"

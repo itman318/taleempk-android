@@ -1,6 +1,6 @@
 # TaleemPK Android
 
-Current app version: **1.1.0**
+Current app version: **1.2.0**
 
 Professional native Android client for **TaleemPK / StudyHub**.
 
@@ -11,7 +11,8 @@ Professional native Android client for **TaleemPK / StudyHub**.
 - Existing website accounts, roles and data are shared through the same backend.
 - Premium native login and account registration, email/username sign-in, email 2FA,
   encrypted device token storage, dashboard,
-  feed, conversations, text messages, attachments and voice-note recording/playback.
+  feed and premium native chat with search, replies, editing, delete-for-me/everyone,
+  reactions, stars, pins, attachments and voice recording/playback with speed control.
 - HTTPS-only network policy and verified TaleemPK App Link foundation.
 - The app requests only network and microphone permissions; microphone access is
   requested when the member starts a voice note.

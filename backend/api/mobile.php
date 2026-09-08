@@ -283,6 +283,27 @@ if ($action === 'logout') {
 $u = mobile_user();
 $uid = (int) $u['id'];
 
+/* Reuse the mature website chat handlers behind bearer authentication. Each
+   handler still performs its own membership, feature, verification and abuse
+   checks; only the browser-only CSRF check is bypassed for this authenticated
+   first-party client. Keeping one mutation path also keeps Android and web
+   behaviour identical. */
+$nativeChatHandlers = [
+    'send'           => 'chat_send.php',
+    'reaction'       => 'chat_reaction.php',
+    'star'           => 'chat_star.php',
+    'pin'            => 'chat_pin.php',
+    'message_action' => 'chat_message.php',
+    'manage_chat'    => 'chat_manage.php',
+    'search_chat'    => 'chat_search.php',
+];
+if (isset($nativeChatHandlers[$action])) {
+    require_feature('feature_chat');
+    $_SESSION['uid'] = $uid;
+    if (!defined('NATIVE_API_AUTHENTICATED')) { define('NATIVE_API_AUTHENTICATED', true); }
+    require __DIR__ . '/' . $nativeChatHandlers[$action];
+}
+
 if ($action === 'bootstrap') {
     $stats = [
         'members' => (int) fetch_col("SELECT COUNT(*) FROM users WHERE status='active'"),
@@ -328,22 +349,32 @@ if ($action === 'feed') {
 if ($action === 'conversations') {
     require_feature('feature_chat');
     $rows = fetch_all(
-        "SELECT c.id,c.type,c.title,c.avatar,c.last_message,c.last_activity,cm.unread_count,
+        "SELECT c.id,c.type,c.title,c.avatar,c.last_message,c.last_activity,cm.unread_count,cm.is_muted,
                 (SELECT u2.name FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
                   WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_name,
                 (SELECT u2.avatar FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
-                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_avatar
+                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_avatar,
+                (SELECT u2.last_seen FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
+                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_last_seen,
+                (SELECT u2.show_online FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
+                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_show_online
            FROM conversation_members cm JOIN conversations c ON c.id=cm.conversation_id
           WHERE cm.user_id=? AND cm.is_archived=0 ORDER BY c.last_activity DESC LIMIT 100",
-        [$uid,$uid,$uid]
+        [$uid,$uid,$uid,$uid,$uid]
     );
     $items = array_map(static function(array $c): array {
         $group = $c['type']==='group';
         $avatar = $group ? $c['avatar'] : $c['other_avatar'];
+        $online = !$group && (int)($c['other_show_online'] ?? 0) === 1
+            && !empty($c['other_last_seen']) && strtotime((string)$c['other_last_seen']) >= time() - 120;
+        $status = $group ? 'Study group' : ($online ? 'Online now'
+            : (!empty($c['other_last_seen']) && (int)($c['other_show_online'] ?? 0) === 1
+                ? 'Last seen ' . time_ago($c['other_last_seen']) : 'Private conversation'));
         return [
             'id'=>(int)$c['id'], 'title'=>$group ? ($c['title'] ?: 'Study group') : ($c['other_name'] ?: 'Conversation'),
             'avatar'=>$avatar ? upload_url($avatar) : null, 'last_message'=>(string)($c['last_message'] ?? ''),
             'last_activity'=>time_ago($c['last_activity']), 'unread'=>(int)$c['unread_count'], 'is_group'=>$group,
+            'online'=>$online, 'status_text'=>$status, 'muted'=>(int)$c['is_muted']===1,
         ];
     }, $rows);
     mobile_out(['conversations'=>$items]);
@@ -355,8 +386,15 @@ if ($action === 'messages') {
     $member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
     if (!$member) { mobile_error('That conversation is not yours.', 403); }
     $rows = fetch_all(
-        'SELECT m.*,u.name sender FROM messages m JOIN users u ON u.id=m.sender_id
-          WHERE m.conversation_id=? ORDER BY m.id DESC LIMIT 100', [$cid]
+        'SELECT m.*,u.name sender,ru.name reply_sender,rm.content reply_content,
+                rm.status reply_status,rm.voice_seconds reply_voice_seconds,rm.attachment_name reply_attachment_name,
+                EXISTS(SELECT 1 FROM message_stars s WHERE s.message_id=m.id AND s.user_id=?) starred
+           FROM messages m JOIN users u ON u.id=m.sender_id
+           LEFT JOIN messages rm ON rm.id=m.reply_to_id
+           LEFT JOIN users ru ON ru.id=rm.sender_id
+          WHERE m.conversation_id=?
+            AND NOT EXISTS(SELECT 1 FROM message_hides h WHERE h.message_id=m.id AND h.user_id=?)
+          ORDER BY m.id DESC LIMIT 150', [$uid,$cid,$uid]
     );
     $newest = $rows ? (int) $rows[0]['id'] : 0;
     if ($newest) {
@@ -366,17 +404,50 @@ if ($action === 'messages') {
         'SELECT COALESCE(MAX(last_read_id),0) FROM conversation_members WHERE conversation_id=? AND user_id<>?',
         [$cid,$uid]
     );
-    $items = array_reverse(array_map(static function(array $m) use ($uid, $otherReadThrough): array {
+    $reactionMap = [];
+    $messageIds = array_map(static fn(array $m): int => (int)$m['id'], $rows);
+    if ($messageIds) {
+        $ph = implode(',', array_fill(0, count($messageIds), '?'));
+        $reactionRows = fetch_all("SELECT message_id,emoji,COUNT(*) n,MAX(user_id=?) mine
+                                     FROM message_reactions WHERE message_id IN ($ph)
+                                    GROUP BY message_id,emoji ORDER BY MIN(id)", array_merge([$uid], $messageIds));
+        foreach ($reactionRows as $reaction) {
+            $reactionMap[(int)$reaction['message_id']][] = [
+                'emoji'=>(string)$reaction['emoji'], 'count'=>(int)$reaction['n'], 'mine'=>(bool)$reaction['mine'],
+            ];
+        }
+    }
+    $items = array_reverse(array_map(static function(array $m) use ($uid, $otherReadThrough, $reactionMap): array {
         $mine = (int)$m['sender_id']===$uid;
         $read = $mine && $otherReadThrough >= (int) $m['id'];
         $deleted = $m['status']==='deleted';
+        $created = strtotime((string)$m['created_at']);
+        $dateLabel = date('Y-m-d', $created) === date('Y-m-d') ? 'Today'
+            : (date('Y-m-d', $created) === date('Y-m-d', strtotime('-1 day')) ? 'Yesterday' : date('M j, Y', $created));
+        $reply = null;
+        if (!$deleted && !empty($m['reply_to_id'])) {
+            $replyText = $m['reply_status']==='deleted' ? 'Message deleted'
+                : trim((string)($m['reply_content'] ?? ''));
+            if ($replyText === '') {
+                $replyText = (int)($m['reply_voice_seconds'] ?? 0) > 0 ? 'Voice message'
+                    : (!empty($m['reply_attachment_name']) ? (string)$m['reply_attachment_name'] : 'Attachment');
+            }
+            $reply = ['id'=>(int)$m['reply_to_id'], 'sender'=>(string)($m['reply_sender'] ?: 'Message'),
+                'text'=>mb_substr($replyText, 0, 120)];
+        }
         return [
             'id'=>(int)$m['id'], 'sender_id'=>(int)$m['sender_id'], 'sender'=>$m['sender'],
             'content'=>$deleted ? 'This message was deleted.' : (string)($m['content'] ?? ''),
             'time'=>date('g:i A', strtotime($m['created_at'])), 'mine'=>$mine,
+            'date_label'=>$dateLabel, 'deleted'=>$deleted, 'edited'=>!empty($m['edited_at']),
+            'forwarded'=>!empty($m['forwarded_from']), 'starred'=>(bool)$m['starred'],
+            'pinned'=>(int)($m['is_pinned'] ?? 0)===1,
+            'can_edit'=>$mine && !$deleted && within_edit_window((string)$m['created_at']),
             'voice_seconds'=>$deleted ? 0 : (int)($m['voice_seconds'] ?? 0),
             'attachment_url'=>!$deleted && !empty($m['attachment']) ? url('api/mobile.php?action=file&id='.(int)$m['id']) : null,
-            'attachment_name'=>$deleted ? null : ($m['attachment_name'] ?? null), 'read'=>$read,
+            'attachment_name'=>$deleted ? null : ($m['attachment_name'] ?? null),
+            'attachment_type'=>$deleted ? null : ($m['attachment_type'] ?? null), 'read'=>$read,
+            'reply'=>$reply, 'reactions'=>$reactionMap[(int)$m['id']] ?? [],
         ];
     }, $rows));
     mobile_out(['messages'=>$items]);
@@ -404,13 +475,6 @@ if ($action === 'file') {
     header('Content-Disposition: inline; filename="'.$name.'"');
     header('Cache-Control: private, max-age=300');
     readfile($file); exit;
-}
-
-if ($action === 'send') {
-    require_feature('feature_chat');
-    $_SESSION['uid'] = $uid;
-    define('NATIVE_API_AUTHENTICATED', true);
-    require __DIR__ . '/chat_send.php';
 }
 
 mobile_error('Unknown API action.', 404);

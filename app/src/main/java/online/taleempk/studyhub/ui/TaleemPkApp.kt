@@ -10,10 +10,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,6 +34,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -384,12 +389,13 @@ private fun TwoFactorScreen(vm: AppViewModel) {
 private fun MainShell(vm: AppViewModel) {
     val context = LocalContext.current
     val activeChat = vm.selectedConversation
+    var chatSearch by remember(activeChat?.id) { mutableStateOf(false) }
     BackHandler(enabled = activeChat != null) { vm.closeConversation() }
     Scaffold(
         containerColor = Mist,
         topBar = {
             if (activeChat == null) AppTopBar(vm.bootstrap?.user?.name ?: "TaleemPK")
-            else ChatTopBar(activeChat, vm::closeConversation)
+            else ChatTopBar(activeChat, vm::closeConversation, { chatSearch = !chatSearch }, vm::toggleMute)
         },
         bottomBar = {
             if (activeChat == null) NavigationBar(containerColor = Color.White, tonalElevation = 8.dp) {
@@ -413,7 +419,7 @@ private fun MainShell(vm: AppViewModel) {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://taleempk.online/post-new.php")))
                 }
                 RootScreen.CHATS -> if (activeChat == null) ChatList(vm.conversations, vm::refreshChats, vm::openConversation)
-                    else ChatThread(vm, activeChat)
+                    else ChatThread(vm, activeChat, chatSearch)
                 RootScreen.PROFILE -> ProfileScreen(vm.bootstrap?.user, vm::logout) { route ->
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://taleempk.online/$route")))
                 }
@@ -442,13 +448,35 @@ private fun AppTopBar(name: String) {
 }
 
 @Composable
-private fun ChatTopBar(c: Conversation, back: () -> Unit) {
-    Surface(color = Navy) {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().height(68.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun ChatTopBar(c: Conversation, back: () -> Unit, search: () -> Unit, mute: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Surface(color = Navy, shadowElevation = 5.dp) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().height(72.dp).padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(back) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
-            InitialAvatar(c.title, 42); Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) { Text(c.title, color = Color.White, fontWeight = FontWeight.Bold)
-                Text(if (c.group) "Study group" else "Private conversation", color = Color.White.copy(.65f), fontSize = 12.sp) }
+            Box {
+                InitialAvatar(c.title, 43)
+                if (c.online) Box(Modifier.size(12.dp).align(Alignment.BottomEnd).clip(CircleShape)
+                    .background(Color.White).padding(2.dp).clip(CircleShape).background(Lime))
+            }
+            Spacer(Modifier.width(11.dp))
+            Column(Modifier.weight(1f)) {
+                Text(c.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(c.statusText.ifBlank { if (c.group) "Study group" else "Private conversation" },
+                    color = if (c.online) Lime else Color.White.copy(.64f), fontSize = 11.sp, maxLines = 1)
+            }
+            IconButton(search) { Icon(Icons.Default.Search, "Search messages", tint = Color.White) }
+            Box {
+                IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, "Chat options", tint = Color.White) }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (c.muted) "Turn notifications on" else "Mute notifications") },
+                        leadingIcon = { Icon(if (c.muted) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff, null) },
+                        onClick = { menu = false; mute() }
+                    )
+                    DropdownMenuItem(text = { Text("Chat safety & details") },
+                        leadingIcon = { Icon(Icons.Default.Security, null) }, onClick = { menu = false })
+                }
+            }
         }
     }
 }
@@ -560,6 +588,10 @@ private fun FeedScreen(posts: List<FeedPost>, refresh: () -> Unit, ask: () -> Un
 
 @Composable
 private fun ChatList(chats: List<Conversation>, refresh: () -> Unit, open: (Conversation) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(chats, query) { if (query.isBlank()) chats else chats.filter {
+        it.title.contains(query, true) || it.lastMessage.contains(query, true)
+    } }
     if (chats.isEmpty()) { EmptyState("No conversations yet—or tap refresh.", Icons.Default.ChatBubble, refresh); return }
     LazyColumn(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         item { Row(Modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -569,11 +601,21 @@ private fun ChatList(chats: List<Conversation>, refresh: () -> Unit, open: (Conv
             }
             IconButton(refresh) { Icon(Icons.Default.Refresh, "Refresh") }
         } }
-        items(chats, key = { it.id }) { c ->
+        item {
+            TextField(query, { query = it.take(80) }, Modifier.fillMaxWidth(), placeholder = { Text("Search conversations") },
+                leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, shape = RoundedCornerShape(17.dp),
+                colors = TextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White,
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+        }
+        items(filtered, key = { it.id }) { c ->
             Surface(Modifier.fillMaxWidth().clickable { open(c) }, shape = RoundedCornerShape(18.dp),
                 color = Color.White, border = BorderStroke(1.dp, Line)) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                    InitialAvatar(c.title, 50); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) {
+                    Box { InitialAvatar(c.title, 50)
+                        if (c.online) Box(Modifier.size(13.dp).align(Alignment.BottomEnd).clip(CircleShape)
+                            .background(Color.White).padding(2.dp).clip(CircleShape).background(Green))
+                    }
+                    Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) {
                         Row { Text(c.title, Modifier.weight(1f), fontWeight = FontWeight.Bold, maxLines = 1,
                                 overflow = TextOverflow.Ellipsis)
                             Text(c.lastActivity, color = Muted, fontSize = 10.sp) }
@@ -581,26 +623,48 @@ private fun ChatList(chats: List<Conversation>, refresh: () -> Unit, open: (Conv
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(c.lastMessage.ifBlank { "Start a conversation" }, Modifier.weight(1f), color = Muted,
                                 fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (c.muted) Icon(Icons.Default.NotificationsOff, "Muted", Modifier.size(14.dp), tint = Muted)
                             if (c.unread > 0) Badge(containerColor = Lime, contentColor = Navy) { Text(c.unread.toString()) }
                         }
                     }
                 }
             }
         }
+        if (filtered.isEmpty()) item { Text("No matching conversations", Modifier.fillMaxWidth().padding(28.dp), textAlign = TextAlign.Center, color = Muted) }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatThread(vm: AppViewModel, chat: Conversation) {
+private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean) {
     val context = LocalContext.current
     val recorder = remember { VoiceRecorder(context) }
+    val listState = rememberLazyListState()
     var recording by remember { mutableStateOf(false) }
     var recordingStart by remember { mutableLongStateOf(0L) }
     var elapsed by remember { mutableIntStateOf(0) }
     var preview by remember { mutableStateOf<VoiceClip?>(null) }
     var text by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
+    var emojiOpen by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<ChatMessage?>(null) }
+    var replyTo by remember { mutableStateOf<ChatMessage?>(null) }
+    var editing by remember { mutableStateOf<ChatMessage?>(null) }
+    var deleteForEveryone by remember { mutableStateOf<ChatMessage?>(null) }
 
+    val shown = remember(vm.messages, query) {
+        if (query.length < 2) vm.messages else vm.messages.filter {
+            it.content.contains(query, true) || it.sender.contains(query, true) ||
+                (it.attachmentName?.contains(query, true) == true)
+        }
+    }
     DisposableEffect(Unit) { onDispose { recorder.cancel(); preview?.let { File(it.filePath).delete() } } }
+    LaunchedEffect(chat.id) {
+        while (true) { delay(5_000); vm.refreshMessages() }
+    }
+    LaunchedEffect(shown.size) {
+        if (shown.isNotEmpty()) listState.animateScrollToItem(shown.lastIndex)
+    }
     LaunchedEffect(recording) {
         while (recording) {
             elapsed = ((SystemClock.elapsedRealtime() - recordingStart) / 1000L).toInt()
@@ -612,95 +676,385 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation) {
         }
     }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
-        if (allowed) try { recorder.start(); recordingStart = SystemClock.elapsedRealtime(); elapsed = 0; recording = true } catch (_: Exception) { }
+        if (allowed) try {
+            recorder.start(); recordingStart = SystemClock.elapsedRealtime(); elapsed = 0; recording = true
+        } catch (_: Exception) { }
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::sendAttachment) }
 
-    Column(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.weight(1f), reverseLayout = true, contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            items(vm.messages.asReversed(), key = { it.id }) { m -> MessageBubble(m, vm.authHeaders()) }
+    Column(Modifier.fillMaxSize().background(Color(0xFFF5F7FB))) {
+        if (searchOpen) {
+            Surface(color = Color.White, shadowElevation = 1.dp) {
+                OutlinedTextField(query, { query = it.take(100) }, Modifier.fillMaxWidth().padding(10.dp),
+                    placeholder = { Text("Search this conversation") }, leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Default.Close, "Clear") } },
+                    singleLine = true, shape = RoundedCornerShape(16.dp))
+            }
         }
-        if (preview != null) {
-            Surface(color = Lime.copy(.18f)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.GraphicEq, null, tint = Navy); Spacer(Modifier.width(10.dp)); Text("Voice message · ${preview!!.seconds}s", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                IconButton({ File(preview!!.filePath).delete(); preview = null }) { Icon(Icons.Default.Delete, "Delete") }
-                FilledIconButton({ val clip = preview!!; vm.sendVoice(clip) { preview = null } }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy)) { Icon(Icons.Default.Send, "Send") }
-            } }
-        } else if (recording) {
-            Surface(color = Color(0xFFFFECEA)) { Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Mic, null, tint = Color.Red); Spacer(Modifier.width(10.dp)); Text("Recording… ${elapsed}s", Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                TextButton({ recorder.cancel(); recording = false }) { Text("Cancel") }
-                FilledIconButton({ try { preview = recorder.stop() } catch (_: Exception) { }; recording = false }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy)) { Icon(Icons.Default.Stop, "Stop") }
-            } }
-        } else {
-            Surface(shadowElevation = 8.dp, color = Color.White) {
-                Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
-                    IconButton({ picker.launch(arrayOf("image/*", "application/pdf", "text/plain", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")) }) { Icon(Icons.Default.AttachFile, "Attach") }
-                    OutlinedTextField(text, { if (it.length <= 4000) text = it }, Modifier.weight(1f), placeholder = { Text("Message…") }, maxLines = 5, shape = RoundedCornerShape(24.dp))
-                    Spacer(Modifier.width(8.dp))
-                    FilledIconButton(onClick = {
-                        if (text.isNotBlank()) vm.sendText(text) { text = "" }
-                        else micPermission.launch(Manifest.permission.RECORD_AUDIO)
-                    }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy), modifier = Modifier.size(52.dp)) {
-                        Icon(if (text.isNotBlank()) Icons.Default.Send else Icons.Default.Mic, if (text.isNotBlank()) "Send" else "Record voice")
+        LazyColumn(
+            Modifier.weight(1f), state = listState,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            itemsIndexed(shown, key = { _, item -> item.id }) { index, message ->
+                if (index == 0 || shown[index - 1].dateLabel != message.dateLabel) DatePill(message.dateLabel)
+                MessageBubble(message, vm.authHeaders(), onLongPress = { selected = message },
+                    onReaction = { vm.react(message, it) })
+            }
+            if (shown.isEmpty()) item {
+                Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(if (query.isBlank()) "No messages yet. Say hello 👋" else "No matching messages", color = Muted)
+                }
+            }
+        }
+        when {
+            preview != null -> VoicePreview(preview!!, onDelete = {
+                File(preview!!.filePath).delete(); preview = null
+            }, onSend = { val clip = preview!!; vm.sendVoice(clip) { preview = null } })
+            recording -> RecordingBar(elapsed, onCancel = { recorder.cancel(); recording = false }, onStop = {
+                try { preview = recorder.stop() } catch (_: Exception) { }; recording = false
+            })
+            else -> PremiumComposer(
+                text = text, onText = { if (it.length <= 4000) text = it },
+                emojiOpen = emojiOpen, toggleEmoji = { emojiOpen = !emojiOpen },
+                reply = replyTo, editing = editing,
+                cancelContext = { replyTo = null; editing = null; text = "" },
+                attach = { picker.launch(arrayOf("image/*", "application/pdf", "text/plain", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")) },
+                send = {
+                    val edit = editing
+                    if (text.isNotBlank() && edit != null) vm.editMessage(edit, text) { text = ""; editing = null }
+                    else if (text.isNotBlank()) vm.sendText(text, replyTo?.id) { text = ""; replyTo = null; emojiOpen = false }
+                    else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            )
+        }
+    }
+
+    selected?.let { message ->
+        MessageActionsSheet(message, close = { selected = null }, reply = {
+            replyTo = message; editing = null; selected = null
+        }, edit = {
+            editing = message; replyTo = null; text = message.content; selected = null
+        }, star = { vm.toggleStar(message); selected = null }, pin = { vm.togglePin(message); selected = null },
+            deleteMe = { vm.deleteMessage(message, false); selected = null }, deleteAll = {
+                deleteForEveryone = message; selected = null
+            }, react = { vm.react(message, it); selected = null })
+    }
+    deleteForEveryone?.let { message ->
+        AlertDialog(onDismissRequest = { deleteForEveryone = null }, icon = { Icon(Icons.Default.DeleteForever, null) },
+            title = { Text("Delete for everyone?") },
+            text = { Text("The message will be replaced by a deleted-message notice for everyone in this conversation.") },
+            confirmButton = { TextButton({ vm.deleteMessage(message, true); deleteForEveryone = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton({ deleteForEveryone = null }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+private fun DatePill(label: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = Arrangement.Center) {
+        Surface(color = Color.White.copy(.95f), shape = RoundedCornerShape(50), border = BorderStroke(1.dp, Line)) {
+            Text(label.uppercase(), Modifier.padding(horizontal = 12.dp, vertical = 5.dp), color = Muted,
+                fontSize = 9.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun MessageBubble(
+    m: ChatMessage,
+    headers: Map<String, String>,
+    onLongPress: () -> Unit,
+    onReaction: (String) -> Unit
+) {
+    val bubble = if (m.mine) Navy else Color.White
+    val foreground = if (m.mine) Color.White else Ink
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (m.mine) Alignment.End else Alignment.Start) {
+        Surface(
+            color = bubble, contentColor = foreground,
+            shape = if (m.mine) RoundedCornerShape(20.dp, 6.dp, 20.dp, 20.dp) else RoundedCornerShape(6.dp, 20.dp, 20.dp, 20.dp),
+            shadowElevation = if (m.mine) 0.dp else 1.dp,
+            modifier = Modifier.fillMaxWidth(.84f).combinedClickable(onClick = {}, onLongClick = onLongPress)
+        ) {
+            Column(Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
+                if (!m.mine) Text(m.sender, color = Green, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                if (m.forwarded) MetaLabel(Icons.Default.Forward, "Forwarded", m.mine)
+                m.reply?.let { ReplyCard(it, m.mine) }
+                if (m.deleted) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Block, null, Modifier.size(16.dp), tint = foreground.copy(.6f))
+                        Spacer(Modifier.width(7.dp)); Text("This message was deleted", color = foreground.copy(.7f), fontSize = 13.sp)
                     }
+                } else {
+                    if (m.voiceSeconds > 0) VoicePlayer(m.attachmentUrl, m.voiceSeconds, headers, m.mine)
+                    else if (m.attachmentUrl != null) AttachmentCard(m, m.mine)
+                    if (m.content.isNotBlank()) Text(m.content, fontSize = 15.sp, lineHeight = 20.sp)
+                }
+                Row(Modifier.align(Alignment.End).padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (m.pinned) Icon(Icons.Default.PushPin, null, Modifier.size(12.dp), tint = foreground.copy(.58f))
+                    if (m.starred) Icon(Icons.Default.Star, null, Modifier.padding(start = 3.dp).size(12.dp), tint = Lime)
+                    if (m.edited) Text(" edited ·", color = foreground.copy(.55f), fontSize = 9.sp)
+                    Text(m.time, color = foreground.copy(.57f), fontSize = 9.sp)
+                    if (m.mine) { Spacer(Modifier.width(3.dp)); Icon(if (m.read) Icons.Default.DoneAll else Icons.Default.Done,
+                        if (m.read) "Read" else "Sent", Modifier.size(14.dp), tint = if (m.read) Lime else foreground.copy(.58f)) }
+                }
+            }
+        }
+        if (m.reactions.isNotEmpty()) Row(Modifier.padding(horizontal = 8.dp).offset(y = (-2).dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            m.reactions.forEach { reaction ->
+                Surface(Modifier.clickable { onReaction(reaction.emoji) }, color = if (reaction.mine) SoftLime else Color.White,
+                    shape = RoundedCornerShape(50), border = BorderStroke(1.dp, if (reaction.mine) Lime else Line)) {
+                    Text("${reaction.emoji} ${reaction.count}", Modifier.padding(horizontal = 7.dp, vertical = 3.dp), fontSize = 11.sp)
                 }
             }
         }
     }
 }
 
-@Composable
-private fun MessageBubble(m: ChatMessage, headers: Map<String, String>) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (m.mine) Arrangement.End else Arrangement.Start) {
-        Surface(color = if (m.mine) Navy else Color.White, contentColor = if (m.mine) Color.White else Ink,
-            shape = RoundedCornerShape(18.dp), shadowElevation = if (m.mine) 0.dp else 1.dp, modifier = Modifier.widthIn(max = 310.dp)) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                if (!m.mine) Text(m.sender, color = Green, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                if (m.voiceSeconds > 0) VoicePlayer(m.attachmentUrl, m.voiceSeconds, headers)
-                else if (m.attachmentUrl != null) Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.InsertDriveFile, null); Spacer(Modifier.width(7.dp)); Text(m.attachmentName ?: "Attachment", maxLines = 1)
-                }
-                if (m.content.isNotBlank()) Text(m.content, lineHeight = 21.sp)
-                Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                    Text(m.time, color = if (m.mine) Color.White.copy(.6f) else Color.Gray, fontSize = 10.sp)
-                    if (m.mine) { Spacer(Modifier.width(4.dp)); Icon(if (m.read) Icons.Default.DoneAll else Icons.Default.Done, null, Modifier.size(15.dp), tint = if (m.read) Lime else Color.White.copy(.6f)) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>) {
-    val context = LocalContext.current
-    var player by remember { mutableStateOf<MediaPlayer?>(null) }
-    var playing by remember { mutableStateOf(false) }
-    DisposableEffect(url) { onDispose { player?.release(); player = null } }
+@Composable private fun MetaLabel(icon: ImageVector, text: String, mine: Boolean) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton({
-            if (playing) { player?.pause(); playing = false }
-            else if (url != null) {
-                val current = player
-                if (current != null) {
-                    try { current.start(); playing = true } catch (_: Exception) { }
-                } else try {
-                    MediaPlayer().also { mp ->
-                        mp.setDataSource(context, Uri.parse(url), headers)
-                        mp.setOnPreparedListener { it.start(); playing = true }
-                        mp.setOnCompletionListener { playing = false; it.seekTo(0) }
-                        mp.setOnErrorListener { failed, _, _ ->
-                            failed.release(); player = null; playing = false; true
+        Icon(icon, null, Modifier.size(12.dp), tint = if (mine) Lime else Green)
+        Spacer(Modifier.width(4.dp)); Text(text, color = if (mine) Lime else Green, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable private fun ReplyCard(reply: ReplyPreview, mine: Boolean) {
+    Surface(Modifier.fillMaxWidth().padding(vertical = 5.dp), color = if (mine) Color.White.copy(.10f) else Mist,
+        shape = RoundedCornerShape(10.dp)) {
+        Row {
+            Box(Modifier.width(3.dp).height(48.dp).background(Lime))
+            Column(Modifier.padding(horizontal = 9.dp, vertical = 6.dp)) {
+                Text(reply.sender, color = if (mine) Lime else Green, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(reply.text, color = if (mine) Color.White.copy(.72f) else Muted, fontSize = 11.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable private fun AttachmentCard(m: ChatMessage, mine: Boolean) {
+    val image = m.attachmentType?.lowercase() in listOf("jpg", "jpeg", "png", "gif", "webp")
+    Surface(color = if (mine) Color.White.copy(.10f) else Mist, shape = RoundedCornerShape(13.dp), modifier = Modifier.padding(bottom = 5.dp)) {
+        Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(Modifier.size(38.dp), color = if (mine) Color.White.copy(.12f) else SoftLime, shape = RoundedCornerShape(11.dp)) {
+                Box(contentAlignment = Alignment.Center) { Icon(if (image) Icons.Default.Image else Icons.Default.Description, null, tint = if (mine) Lime else Navy) }
+            }
+            Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) {
+                Text(m.attachmentName ?: if (image) "Photo" else "Attachment", fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(if (image) "Image" else (m.attachmentType?.uppercase() ?: "File"),
+                    color = if (mine) Color.White.copy(.58f) else Muted, fontSize = 9.sp)
+            }
+            Icon(Icons.Default.Download, "Download", Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>, mine: Boolean) {
+    val context = LocalContext.current
+    var player by remember(url) { mutableStateOf<MediaPlayer?>(null) }
+    var playing by remember { mutableStateOf(false) }
+    var prepared by remember { mutableStateOf(false) }
+    var position by remember { mutableIntStateOf(0) }
+    var duration by remember(seconds) { mutableIntStateOf(seconds.coerceAtLeast(1) * 1000) }
+    var speed by remember { mutableFloatStateOf(1f) }
+    DisposableEffect(url) { onDispose { player?.release(); player = null } }
+    LaunchedEffect(playing) {
+        while (playing) { position = player?.currentPosition ?: position; delay(150) }
+    }
+    Column(Modifier.widthIn(min = 220.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilledIconButton({
+                if (playing) { player?.pause(); playing = false }
+                else if (url != null) {
+                    val current = player
+                    if (current != null && prepared) { current.start(); playing = true }
+                    else try {
+                        MediaPlayer().also { mp ->
+                            mp.setDataSource(context, Uri.parse(url), headers)
+                            mp.setOnPreparedListener {
+                                prepared = true; duration = it.duration.coerceAtLeast(duration)
+                                it.playbackParams = it.playbackParams.setSpeed(speed); it.start(); playing = true
+                            }
+                            mp.setOnCompletionListener { playing = false; position = 0; it.seekTo(0) }
+                            mp.setOnErrorListener { failed, _, _ -> failed.release(); player = null; playing = false; prepared = false; true }
+                            player = mp; mp.prepareAsync()
                         }
-                        player = mp
-                        mp.prepareAsync()
+                    } catch (_: Exception) { player?.release(); player = null; playing = false; prepared = false }
+                }
+            }, colors = IconButtonDefaults.filledIconButtonColors(
+                containerColor = if (mine) Lime else Navy, contentColor = if (mine) Navy else Color.White), modifier = Modifier.size(38.dp)) {
+                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause voice" else "Play voice", Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Row(Modifier.fillMaxWidth().height(22.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    repeat(28) { i ->
+                        val h = (6 + ((i * 11 + seconds) % 15)).dp
+                        Box(Modifier.weight(1f).height(h).clip(RoundedCornerShape(2.dp)).background(
+                            if (i / 28f <= position.toFloat() / duration.coerceAtLeast(1)) Lime else
+                                (if (mine) Color.White.copy(.35f) else Navy.copy(.22f))))
                     }
-                } catch (_: Exception) {
-                    player?.release(); player = null; playing = false
+                }
+                Slider(position.toFloat(), { value -> position = value.toInt(); if (prepared) player?.seekTo(position) },
+                    valueRange = 0f..duration.coerceAtLeast(1).toFloat(), modifier = Modifier.fillMaxWidth().height(18.dp),
+                    colors = SliderDefaults.colors(thumbColor = Lime, activeTrackColor = Lime,
+                        inactiveTrackColor = if (mine) Color.White.copy(.22f) else Navy.copy(.14f)))
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(start = 46.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatDuration(if (position > 0) position / 1000 else seconds), fontSize = 9.sp,
+                color = if (mine) Color.White.copy(.62f) else Muted)
+            Surface(Modifier.clickable {
+                speed = when (speed) { 1f -> 1.5f; 1.5f -> 2f; else -> 1f }
+                if (prepared) player?.let { it.playbackParams = it.playbackParams.setSpeed(speed) }
+            }, color = if (mine) Color.White.copy(.10f) else Mist, shape = RoundedCornerShape(50)) {
+                Text("${speed}×", Modifier.padding(horizontal = 7.dp, vertical = 2.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+private fun formatDuration(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)
+
+@Composable
+private fun PremiumComposer(
+    text: String,
+    onText: (String) -> Unit,
+    emojiOpen: Boolean,
+    toggleEmoji: () -> Unit,
+    reply: ChatMessage?,
+    editing: ChatMessage?,
+    cancelContext: () -> Unit,
+    attach: () -> Unit,
+    send: () -> Unit
+) {
+    Surface(color = Color.White, shadowElevation = 10.dp) {
+        Column(Modifier.navigationBarsPadding()) {
+            val contextMessage = editing ?: reply
+            if (contextMessage != null) {
+                Row(Modifier.fillMaxWidth().background(Color(0xFFF8FAFD)).padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(3.dp).height(36.dp).background(Lime))
+                    Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) {
+                        Text(if (editing != null) "Editing message" else "Replying to ${contextMessage.sender}",
+                            color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(contextMessage.content.ifBlank { contextMessage.attachmentName ?: "Voice message" },
+                            color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(cancelContext, Modifier.size(34.dp)) { Icon(Icons.Default.Close, "Cancel") }
                 }
             }
-        }) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause voice" else "Play voice") }
-        Icon(Icons.Default.GraphicEq, null, Modifier.width(90.dp)); Text(" ${seconds}s", fontSize = 12.sp)
+            if (emojiOpen) {
+                val emojis = listOf("😀","😂","🥰","😍","😎","🤔","😢","😭","😮","😡","👍","👏","🙏","❤️","🔥","🎉","✅","📚")
+                Column(Modifier.fillMaxWidth().background(Color(0xFFFAFBFD)).padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    emojis.chunked(9).forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            row.forEach { emoji -> Text(emoji, Modifier.size(36.dp).clickable { onText(text + emoji) }.padding(5.dp), fontSize = 20.sp) }
+                        }
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 9.dp), verticalAlignment = Alignment.Bottom) {
+                IconButton(toggleEmoji, Modifier.size(42.dp)) {
+                    Icon(if (emojiOpen) Icons.Default.Keyboard else Icons.Default.SentimentSatisfiedAlt,
+                        if (emojiOpen) "Keyboard" else "Emoji", tint = Navy)
+                }
+                Surface(Modifier.weight(1f), color = Color(0xFFF5F7FA), shape = RoundedCornerShape(23.dp),
+                    border = BorderStroke(1.dp, Line)) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        TextField(text, onText, Modifier.weight(1f), placeholder = { Text("Message…", color = Muted) },
+                            minLines = 1, maxLines = 5, colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences))
+                        IconButton(attach) { Icon(Icons.Default.AttachFile, "Attach file", tint = Navy) }
+                    }
+                }
+                Spacer(Modifier.width(7.dp))
+                FilledIconButton(send, Modifier.size(50.dp), colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = if (text.isNotBlank()) Navy else Navy2, contentColor = Color.White)) {
+                    Icon(if (text.isNotBlank()) Icons.Default.Send else Icons.Default.Mic,
+                        if (text.isNotBlank()) "Send message" else "Record voice")
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun VoicePreview(clip: VoiceClip, onDelete: () -> Unit, onSend: () -> Unit) {
+    Surface(color = Color.White, shadowElevation = 10.dp) {
+        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(Modifier.size(42.dp), color = SoftLime, shape = CircleShape) {
+                Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.GraphicEq, null, tint = Navy) }
+            }
+            Spacer(Modifier.width(11.dp)); Column(Modifier.weight(1f)) {
+                Text("Voice message ready", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("${formatDuration(clip.seconds)} · Review before sending", color = Muted, fontSize = 10.sp)
+            }
+            IconButton(onDelete) { Icon(Icons.Default.DeleteOutline, "Delete recording", tint = MaterialTheme.colorScheme.error) }
+            FilledIconButton(onSend, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy)) { Icon(Icons.Default.Send, "Send voice") }
+        }
+    }
+}
+
+@Composable private fun RecordingBar(seconds: Int, onCancel: () -> Unit, onStop: () -> Unit) {
+    Surface(color = Color.White, shadowElevation = 10.dp) {
+        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFE53935)))
+            Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) {
+                Text("Recording voice…", fontWeight = FontWeight.Bold, color = Ink)
+                Text("${formatDuration(seconds)} / 2:00", color = Muted, fontSize = 10.sp)
+            }
+            TextButton(onCancel) { Text("Cancel", color = MaterialTheme.colorScheme.error) }
+            FilledIconButton(onStop, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy)) { Icon(Icons.Default.Stop, "Stop recording") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun MessageActionsSheet(
+    message: ChatMessage,
+    close: () -> Unit,
+    reply: () -> Unit,
+    edit: () -> Unit,
+    star: () -> Unit,
+    pin: () -> Unit,
+    deleteMe: () -> Unit,
+    deleteAll: () -> Unit,
+    react: (String) -> Unit
+) {
+    val clipboard = LocalClipboardManager.current
+    ModalBottomSheet(onDismissRequest = close, containerColor = Color.White) {
+        Text("React", Modifier.padding(horizontal = 20.dp), color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            listOf("👍","❤️","😂","😮","😢","🔥").forEach { emoji ->
+                Surface(Modifier.size(44.dp).clickable { react(emoji) }, color = Mist, shape = CircleShape) {
+                    Box(contentAlignment = Alignment.Center) { Text(emoji, fontSize = 21.sp) }
+                }
+            }
+        }
+        HorizontalDivider(color = Line)
+        ActionRow(Icons.Default.Reply, "Reply", reply)
+        if (message.content.isNotBlank() && !message.deleted) ActionRow(Icons.Default.ContentCopy, "Copy text") {
+            clipboard.setText(AnnotatedString(message.content)); close()
+        }
+        if (message.canEdit && message.content.isNotBlank()) ActionRow(Icons.Default.Edit, "Edit message", edit)
+        if (!message.deleted) ActionRow(if (message.starred) Icons.Default.StarBorder else Icons.Default.Star,
+            if (message.starred) "Remove star" else "Star message", star)
+        if (!message.deleted) ActionRow(Icons.Default.PushPin, if (message.pinned) "Unpin message" else "Pin message", pin)
+        ActionRow(Icons.Default.DeleteOutline, "Delete for me", deleteMe, danger = true)
+        if (message.mine && !message.deleted) ActionRow(Icons.Default.DeleteForever, "Delete for everyone", deleteAll, danger = true)
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+@Composable private fun ActionRow(icon: ImageVector, label: String, action: () -> Unit, danger: Boolean = false) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = action).padding(horizontal = 20.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = if (danger) MaterialTheme.colorScheme.error else Navy)
+        Spacer(Modifier.width(15.dp)); Text(label, color = if (danger) MaterialTheme.colorScheme.error else Ink, fontWeight = FontWeight.SemiBold)
     }
 }
 

@@ -99,10 +99,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         messages = withContext(Dispatchers.IO) { api.messages(c.id) }
     } } }
 
-    fun sendText(text: String, after: () -> Unit) {
+    fun sendText(text: String, replyTo: Long? = null, after: () -> Unit) {
         val c = selectedConversation ?: return
         launch(showSpinner = false) {
-            withContext(Dispatchers.IO) { api.sendText(c.id, text.trim()) }
+            withContext(Dispatchers.IO) { api.sendText(c.id, text.trim(), replyTo) }
             messages = withContext(Dispatchers.IO) { api.messages(c.id) }
             after()
         }
@@ -123,6 +123,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         launch {
             withContext(Dispatchers.IO) { api.sendAttachment(c.id, uri) }
             messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+        }
+    }
+
+    fun react(message: ChatMessage, emoji: String) = chatAction { api.react(message.id, emoji) }
+    fun toggleStar(message: ChatMessage) = chatAction { api.toggleStar(message.id) }
+    fun togglePin(message: ChatMessage) = chatAction { api.togglePin(message.id) }
+    fun editMessage(message: ChatMessage, content: String, after: () -> Unit) = chatAction(after) {
+        api.editMessage(message.id, content.trim())
+    }
+    fun deleteMessage(message: ChatMessage, everyone: Boolean) = chatAction {
+        api.deleteMessage(message.id, everyone)
+    }
+    fun toggleMute() {
+        val c = selectedConversation ?: return
+        chatAction {
+            api.toggleMute(c.id)
+            selectedConversation = c.copy(muted = !c.muted)
+        }
+    }
+
+    private fun chatAction(after: () -> Unit = {}, action: () -> Unit) {
+        val c = selectedConversation ?: return
+        launch(showSpinner = false) {
+            withContext(Dispatchers.IO) { action() }
+            messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+            after()
         }
     }
 
