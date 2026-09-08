@@ -29,9 +29,10 @@ header('X-Content-Type-Options: nosniff');
 
 $action = strtolower(trim((string) ($_POST['action'] ?? $_GET['action'] ?? '')));
 
-/* File playback is the sole GET action. Every state-reading JSON request is
-   POST as well, keeping credentials out of URLs and intermediary logs. */
-if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !($action === 'file' && $_SERVER['REQUEST_METHOD'] === 'GET')) {
+/* Health is intentionally browser-checkable; authenticated state reads stay
+   POST so credentials and account actions never leak into intermediary logs. */
+$publicGet = $_SERVER['REQUEST_METHOD'] === 'GET' && in_array($action, ['health', 'file'], true);
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !$publicGet) {
     mobile_error('This endpoint only accepts POST.', 405);
 }
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && post_body_was_too_large()) {
