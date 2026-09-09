@@ -283,6 +283,14 @@ class ApiClient {
     'do': 'toggle_mute',
   });
 
+  Future<void> forwardMessage(int messageId, int conversationId) =>
+      _request({
+        'action': 'message_action',
+        'do': 'forward',
+        'id': '$messageId',
+        'conversation_id': '$conversationId',
+      });
+
   Future<void> react(int id, String emoji) =>
       _request({'action': 'reaction', 'message_id': '$id', 'emoji': emoji});
   Future<void> toggleStar(int id) =>
