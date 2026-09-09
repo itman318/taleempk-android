@@ -27,7 +27,9 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // AGP 9.1 no longer materializes the legacy default file reliably.
+            // Keep R8 enabled and use the app's explicit release rules.
+            proguardFiles("proguard-rules.pro")
         }
     }
 }
