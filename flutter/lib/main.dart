@@ -29,13 +29,7 @@ class StudyHubApp extends StatelessWidget {
       title: 'TaleemPK',
       debugShowCheckedModeBanner: false,
       theme: studyHubTheme(),
-      darkTheme: ThemeData.dark(useMaterial3: true).copyWith(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.violet,
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: const Color(0xFF071020),
-      ),
+      darkTheme: studyHubDarkTheme(),
       themeMode: state.darkMode ? ThemeMode.dark : ThemeMode.light,
       home: switch (state.status) {
         AppStatus.starting || AppStatus.loading => const SplashScreen(),
