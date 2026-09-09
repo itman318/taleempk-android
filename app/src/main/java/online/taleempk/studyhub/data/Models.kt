@@ -31,8 +31,20 @@ data class FeedPost(
     val likes: Int,
     val comments: Int,
     val solved: Boolean,
-    val liked: Boolean = false
+    val liked: Boolean = false,
+    val subject: String = "",
+    val verified: Boolean = false,
+    val saved: Boolean = false,
+    val reaction: String = "",
+    val dislikes: Int = 0,
+    val media: List<PostMedia> = emptyList(),
+    val source: String? = null,
+    val canRepost: Boolean = false,
+    val showDislikes: Boolean = false
 )
+
+data class PostMedia(val id: Long, val name: String, val type: String, val url: String)
+data class PostDraft(val content: String, val question: Boolean, val subject: String = "", val anonymous: Boolean = false, val followersOnly: Boolean = false, val attachments: List<android.net.Uri> = emptyList())
 
 data class FeedComment(
     val id: Long,
@@ -106,8 +118,18 @@ data class ChatMessage(
     val pinned: Boolean = false,
     val canEdit: Boolean = false,
     val reply: ReplyPreview? = null,
-    val reactions: List<ChatReaction> = emptyList()
+    val reactions: List<ChatReaction> = emptyList(),
+    val clientToken: String? = null,
+    val failed: Boolean = false,
+    val encrypted: Boolean = false,
+    val voicePlayed: Boolean = false
 )
+
+data class MessageBatch(val messages: List<ChatMessage>, val hiddenIds: Set<Long> = emptySet(), val hasMore: Boolean = false)
+
+data class AppNotification(val id: Long, val message: String, val type: String, val route: String, val time: String, val read: Boolean)
+data class NotificationBatch(val items: List<AppNotification>, val unread: Int)
+data class ChatLookup(val id:Long,val conversationId:Long,val title:String,val sender:String,val text:String,val time:String)
 
 data class AuthResult(
     val token: String? = null,

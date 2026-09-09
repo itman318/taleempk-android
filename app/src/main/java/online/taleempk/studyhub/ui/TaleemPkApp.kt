@@ -56,14 +56,27 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.emoji2.emojipicker.EmojiPickerView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.request.CachePolicy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import online.taleempk.studyhub.R
 import online.taleempk.studyhub.data.*
 import online.taleempk.studyhub.media.VoiceRecorder
@@ -435,23 +448,28 @@ private fun TwoFactorScreen(vm: AppViewModel) {
 
 @Composable
 private fun MainShell(vm: AppViewModel) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        while(true) { vm.refreshNotifications(); delay(15_000) }
+    } }
     val activeChat = vm.selectedConversation
     val activeModule = vm.activeModule
     var chatSearch by remember(activeChat?.id) { mutableStateOf(false) }
-    BackHandler(enabled = activeChat != null || activeModule != null) {
-        if (activeChat != null) vm.closeConversation() else vm.closeModule()
+    BackHandler(enabled = activeChat != null || activeModule != null || vm.notificationsOpen) {
+        if(vm.notificationsOpen)vm.closeNotifications() else if (activeChat != null) vm.closeConversation() else vm.closeModule()
     }
     Scaffold(
         containerColor = Mist,
         topBar = {
             when {
-                activeChat != null -> ChatTopBar(activeChat, vm::closeConversation, { chatSearch = !chatSearch }, vm::toggleMute)
+                vm.notificationsOpen -> NativeModuleTopBar("Notifications",vm::closeNotifications,vm::refreshNotifications)
+                activeChat != null -> ChatTopBar(activeChat, vm::closeConversation, { chatSearch = !chatSearch }, vm::toggleMute,{vm.findMessages()})
                 activeModule != null -> NativeModuleTopBar(activeModule.title, vm::closeModule, vm::refreshModule)
-                else -> AppTopBar(vm.bootstrap?.user?.name ?: "TaleemPK")
+                else -> AppTopBar(vm.bootstrap?.user?.name ?: "TaleemPK",vm.notificationUnread,vm::openNotifications)
             }
         },
         bottomBar = {
-            if (activeChat == null && activeModule == null) Surface(color = Mist) {
+            if (activeChat == null && activeModule == null && !vm.notificationsOpen) Surface(color = Mist) {
                 NavigationBar(
                     Modifier.padding(horizontal = 10.dp, vertical = 7.dp).clip(RoundedCornerShape(24.dp)),
                     containerColor = Color.White, tonalElevation = 10.dp
@@ -465,28 +483,45 @@ private fun MainShell(vm: AppViewModel) {
         }
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
-            if (activeModule != null) NativeModuleScreen(
+            if(vm.notificationsOpen) NotificationScreen(vm)
+            else if (activeModule != null) NativeModuleScreen(
                 activeModule, vm::moduleItemAction, vm::updateProfile, vm::createTicket
             )
             else when (vm.screen) {
                 RootScreen.HOME -> HomeScreen(vm.bootstrap, vm::refreshHome, vm::openNativeRoute)
                 RootScreen.FEED -> FeedScreen(
-                    vm.posts, vm.commentPost, vm.feedComments, vm::refreshFeed, vm::createPost,
+                    vm, vm.posts, vm.commentPost, vm.feedComments, vm::refreshFeed, vm::createPost,
                     vm::togglePostLike, vm::openComments, vm::closeComments, vm::addComment
                 )
-                RootScreen.CHATS -> if (activeChat == null) ChatList(vm.conversations, vm::refreshChats, vm::openConversation) else ChatThread(vm, activeChat, chatSearch)
+                RootScreen.CHATS -> if (activeChat == null) ChatList(vm.conversations, vm::refreshChats, vm::openConversation) else key(activeChat.id){ChatThread(vm, activeChat, chatSearch)}
                 RootScreen.PROFILE -> ProfileScreen(vm.bootstrap?.user, vm::logout, vm::openNativeRoute)
             }
             if (vm.busy && vm.authStage == AuthStage.SIGNED_IN) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter), color = Lime)
+            vm.frontNotification?.let{n->Surface(Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth().clickable{vm.dismissFrontNotification();vm.readNotification(n)},
+                color=Navy,contentColor=Color.White,shadowElevation=10.dp,shape=RoundedCornerShape(18.dp)){
+                Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.NotificationsActive,null,tint=Lime)
+                    Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text("New notification",fontWeight=FontWeight.Bold,fontSize=12.sp);Text(n.message,maxLines=2,fontSize=12.sp)}
+                    IconButton(vm::dismissFrontNotification){Icon(Icons.Default.Close,"Dismiss notification")}
+                }
+            }}
             vm.error?.let { Snackbar(Modifier.align(Alignment.BottomCenter).padding(16.dp), action = {
-                TextButton(vm::clearError) { Text("Dismiss") }
+                TextButton(vm::clearError) { Text("Dismiss", color=Lime) }
             }) { Text(it) } }
         }
     }
+    vm.lookupTitle?.let{title->AlertDialog(onDismissRequest=vm::closeLookup,title={Text(title)},
+        text={if(vm.lookupResults.isEmpty())Text("No matching messages.") else LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            items(vm.lookupResults,key={it.id}){result->Surface(Modifier.fillMaxWidth().clickable{vm.openLookup(result)},color=Mist,shape=RoundedCornerShape(12.dp)){
+                Column(Modifier.padding(12.dp)){Text(result.title,fontWeight=FontWeight.Bold,fontSize=13.sp)
+                    Text("${result.sender} · ${result.time}",fontSize=10.sp,color=Muted)
+                    Spacer(Modifier.height(5.dp));Text(result.text,fontSize=13.sp)
+                    Text("Open conversation",Modifier.padding(top=6.dp),fontSize=11.sp,color=Green)}
+            }}
+        }},confirmButton={TextButton(vm::closeLookup){Text("Close")}})}
 }
 
 @Composable
-private fun AppTopBar(name: String) {
+private fun AppTopBar(name: String, unread: Int, notifications: () -> Unit) {
     Surface(color = Navy, shadowElevation = 7.dp) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(72.dp).padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -497,6 +532,11 @@ private fun AppTopBar(name: String) {
             Column(Modifier.weight(1f)) {
                 Text("TaleemPK", color = Color.White, fontWeight = FontWeight.Black, fontSize = 19.sp)
                 Text("Welcome back, ${name.substringBefore(' ')}", color = Color.White.copy(alpha = .68f), fontSize = 11.sp)
+            }
+            IconButton(notifications) {
+                BadgedBox(badge={if(unread>0)Badge(containerColor=Lime,contentColor=Navy){Text(if(unread>99)"99+" else "$unread")}}){
+                    Icon(Icons.Default.NotificationsNone,"Notifications, $unread unread",tint=Color.White)
+                }
             }
             Surface(color = Lime.copy(.13f), shape = CircleShape, border = BorderStroke(1.dp, Lime.copy(.45f))) {
                 Box(Modifier.padding(3.dp)) { InitialAvatar(name, 36) }
@@ -654,8 +694,12 @@ private fun moduleItemIcon(kind: String): ImageVector = when (kind) {
 }
 
 @Composable
-private fun ChatTopBar(c: Conversation, back: () -> Unit, search: () -> Unit, mute: () -> Unit) {
+private fun ChatTopBar(c: Conversation, back: () -> Unit, search: () -> Unit, mute: () -> Unit, stars:()->Unit) {
     var menu by remember { mutableStateOf(false) }
+    var safety by remember{mutableStateOf(false)}
+    if(safety)AlertDialog(onDismissRequest={safety=false},title={Text("Chat privacy")},
+        text={Text("Messages travel over HTTPS. Read and typing indicators follow your account privacy settings. Encrypted history needs the website's key unlock. You can mute this conversation from the menu.")},
+        confirmButton={TextButton({safety=false}){Text("Got it")}})
     Surface(color = Navy, shadowElevation = 5.dp) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(72.dp).padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(back) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
@@ -680,7 +724,8 @@ private fun ChatTopBar(c: Conversation, back: () -> Unit, search: () -> Unit, mu
                         onClick = { menu = false; mute() }
                     )
                     DropdownMenuItem(text = { Text("Chat safety & details") },
-                        leadingIcon = { Icon(Icons.Default.Security, null) }, onClick = { menu = false })
+                        leadingIcon = { Icon(Icons.Default.Security, null) }, onClick = { menu = false;safety=true })
+                    DropdownMenuItem(text={Text("Starred messages")},leadingIcon={Icon(Icons.Default.StarBorder,null)},onClick={menu=false;stars()})
                 }
             }
         }
@@ -747,6 +792,7 @@ private fun HomeScreen(data: Bootstrap?, refresh: () -> Unit, open: (String) -> 
 
 @Composable
 private fun FeedScreen(
+    vm: AppViewModel,
     posts: List<FeedPost>,
     commentPost: FeedPost?,
     comments: List<FeedComment>,
@@ -760,6 +806,11 @@ private fun FeedScreen(
     var composer by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     var question by remember { mutableStateOf(true) }
+    var subject by remember { mutableStateOf("") }
+    var anonymous by remember { mutableStateOf(false) }
+    var followers by remember { mutableStateOf(false) }
+    var media by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()){uris->media=(media+uris).distinct().take(4)}
     LazyColumn(contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -794,8 +845,11 @@ private fun FeedScreen(
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         InitialAvatar(p.author, 42); Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) {
-                            Text(p.author, fontWeight = FontWeight.Bold); Text("@${p.username} · ${p.createdAt}", color = Color.Gray, fontSize = 12.sp)
+                            Row(verticalAlignment=Alignment.CenterVertically){Text(p.author, fontWeight = FontWeight.Bold)
+                                if(p.verified)Icon(Icons.Default.Verified,"Verified",Modifier.padding(start=4.dp).size(15.dp),tint=Green)}
+                            Text((if(p.username.isNotBlank())"@${p.username} · " else "")+p.createdAt, color = Muted, fontSize = 11.sp)
                         }
+                        IconButton({vm.savePost(p)}){Icon(if(p.saved)Icons.Default.Bookmark else Icons.Default.BookmarkBorder,"Save post",tint=if(p.saved)Green else Muted)}
                         if (p.solved) Surface(color = Color(0xFFE8F8F1), shape = RoundedCornerShape(50)) {
                             Row(Modifier.padding(horizontal = 9.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.CheckCircle, null, Modifier.size(14.dp), tint = Green)
@@ -803,7 +857,20 @@ private fun FeedScreen(
                             }
                         }
                     }
+                    if(p.subject.isNotBlank())Text(p.subject,Modifier.padding(top=10.dp),color=Green,fontSize=12.sp,fontWeight=FontWeight.Bold)
+                    if(p.type=="question")Text("QUESTION",Modifier.padding(top=6.dp),color=Green,fontSize=10.sp,fontWeight=FontWeight.Bold)
                     if (p.content.isNotBlank()) { Spacer(Modifier.height(14.dp)); Text(p.content, lineHeight = 22.sp) }
+                    p.source?.let{Surface(Modifier.fillMaxWidth().padding(top=10.dp),color=Mist,shape=RoundedCornerShape(14.dp)){
+                        Text(it,Modifier.padding(14.dp),fontSize=14.sp,lineHeight=20.sp)}}
+                    p.media.forEach{m->
+                        if(m.type.lowercase() in listOf("jpg","jpeg","png","gif","webp","image")){
+                            AsyncImage(ImageRequest.Builder(LocalContext.current).data(m.url).apply{vm.authHeaders().forEach{(key,value)->addHeader(key,value)}}.memoryCacheKey(m.url+vm.authHeaders().hashCode()).diskCachePolicy(CachePolicy.DISABLED).size(1000).crossfade(true).build(),m.name,
+                                Modifier.fillMaxWidth().heightIn(min=140.dp,max=360.dp).padding(top=10.dp).clip(RoundedCornerShape(14.dp)),contentScale=ContentScale.Fit)
+                        }else Surface(Modifier.fillMaxWidth().padding(top=8.dp).clickable{vm.openPostMedia(m)},color=Mist,shape=RoundedCornerShape(12.dp)){
+                            Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Description,null,tint=Green)
+                                Spacer(Modifier.width(8.dp));Text(m.name,Modifier.weight(1f),fontSize=12.sp)}
+                        }
+                    }
                     Spacer(Modifier.height(12.dp)); HorizontalDivider(color = Mist); Spacer(Modifier.height(5.dp))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Row(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable { like(p) }.padding(9.dp),
@@ -820,27 +887,42 @@ private fun FeedScreen(
                             Spacer(Modifier.width(6.dp)); Text("Replies · ${p.comments}", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         }
                     }
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                        if(p.showDislikes)TextButton({vm.postReaction(p,"dislike")}){
+                            Icon(Icons.Default.ThumbDownOffAlt,null,Modifier.size(16.dp),tint=if(p.reaction=="dislike")Green else Muted)
+                            Text(" ${p.dislikes}",fontSize=11.sp,color=Muted)}
+                        if(p.canRepost)TextButton({vm.repost(p)}){Icon(Icons.Default.Repeat,null,Modifier.size(16.dp));Text(" Repost",fontSize=11.sp)}
+                    }
                 }
             }
         }
+        if(posts.isNotEmpty() && vm.feedHasMore)item{OutlinedButton(vm::loadMoreFeed,Modifier.fillMaxWidth(),enabled=!vm.feedLoadingMore){Text(if(vm.feedLoadingMore)"Loading…" else "Load more posts")}}
     }
     if (composer) AlertDialog(
-        onDismissRequest = { composer = false },
+        onDismissRequest = { if(!vm.publishing)composer = false },
         icon = { Surface(Modifier.size(44.dp), color = SoftLime, shape = CircleShape) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Edit, null, tint = Navy) } } },
         title = { Text(if (question) "Ask the community" else "Share an update", fontWeight = FontWeight.Black) },
-        text = { Column {
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(question, { question = true }, { Text("Question") }, leadingIcon = { Icon(Icons.Default.HelpOutline, null) })
                 FilterChip(!question, { question = false }, { Text("Update") }, leadingIcon = { Icon(Icons.Default.Campaign, null) })
             }
             Spacer(Modifier.height(8.dp))
+            OutlinedTextField(subject,{subject=it.take(80)},Modifier.fillMaxWidth(),placeholder={Text("Subject or topic (optional)")},singleLine=true,shape=RoundedCornerShape(14.dp))
+            Spacer(Modifier.height(8.dp))
             OutlinedTextField(draft, { if (it.length <= 8000) draft = it }, Modifier.fillMaxWidth(),
                 placeholder = { Text(if (question) "What would you like help with?" else "Share something useful…") },
                 minLines = 4, maxLines = 8, shape = RoundedCornerShape(16.dp))
+            Row(verticalAlignment=Alignment.CenterVertically){Checkbox(followers,{followers=it});Text("Followers only",fontSize=12.sp)}
+            if(question)Row(verticalAlignment=Alignment.CenterVertically){Checkbox(anonymous,{anonymous=it});Text("Ask anonymously",fontSize=12.sp)}
+            OutlinedButton({picker.launch(arrayOf("image/*","application/pdf","text/plain"))},enabled=media.size<4 && !vm.publishing){Icon(Icons.Default.AttachFile,null);Text(" Add photos / files (${media.size}/4)")}
+            media.forEachIndexed{index,uri->Row(verticalAlignment=Alignment.CenterVertically){Text("Attachment ${index+1}",Modifier.weight(1f),fontSize=12.sp)
+                IconButton({media=media-uri},enabled=!vm.publishing){Icon(Icons.Default.Close,"Remove attachment")}}}
+            vm.publishProgress?.let{LinearProgressIndicator({it},Modifier.fillMaxWidth(),color=Green)}
         } },
-        confirmButton = { Button({ create(draft, question) { draft = ""; composer = false } }, enabled = draft.isNotBlank(),
-            colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Text("Publish") } },
-        dismissButton = { TextButton({ composer = false }) { Text("Cancel") } }
+        confirmButton = { Button({ vm.publish(PostDraft(draft,question,subject,anonymous,followers,media)){draft="";subject="";media=emptyList();composer=false} }, enabled = (draft.isNotBlank()||media.isNotEmpty()) && !vm.publishing,
+            colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Text(if(vm.publishing)"Publishing…" else "Publish") } },
+        dismissButton = { TextButton({ composer = false },enabled=!vm.publishing) { Text("Cancel") } }
     )
     commentPost?.let { post ->
         var reply by remember(post.id) { mutableStateOf("") }
@@ -930,6 +1012,7 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     val context = LocalContext.current
     val recorder = remember { VoiceRecorder(context) }
     val listState = rememberLazyListState()
+    val scrollScope=rememberCoroutineScope()
     var recording by remember { mutableStateOf(false) }
     var recordingStart by remember { mutableLongStateOf(0L) }
     var elapsed by remember { mutableIntStateOf(0) }
@@ -937,7 +1020,17 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     var preview by remember { mutableStateOf<VoiceClip?>(null) }
     var imageToEdit by remember { mutableStateOf<Uri?>(null) }
     var forwarding by remember { mutableStateOf<ChatMessage?>(null) }
-    var text by remember { mutableStateOf("") }
+    var text by remember(chat.id) { mutableStateOf(vm.draft(chat.id)) }
+    var lastTyped by remember(chat.id) { mutableLongStateOf(0L) }
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(listState,chat.id){snapshotFlow{listState.layoutInfo.visibleItemsInfo.mapNotNull{it.key as? Long}}
+        .collect{vm.visibleMessages(it)}}
+    DisposableEffect(lifecycle){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->
+        if(event==Lifecycle.Event.ON_STOP){
+            if(recording){try{preview=recorder.stop()}catch(_:Exception){recorder.cancel()};recording=false}
+            vm.syncPresence("")
+        }
+    };lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
     var query by remember { mutableStateOf("") }
     var emojiOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<ChatMessage?>(null) }
@@ -952,25 +1045,27 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
                 (it.attachmentName?.contains(query, true) == true)
         }
     }
-    DisposableEffect(Unit) { onDispose { recorder.cancel(); preview?.let { File(it.filePath).delete() } } }
-    LaunchedEffect(chat.id) {
+    DisposableEffect(chat.id) { onDispose { vm.saveDraft(chat.id,text); recorder.cancel(); preview?.let { File(it.filePath).delete() } } }
+    LaunchedEffect(chat.id,lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
         while (true) {
             vm.refreshMessages()
-            delay(if (vm.remotePresence.active) 2_200 else 4_000)
+            delay(if (vm.remotePresence.active) 1_500 else 2_500)
         }
-    }
-    LaunchedEffect(chat.id) {
+    } }
+    LaunchedEffect(chat.id,lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
         while (true) {
-            val kind = if (recording) "voice" else if (text.isNotBlank()) "text" else ""
+            val kind = if (recording) "voice" else if (text.isNotBlank() && SystemClock.elapsedRealtime()-lastTyped<4500) "text" else ""
             vm.syncPresence(kind)
-            delay(if (kind.isNotEmpty()) 2_500 else 4_500)
+            delay(if (kind.isNotEmpty()) 2_000 else 3_000)
         }
-    }
+    } }
+    LaunchedEffect(recording) { vm.syncPresence(if(recording)"voice" else "") }
     LaunchedEffect(shown.size) {
         if (shown.isNotEmpty()) {
-            if (!didInitialScroll) { listState.scrollToItem(shown.lastIndex); didInitialScroll = true }
+            val lastItem=shown.lastIndex+if(vm.hasOlderMessages)1 else 0
+            if (!didInitialScroll) { listState.scrollToItem(lastItem); didInitialScroll = true }
             else if (listState.firstVisibleItemIndex >= (shown.lastIndex - 6).coerceAtLeast(0)) {
-                listState.animateScrollToItem(shown.lastIndex)
+                listState.animateScrollToItem(lastItem)
             }
         }
     }
@@ -989,13 +1084,14 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         if (allowed) try {
             recorder.start(); recordingStart = SystemClock.elapsedRealtime(); elapsed = 0; liveWave = emptyList(); recording = true
-        } catch (_: Exception) { }
+        } catch (e: Exception) { vm.reportError(e.message ?: "Could not start the microphone.") }
+        else vm.reportError("Allow microphone access to record a voice message.")
     }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> imageToEdit = uri }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::sendAttachment) }
 
     val pinned = remember(shown) { shown.lastOrNull { it.pinned && !it.deleted } }
-    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFFF8FAFF), Color(0xFFF1F4FA))))) {
+    Column(Modifier.fillMaxSize().imePadding().background(Brush.verticalGradient(listOf(Color(0xFFF8FAFF), Color(0xFFF1F4FA))))) {
         if (searchOpen) {
             Surface(color = Color.White, shadowElevation = 1.dp) {
                 OutlinedTextField(query, { query = it.take(100) }, Modifier.fillMaxWidth().padding(10.dp),
@@ -1003,19 +1099,28 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
                     trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Default.Close, "Clear") } },
                     singleLine = true, shape = RoundedCornerShape(16.dp))
             }
+            if(query.trim().length>=2)TextButton({vm.findMessages(query.trim())},Modifier.align(Alignment.End)){Text("Search all conversations",fontSize=12.sp)}
         }
         ChatSecurityBanner()
-        pinned?.let { PinnedMessageBar(it) { replyTo = it; editing = null } }
+        pinned?.let { pinnedMessage -> PinnedMessageBar(pinnedMessage) {
+            val index=shown.indexOfFirst{it.id==pinnedMessage.id}
+            if(index>=0)scrollScope.launch{listState.animateScrollToItem(index+if(vm.hasOlderMessages)1 else 0)}
+        } }
         LazyColumn(
             Modifier.weight(1f), state = listState,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
+            if(vm.hasOlderMessages)item(key="history"){Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center){
+                TextButton(vm::loadOlderMessages,enabled=!vm.historyLoading){Text(if(vm.historyLoading)"Loading earlier messages…" else "Earlier messages",fontSize=12.sp)}
+            }}
             itemsIndexed(shown, key = { _, item -> item.id }) { index, message ->
                 if (index == 0 || shown[index - 1].dateLabel != message.dateLabel) DatePill(message.dateLabel)
-                MessageBubble(message, vm.authHeaders(), onLongPress = { selected = message },
+                MessageBubble(message, vm.authHeaders(), onLongPress = { if(message.id>0)selected = message },
                     onReaction = { vm.react(message, it) }, onAttachment = { vm.openAttachment(message) },
-                    onReply = { replyTo = message; editing = null }, onForward = { forwarding = message },
+                    onReply = { if(message.id>0){replyTo = message; editing = null} }, onForward = { if(message.id>0 && !message.encrypted)forwarding = message },
+                    onRetry={vm.retryMessage(message)},
+                    onVoiceStarted={vm.voiceStarted(message)},
                     showSender = !message.mine && (index == 0 || shown[index - 1].senderId != message.senderId ||
                         shown[index - 1].dateLabel != message.dateLabel))
             }
@@ -1024,7 +1129,7 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
             }
             if (shown.isEmpty()) item {
                 Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(if (query.isBlank()) "No messages yet. Say hello 👋" else "No matching messages", color = Muted)
+                    Text(if(vm.chatLoading)"Loading conversation…" else if (query.isBlank()) "No messages yet. Say hello 👋" else "No matching messages", color = Muted)
                 }
             }
         }
@@ -1037,26 +1142,25 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
                 try { preview = recorder.stop() } catch (_: Exception) { }; recording = false
             })
             else -> PremiumComposer(
-                text = text, onText = { if (it.length <= 4000) text = it },
+                text = text, onText = { if (it.length <= 4000) {text = it; lastTyped=SystemClock.elapsedRealtime();vm.saveDraft(chat.id,it)} },
                 emojiOpen = emojiOpen, toggleEmoji = { emojiOpen = !emojiOpen },
                 reply = replyTo, editing = editing,
                 cancelContext = { replyTo = null; editing = null; text = "" },
-                attachPhoto = { imagePicker.launch(arrayOf("image/*")) },
-                attachFile = { filePicker.launch(arrayOf("application/pdf", "text/plain", "application/msword",
+                attachPhoto = { if(vm.uploadProgress==null)imagePicker.launch(arrayOf("image/*")) },
+                attachFile = { if(vm.uploadProgress==null)filePicker.launch(arrayOf("application/pdf", "text/plain", "application/msword",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip")) },
                 send = {
                     val edit = editing
                     if (text.isNotBlank() && edit != null) vm.editMessage(edit, text) { text = ""; editing = null }
-                    else if (text.isNotBlank()) vm.sendText(text, replyTo?.id) { text = ""; replyTo = null; emojiOpen = false }
-                    else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                    else if (text.isNotBlank()) vm.sendText(text, replyTo?.id) { text = ""; vm.saveDraft(chat.id,""); replyTo = null; emojiOpen = false;vm.syncPresence("") }
+                    else if(vm.uploadProgress==null)micPermission.launch(Manifest.permission.RECORD_AUDIO)
                 }
             )
         }
     }
 
-    imageToEdit?.let { uri -> ImageEditorDialog(uri, close = { imageToEdit = null }) { rotation, square, caption ->
-        imageToEdit = null
-        vm.sendEditedImage(uri, rotation, square, caption) { }
+    imageToEdit?.let { uri -> ImageEditorDialog(uri, close = { if(vm.uploadProgress==null)imageToEdit = null }, error=vm.error, busy=vm.uploadProgress!=null) { rotation, square, caption ->
+        vm.sendEditedImage(uri, rotation, square, caption) { imageToEdit = null }
     } }
 
     forwarding?.let { message -> ForwardMessageDialog(message, chat, vm.conversations,
@@ -1154,7 +1258,7 @@ private fun UploadProgressBar(label: String, progress: Float) {
     Surface(color = Color.White, shadowElevation = 3.dp) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp)) {
             Row {
-                Text(label.ifBlank { "Uploading…" }, Modifier.weight(1f), fontSize = 11.sp,
+                Text(if(progress>=1f)"Processing on server…" else label.ifBlank { "Uploading…" }, Modifier.weight(1f), fontSize = 11.sp,
                     color = Ink, fontWeight = FontWeight.SemiBold)
                 Text("${(progress.coerceIn(0f, 1f) * 100).toInt()}%", fontSize = 11.sp, color = Green, fontWeight = FontWeight.Bold)
             }
@@ -1211,6 +1315,8 @@ private fun ForwardMessageDialog(
 private fun ImageEditorDialog(
     uri: Uri,
     close: () -> Unit,
+    error: String? = null,
+    busy: Boolean = false,
     send: (rotation: Int, squareCrop: Boolean, caption: String) -> Unit
 ) {
     val context = LocalContext.current
@@ -1218,18 +1324,23 @@ private fun ImageEditorDialog(
     var square by remember(uri) { mutableStateOf(false) }
     var caption by remember(uri) { mutableStateOf("") }
     var preview by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    var previewLoading by remember(uri){mutableStateOf(true)}
     LaunchedEffect(uri, rotation, square) {
+        previewLoading=true
         preview = withContext(Dispatchers.IO) { loadImagePreview(context, uri, rotation, square) }
+        previewLoading=false
     }
     AlertDialog(
         onDismissRequest = close,
         title = { Column {
             Text("Edit photo", fontWeight = FontWeight.Black)
             Text("Preview and adjust before sending", color = Muted, fontSize = 11.sp)
+            if(error!=null)Text(error,color=MaterialTheme.colorScheme.error,fontSize=11.sp)
         } },
-        text = { Column {
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
             Surface(Modifier.fillMaxWidth().height(270.dp), color = Color(0xFF0C1426), shape = RoundedCornerShape(18.dp)) {
-                if (preview == null) Box(contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Lime) }
+                if (previewLoading) Box(contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Lime) }
+                else if(preview==null)Box(Modifier.padding(20.dp),contentAlignment=Alignment.Center){Text("This image could not be opened. Choose another photo.",color=Color.White)}
                 else Image(preview!!.asImageBitmap(), "Photo preview", Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit)
             }
@@ -1246,9 +1357,9 @@ private fun ImageEditorDialog(
             OutlinedTextField(caption, { if (it.length <= 4000) caption = it }, Modifier.fillMaxWidth(),
                 placeholder = { Text("Add a caption…") }, minLines = 1, maxLines = 3, shape = RoundedCornerShape(14.dp))
         } },
-        confirmButton = { Button({ send(rotation, square, caption) }, enabled = preview != null,
-            colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Icon(Icons.Default.Send, null); Spacer(Modifier.width(6.dp)); Text("Send") } },
-        dismissButton = { TextButton(close) { Text("Cancel") } }
+        confirmButton = { Button({ send(rotation, square, caption) }, enabled = preview != null && !busy,
+            colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Icon(Icons.Default.Send, null); Spacer(Modifier.width(6.dp)); Text(if(busy)"Uploading…" else "Send") } },
+        dismissButton = { TextButton(close,enabled=!busy) { Text("Cancel") } }
     )
 }
 
@@ -1281,6 +1392,8 @@ private fun MessageBubble(
     onAttachment: () -> Unit,
     onReply: () -> Unit,
     onForward: () -> Unit,
+    onRetry: () -> Unit,
+    onVoiceStarted: () -> Unit,
     showSender: Boolean
 ) {
     val bubble = if (m.mine) Navy else Color.White
@@ -1318,7 +1431,7 @@ private fun MessageBubble(
                             }
                         )
                     }
-                    .combinedClickable(onClick = {}, onLongClick = onLongPress)
+                    .combinedClickable(onClick = {if(m.failed)onRetry()}, onLongClick = onLongPress)
             ) {
                 Column(Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
                 if (showSender) Text(m.sender, color = Green, fontWeight = FontWeight.Bold, fontSize = 11.sp)
@@ -1330,7 +1443,7 @@ private fun MessageBubble(
                         Spacer(Modifier.width(7.dp)); Text("This message was deleted", color = foreground.copy(.7f), fontSize = 13.sp)
                     }
                 } else {
-                    if (m.voiceSeconds > 0) VoicePlayer(m.attachmentUrl, m.voiceSeconds, headers, m.mine)
+                    if (m.voiceSeconds > 0) VoicePlayer(m.attachmentUrl, m.voiceSeconds, headers, m.mine,onVoiceStarted)
                     else if (m.attachmentUrl != null && m.attachmentType?.lowercase() in listOf("jpg", "jpeg", "png", "gif", "webp")) {
                         ProtectedNetworkImage(m.attachmentUrl, headers, m.mine, onAttachment)
                     } else if (m.attachmentUrl != null) AttachmentCard(m, m.mine, onAttachment)
@@ -1340,10 +1453,12 @@ private fun MessageBubble(
                     if (m.pinned) Icon(Icons.Default.PushPin, null, Modifier.size(12.dp), tint = foreground.copy(.58f))
                     if (m.starred) Icon(Icons.Default.Star, null, Modifier.padding(start = 3.dp).size(12.dp), tint = Lime)
                     if (m.edited) Text(" edited ·", color = foreground.copy(.55f), fontSize = 9.sp)
+                    if(m.voicePlayed)Text("Played · ",color=if(m.mine)Lime else Green,fontSize=9.sp)
                     Text(m.time, color = foreground.copy(.57f), fontSize = 9.sp)
-                    if (m.mine) { Spacer(Modifier.width(3.dp)); Icon(if (m.read) Icons.Default.DoneAll else Icons.Default.Done,
-                        if (m.read) "Read" else "Sent", Modifier.size(14.dp), tint = if (m.read) Lime else foreground.copy(.58f)) }
+                    if (m.mine) { Spacer(Modifier.width(3.dp)); Icon(when{m.failed->Icons.Default.ErrorOutline;m.id<0->Icons.Default.Schedule;m.read->Icons.Default.DoneAll;else->Icons.Default.Done},
+                        when{m.failed->"Failed; tap to retry";m.id<0->"Sending";m.read->"Read";else->"Sent"}, Modifier.size(14.dp), tint = if (m.read) Lime else foreground.copy(.70f)) }
                 }
+                if(m.failed)Text("Not sent · Tap to retry",Modifier.clickable(onClick=onRetry).padding(top=5.dp),color=Color(0xFFFFC6BC),fontSize=11.sp)
                 }
             }
         }
@@ -1360,37 +1475,19 @@ private fun MessageBubble(
 
 @Composable
 private fun ProtectedNetworkImage(url: String, headers: Map<String, String>, mine: Boolean, open: () -> Unit) {
-    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
-    var failed by remember(url) { mutableStateOf(false) }
-    LaunchedEffect(url, headers) {
-        bitmap = withContext(Dispatchers.IO) {
-            try {
-                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 12_000; readTimeout = 25_000
-                    headers.forEach { (name, value) -> setRequestProperty(name, value) }
-                }
-                try {
-                    if (connection.responseCode !in 200..299) null
-                    else connection.inputStream.use { BitmapFactory.decodeStream(BufferedInputStream(it)) }
-                } finally { connection.disconnect() }
-            } catch (_: Exception) { null }
-        }
-        failed = bitmap == null
+    val request = ImageRequest.Builder(LocalContext.current).data(url).apply {
+        headers.forEach { (key,value) -> addHeader(key,value) }
+    }.memoryCacheKey(url + headers.hashCode()).diskCachePolicy(CachePolicy.DISABLED).size(900).crossfade(true).build()
+    var viewing by remember(url) { mutableStateOf(false) }
+    Surface(Modifier.widthIn(min=210.dp,max=310.dp).height(220.dp).padding(bottom=6.dp).clickable{viewing=true},
+        color=if(mine)Color.White.copy(.09f) else Mist,shape=RoundedCornerShape(15.dp)) {
+        AsyncImage(request,"Shared photo",Modifier.fillMaxSize(),contentScale=ContentScale.Fit)
     }
-    Surface(
-        Modifier.widthIn(min = 210.dp, max = 310.dp).heightIn(min = 120.dp, max = 300.dp)
-            .padding(bottom = 6.dp).clickable(onClick = open),
-        color = if (mine) Color.White.copy(.09f) else Mist, shape = RoundedCornerShape(15.dp)
-    ) {
-        when {
-            bitmap != null -> Image(bitmap!!.asImageBitmap(), "Shared photo", Modifier.fillMaxWidth(), contentScale = ContentScale.Crop)
-            failed -> Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.BrokenImage, null, tint = if (mine) Color.White.copy(.65f) else Muted)
-                Spacer(Modifier.height(6.dp)); Text("Tap to open photo", fontSize = 11.sp,
-                    color = if (mine) Color.White.copy(.65f) else Muted)
-            }
-            else -> Box(contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(25.dp), color = Lime, strokeWidth = 2.dp) }
-        }
+    if(viewing) androidx.compose.ui.window.Dialog(onDismissRequest={viewing=false},properties=androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth=false)){
+        Surface(Modifier.fillMaxSize(),color=Color.Black){Box{
+            AsyncImage(request,"Shared photo",Modifier.fillMaxSize(),contentScale=ContentScale.Fit)
+            IconButton({viewing=false},Modifier.align(Alignment.TopEnd).statusBarsPadding()){Icon(Icons.Default.Close,"Close photo",tint=Color.White)}
+        }}
     }
 }
 
@@ -1435,15 +1532,23 @@ private fun ProtectedNetworkImage(url: String, headers: Map<String, String>, min
 }
 
 @Composable
-private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>, mine: Boolean) {
+private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>, mine: Boolean, onStarted: () -> Unit = {}) {
     val context = LocalContext.current
     var player by remember(url) { mutableStateOf<MediaPlayer?>(null) }
     var playing by remember { mutableStateOf(false) }
     var prepared by remember { mutableStateOf(false) }
+    var loading by remember(url) { mutableStateOf(false) }
+    var playbackError by remember(url){mutableStateOf(false)}
+    var disposed by remember(url){mutableStateOf(false)}
     var position by remember { mutableIntStateOf(0) }
     var duration by remember(seconds) { mutableIntStateOf(seconds.coerceAtLeast(1) * 1000) }
     var speed by remember { mutableFloatStateOf(1f) }
-    DisposableEffect(url) { onDispose { player?.release(); player = null } }
+    DisposableEffect(url) { onDispose { disposed=true; player?.release(); player = null } }
+    LaunchedEffect(VoiceCoordinator.activeUrl){if(VoiceCoordinator.activeUrl!=url && playing){player?.pause();playing=false}}
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->
+        if(event==Lifecycle.Event.ON_STOP){if(playing)player?.pause();playing=false}
+    };lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
     LaunchedEffect(playing) {
         while (playing) { position = player?.currentPosition ?: position; delay(150) }
     }
@@ -1453,23 +1558,29 @@ private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>
                 if (playing) { player?.pause(); playing = false }
                 else if (url != null) {
                     val current = player
-                    if (current != null && prepared) { current.start(); playing = true }
-                    else try {
+                    if (current != null && prepared) { VoiceCoordinator.activeUrl=url;current.start(); playing = true;onStarted() }
+                    else if(!loading) try {
+                        loading=true;playbackError=false
                         MediaPlayer().also { mp ->
+                            player=mp
                             mp.setDataSource(context, Uri.parse(url), headers)
                             mp.setOnPreparedListener {
+                                if(disposed || player!==it)return@setOnPreparedListener
+                                loading=false;VoiceCoordinator.activeUrl=url
                                 prepared = true; duration = it.duration.coerceAtLeast(duration)
-                                it.playbackParams = it.playbackParams.setSpeed(speed); it.start(); playing = true
+                                it.playbackParams = it.playbackParams.setSpeed(speed)
+                                if(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)){it.start(); playing = true;onStarted()}
                             }
                             mp.setOnCompletionListener { playing = false; position = 0; it.seekTo(0) }
-                            mp.setOnErrorListener { failed, _, _ -> failed.release(); player = null; playing = false; prepared = false; true }
+                            mp.setOnErrorListener { failed, _, _ -> failed.release(); player = null; playing = false; prepared = false; loading=false;playbackError=true; true }
                             player = mp; mp.prepareAsync()
                         }
-                    } catch (_: Exception) { player?.release(); player = null; playing = false; prepared = false }
+                    } catch (_: Exception) { player?.release(); player = null; playing = false; prepared = false;loading=false;playbackError=true }
                 }
-            }, colors = IconButtonDefaults.filledIconButtonColors(
+            }, enabled=!loading && url!=null, colors = IconButtonDefaults.filledIconButtonColors(
                 containerColor = if (mine) Lime else Navy, contentColor = if (mine) Navy else Color.White), modifier = Modifier.size(38.dp)) {
-                Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause voice" else "Play voice", Modifier.size(20.dp))
+                if(loading)CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp,color=Green)
+                else Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pause voice" else "Play voice", Modifier.size(20.dp))
             }
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
@@ -1488,6 +1599,7 @@ private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>
                         inactiveTrackColor = if (mine) Color.White.copy(.22f) else Navy.copy(.14f)))
             }
         }
+        if(playbackError)Text("Could not play · Tap to retry",fontSize=10.sp,color=if(mine)Color.White else Muted)
         Row(Modifier.fillMaxWidth().padding(start = 46.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatDuration(if (position > 0) position / 1000 else seconds), fontSize = 9.sp,
                 color = if (mine) Color.White.copy(.62f) else Muted)
@@ -1503,6 +1615,8 @@ private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>
 
 private fun formatDuration(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)
 
+private object VoiceCoordinator { var activeUrl by mutableStateOf<String?>(null) }
+
 @Composable
 private fun PremiumComposer(
     text: String,
@@ -1517,9 +1631,9 @@ private fun PremiumComposer(
     send: () -> Unit
 ) {
     var attachmentMenu by remember { mutableStateOf(false) }
-    var emojiCategory by remember { mutableIntStateOf(0) }
-    var recentEmojis by remember { mutableStateOf<List<String>>(emptyList()) }
-    val groups = remember { fullEmojiGroups() }
+    var field by remember { mutableStateOf(TextFieldValue(text,TextRange(text.length))) }
+    val keyboard=LocalSoftwareKeyboardController.current
+    LaunchedEffect(text){if(text!=field.text)field=TextFieldValue(text,TextRange(text.length))}
     Surface(color = Color.White, shadowElevation = 10.dp) {
         Column(Modifier.navigationBarsPadding()) {
             val contextMessage = editing ?: reply
@@ -1537,39 +1651,25 @@ private fun PremiumComposer(
                 }
             }
             if (emojiOpen) {
-                Column(Modifier.fillMaxWidth().heightIn(max = 330.dp).background(Color(0xFFFAFBFD))) {
-                    LazyRow(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        items(groups.size) { index ->
-                            val selected = emojiCategory == index
-                            Surface(Modifier.clickable { emojiCategory = index },
-                                color = if (selected) Lime else Color.White,
-                                shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, if (selected) Lime else Line)) {
-                                Text(groups[index].second.first(), Modifier.padding(horizontal = 11.dp, vertical = 7.dp), fontSize = 18.sp)
-                            }
+                AndroidView(factory={context->EmojiPickerView(context).apply { emojiGridColumns=8 }},
+                    modifier=Modifier.fillMaxWidth().height(290.dp),update={picker->
+                        picker.setOnEmojiPickedListener { item ->
+                            val start=field.selection.min.coerceIn(0,text.length)
+                            val end=field.selection.max.coerceIn(start,text.length)
+                            val next=text.replaceRange(start,end,item.emoji)
+                            field=TextFieldValue(next,TextRange(start+item.emoji.length));onText(next)
                         }
-                    }
-                    HorizontalDivider(color = Line)
-                    LazyVerticalGrid(GridCells.Fixed(8), Modifier.fillMaxWidth().height(240.dp).padding(horizontal = 8.dp),
-                        contentPadding = PaddingValues(vertical = 7.dp)) {
-                        gridItems(groups[emojiCategory].second) { emoji ->
-                            Text(emoji, Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)).clickable {
-                                onText(text + emoji)
-                                recentEmojis = (listOf(emoji) + recentEmojis.filterNot { it == emoji }).take(24)
-                            }.padding(7.dp), fontSize = 21.sp, textAlign = TextAlign.Center)
-                        }
-                    }
-                }
+                    })
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.Bottom) {
-                IconButton(toggleEmoji, Modifier.size(42.dp)) {
+                IconButton({if(!emojiOpen)keyboard?.hide() else keyboard?.show();toggleEmoji()}, Modifier.size(42.dp)) {
                     Icon(if (emojiOpen) Icons.Default.Keyboard else Icons.Default.SentimentSatisfiedAlt,
                         if (emojiOpen) "Keyboard" else "Emoji", tint = Navy)
                 }
                 Surface(Modifier.weight(1f), color = Color(0xFFF5F7FA), shape = RoundedCornerShape(23.dp),
                     border = BorderStroke(1.dp, Line)) {
                     Row(verticalAlignment = Alignment.Bottom) {
-                        TextField(text, onText, Modifier.weight(1f), placeholder = { Text("Message…", color = Muted) },
+                        TextField(field, {value->if(value.text.length<=4000){field=value;onText(value.text)}}, Modifier.weight(1f), placeholder = { Text("Message…", color = Muted) },
                             minLines = 1, maxLines = 5, colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
@@ -1600,30 +1700,15 @@ private fun PremiumComposer(
     }
 }
 
-private fun fullEmojiGroups(): List<Pair<String, List<String>>> = listOf(
-    "Faces" to "😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫣 🤭 🫢 🫡 🤫 🫠 🤥 😶 🫥 😐 🫤 😑 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕".split(" "),
-    "People" to "👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦿 🦵 🦶 👂 👃 🧠 🫀 🫁 👀 👁️ 👅 👄 🫦 👶 🧒 👦 👧 🧑 👱 👨 🧔 👩 🧓 👴 👵 🙍 🙎 🙅 🙆 💁 🙋 🧏 🙇 🤦 🤷 👮 👷 💂 🕵️ 👩‍⚕️ 👩‍🎓 👩‍🏫 👩‍⚖️ 👩‍🌾 👩‍🍳 👩‍🔧 👩‍💻 👩‍🎨 👩‍🚀 👩‍🚒 🧕 👳 🤵 👰 🤰 🫃 🫄 🤱".split(" "),
-    "Animals" to "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐻‍❄️ 🐨 🐯 🦁 🐮 🐷 🐽 🐸 🐵 🙈 🙉 🙊 🐒 🐔 🐧 🐦 🐤 🐣 🐥 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪱 🐛 🦋 🐌 🐞 🐜 🪰 🪲 🪳 🦟 🦗 🕷️ 🦂 🐢 🐍 🦎 🐙 🦑 🦐 🦞 🦀 🐠 🐟 🐡 🐬 🐳 🐋 🦈 🐊 🐅 🐆 🦓 🦍 🦧 🐘 🦛 🦏 🐪 🐫 🦒 🦬 🐃 🐂 🐄 🐎 🐖 🐏 🐑 🦙 🐐 🦌 🐕 🐩 🦮 🐕‍🦺 🐈 🐈‍⬛ 🪶 🐓 🦃 🦚 🦜 🦢 🦩 🕊️ 🐇 🦝 🦨 🦡 🦫 🦦 🦥 🐁 🐀 🐿️ 🦔".split(" "),
-    "Food" to "🍏 🍎 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🫘 🥐 🥯 🍞 🥖 🫓 🥨 🧀 🥚 🍳 🧈 🥞 🧇 🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🫔 🌮 🌯 🥙 🧆 🥪 🥫 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🍯 🥛 ☕ 🫖 🍵 🧃 🥤 🧋 🧊 🥄 🍴 🍽️".split(" "),
-    "Activities" to "⚽ 🏀 🏈 ⚾ 🥎 🎾 🏐 🏉 🥏 🎱 🪀 🏓 🏸 🏒 🏑 🥍 🏏 🪃 🥅 ⛳ 🪁 🛝 🏹 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🛷 ⛸️ 🥌 🎿 ⛷️ 🏂 🪂 🏋️ 🤼 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🏄 🏊 🤽 🚣 🧗 🚵 🚴 🏆 🥇 🥈 🥉 🏅 🎖️ 🏵️ 🎗️ 🎫 🎟️ 🎪 🤹 🎭 🩰 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🪘 🎷 🎺 🪗 🎸 🪕 🎻 🎲 ♟️ 🎯 🎳 🎮 🧩".split(" "),
-    "Travel" to "🚗 🚕 🚙 🚌 🚎 🏎️ 🚓 🚑 🚒 🚐 🛻 🚚 🚛 🚜 🛵 🏍️ 🛺 🚲 🛴 🚨 🚔 🚍 🚘 🚖 ✈️ 🛫 🛬 🛩️ 💺 🚁 🚀 🛸 🚂 🚆 🚇 🚊 🚉 🚢 ⛵ 🚤 🛥️ 🛳️ ⛴️ ⚓ 🛟 ⛽ 🚧 🚦 🗺️ 🗿 🗽 🗼 🏰 🏯 🏟️ 🎡 🎢 🎠 ⛲ ⛱️ 🏖️ 🏝️ 🏜️ 🌋 ⛰️ 🏕️ ⛺ 🏠 🏡 🏢 🏥 🏦 🏨 🏪 🏫 🕋 🕌 ⛪ 🛕 🕍 🌁 🌃 🏙️ 🌄 🌅 🌆 🌇 🌉 🌌".split(" "),
-    "Objects" to "⌚ 📱 💻 ⌨️ 🖥️ 🖨️ 🖱️ 💾 💿 📷 📹 🎥 📞 ☎️ 📺 📻 🎙️ ⏰ ⏳ 📡 🔋 🔌 💡 🔦 🕯️ 🧯 🛢️ 💸 💵 💴 💶 💷 🪙 💳 💎 ⚖️ 🪜 🧰 🔧 🔨 ⚒️ 🛠️ ⛏️ 🔩 ⚙️ 🧱 ⛓️ 🧲 🔫 💣 🧨 🪓 🔪 🗡️ 🛡️ 🚬 ⚰️ 🪦 ⚱️ 🏺 🔮 📿 🧿 🪬 💈 🧪 🔬 🔭 📚 📖 📝 ✏️ 🖊️ 🖌️ 🖍️ 📌 📍 📎 🖇️ 📏 📐 ✂️ 🗃️ 🗄️ 🗑️ 🔒 🔓 🔐 🔑 🗝️ 🔨 🪄 🎁 🎈 ✉️ 📩 📨 📧 💌 📥 📤 📦 🏷️ 🪧 📪 📫 📬 📭 📮 📜 📄 📃 📑 📊 📈 📉 🗒️ 🗓️ 📆 📅".split(" "),
-    "Symbols" to "❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ☮️ ✝️ ☪️ 🕉️ ☸️ ✡️ 🔯 🕎 ☯️ ☦️ 🛐 ⛎ ♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ 🆔 ⚛️ ☢️ ☣️ 📴 📳 🈶 🈚 🈸 🈺 🈷️ ✴️ 🆚 💮 🉐 ㊙️ ㊗️ 🈴 🈵 🈹 🈲 🅰️ 🅱️ 🆎 🆑 🅾️ 🆘 ❌ ⭕ 🛑 ⛔ 📛 🚫 💯 💢 ♨️ 🚷 🚯 🚳 🚱 🔞 📵 ❗ ❕ ❓ ❔ ‼️ ⁉️ 🔅 🔆 ⚠️ 🚸 🔱 ⚜️ 🔰 ♻️ ✅ 🈯 💹 ❇️ ✳️ ❎ 🌐 💠 Ⓜ️ 🌀 💤 🏧 🚾 ♿ 🅿️ 🛗 🈳 🈂️ 🛂 🛃 🛄 🛅 🚹 🚺 🚼 ⚧️ 🚻 🚮 🎦 📶 🈁 🔣 ℹ️ 🔤 🔡 🔠 🆖 🆗 🆙 🆒 🆕 🆓 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 ▶️ ⏸️ ⏯️ ⏹️ ⏺️ ⏭️ ⏮️ ⏩ ⏪ 🔀 🔁 🔂 ➕ ➖ ➗ ✖️ ♾️ 💲 ©️ ®️ ™️".split(" "),
-    "Flags" to "🇵🇰 🇦🇪 🇸🇦 🇶🇦 🇰🇼 🇹🇷 🇦🇫 🇧🇩 🇮🇳 🇨🇳 🇯🇵 🇰🇷 🇲🇾 🇸🇬 🇦🇺 🇳🇿 🇬🇧 🇺🇸 🇨🇦 🇩🇪 🇫🇷 🇮🇹 🇪🇸 🇵🇹 🇳🇱 🇧🇪 🇨🇭 🇦🇹 🇸🇪 🇳🇴 🇩🇰 🇫🇮 🇵🇱 🇬🇷 🇮🇪 🇧🇷 🇦🇷 🇲🇽 🇿🇦 🇪🇬 🇲🇦 🇳🇬 🇰🇪 🇮🇩 🇹🇭 🇻🇳 🇵🇭 🏳️ 🏴 🏁 🚩 🏳️‍🌈".split(" ")
-)
-
 @Composable private fun VoicePreview(clip: VoiceClip, onDelete: () -> Unit, onSend: () -> Unit) {
-    Surface(color = Color.White, shadowElevation = 10.dp) {
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(Modifier.size(42.dp), color = SoftLime, shape = CircleShape) {
-                Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.GraphicEq, null, tint = Navy) }
+    Surface(color=Color.White,shadowElevation=10.dp){
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(14.dp)){
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                Text("Review voice message",Modifier.weight(1f),fontWeight=FontWeight.Bold,fontSize=13.sp)
+                IconButton(onDelete){Icon(Icons.Default.DeleteOutline,"Discard voice recording",tint=MaterialTheme.colorScheme.error)}
+                FilledIconButton(onSend,colors=IconButtonDefaults.filledIconButtonColors(containerColor=Navy)){Icon(Icons.Default.Send,"Send voice message")}
             }
-            Spacer(Modifier.width(11.dp)); Column(Modifier.weight(1f)) {
-                Text("Voice message ready", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("${formatDuration(clip.seconds)} · Review before sending", color = Muted, fontSize = 10.sp)
-            }
-            IconButton(onDelete) { Icon(Icons.Default.DeleteOutline, "Delete recording", tint = MaterialTheme.colorScheme.error) }
-            FilledIconButton(onSend, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy)) { Icon(Icons.Default.Send, "Send voice") }
+            VoicePlayer(Uri.fromFile(File(clip.filePath)).toString(),clip.seconds,emptyMap(),false)
         }
     }
 }
@@ -1685,11 +1770,11 @@ private fun fullEmojiGroups(): List<Pair<String, List<String>>> = listOf(
         }
         HorizontalDivider(color = Line)
         ActionRow(Icons.Default.Reply, "Reply", reply)
-        if (message.content.isNotBlank() && !message.deleted) ActionRow(Icons.Default.ContentCopy, "Copy text", action = {
+        if (message.content.isNotBlank() && !message.deleted && !message.encrypted) ActionRow(Icons.Default.ContentCopy, "Copy text", action = {
             clipboard.setText(AnnotatedString(message.content)); close()
         })
         if (message.canEdit && message.content.isNotBlank()) ActionRow(Icons.Default.Edit, "Edit message", edit)
-        if (!message.deleted) ActionRow(Icons.Default.Forward, "Forward message", forward)
+        if (!message.deleted && !message.encrypted) ActionRow(Icons.Default.Forward, "Forward message", forward)
         if (!message.deleted) ActionRow(if (message.starred) Icons.Default.StarBorder else Icons.Default.Star,
             if (message.starred) "Remove star" else "Star message", star)
         if (!message.deleted) ActionRow(Icons.Default.PushPin, if (message.pinned) "Unpin message" else "Pin message", pin)

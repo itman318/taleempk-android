@@ -59,13 +59,17 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         return Bootstrap(user, stats, shortcuts)
     }
 
-    fun feed(page: Int = 1): List<FeedPost> {
-        val arr = request(mapOf("action" to "feed", "page" to page.toString()), true)
+    fun feed(before: Long = 0, postId: Long = 0): List<FeedPost> {
+        val arr = request(mapOf("action" to "feed", "before" to before.toString(), "post_id" to postId.toString()), true)
             .getJSONObject("data").optJSONArray("posts") ?: JSONArray()
         return arr.toObjects { o -> FeedPost(
             o.optLong("id"), o.optString("author"), o.optString("username"), o.nullable("avatar"),
             o.optString("type", "post"), o.optString("content"), o.optString("created_at"),
-            o.optInt("likes"), o.optInt("comments"), o.optBoolean("solved"), o.optBoolean("liked")
+            o.optInt("likes"), o.optInt("comments"), o.optBoolean("solved"), o.optBoolean("liked"),
+            o.optString("subject"), o.optBoolean("verified"), o.optBoolean("saved"), o.nullable("reaction").orEmpty(),
+            o.optInt("dislikes"), (o.optJSONArray("media") ?: JSONArray()).toObjects { m ->
+                PostMedia(m.optLong("id"),m.optString("name"),m.optString("type"),m.optString("url"))
+            }, o.nullable("source"), o.optBoolean("can_repost"), o.optBoolean("show_dislikes")
         ) }
     }
 
@@ -76,6 +80,58 @@ class ApiClient(private val context: Context, private val session: SessionStore)
 
     fun togglePostLike(postId: Long) {
         request(mapOf("action" to "react_post", "target" to "post:$postId", "type" to "like"), true)
+    }
+
+    fun reactPost(postId: Long, type: String) = request(mapOf("action" to "react_post", "target" to "post:$postId", "type" to type),true)
+    fun savePost(postId: Long): Boolean = request(mapOf("action" to "save_post", "target" to "post:$postId"),true).optBoolean("saved")
+    fun repost(postId: Long): Boolean = request(mapOf("action" to "repost", "id" to "$postId"),true).optBoolean("reposted")
+    fun notifications(before: Long = 0): NotificationBatch {
+        val d = request(mapOf("action" to "notifications", "before" to "$before"),true).getJSONObject("data")
+        val items = (d.optJSONArray("items") ?: JSONArray()).toObjects { n ->
+            AppNotification(n.optLong("id"),n.optString("message"),n.optString("type"),n.optString("route"),n.optString("time"),n.optBoolean("read"))
+        }
+        return NotificationBatch(items,d.optInt("unread"))
+    }
+    fun readNotification(id: Long) { request(mapOf("action" to "read_notification", "id" to "$id"),true) }
+    fun voicePlayed(id: Long) { request(mapOf("action" to "voice_played", "message_id" to "$id"),true) }
+    fun findMessages(query:String?=null):List<ChatLookup>{
+        val fields=if(query==null)mapOf("action" to "star","do" to "list") else mapOf("action" to "search_chat","q" to query)
+        return (request(fields,true).optJSONArray("results") ?: JSONArray()).toObjects{r->ChatLookup(r.optLong("id"),r.optLong("conversation_id"),r.optString("title",r.optString("where")),r.optString("sender"),r.optString("text"),r.optString("time"))}
+    }
+    fun downloadPostMedia(media: PostMedia): File {
+        val name=media.name.replace(Regex("[^A-Za-z0-9._ -]"),"_").take(140)
+        val file=File(File(context.cacheDir,"shared").apply{mkdirs()},"post-${media.id}-$name")
+        val conn=URL("$endpoint?action=post_file&id=${media.id}").openConnection() as HttpURLConnection
+        conn.connectTimeout=15000;conn.readTimeout=60000;conn.instanceFollowRedirects=false
+        session.token?.let{conn.setRequestProperty("Authorization","Bearer $it")}
+        try{if(conn.responseCode !in 200..299)throw ApiException("This file is no longer available.",conn.responseCode)
+            conn.inputStream.use{input->file.outputStream().use{output->input.copyTo(output)}}
+        }finally{conn.disconnect()}
+        return file
+    }
+
+    fun publishPost(draft: PostDraft, progress: (Float) -> Unit): String {
+        val fields = mapOf("action" to "create_post", "content" to draft.content.trim(),
+            "type" to if(draft.question) "question" else "text", "subject" to draft.subject.trim(),
+            "anonymous" to if(draft.anonymous && draft.question) "1" else "0",
+            "visibility" to if(draft.followersOnly) "followers" else "public")
+        val result = if(draft.attachments.isEmpty()) request(fields,true) else {
+            val files = draft.attachments.take(4).map { uri ->
+                val resolver = context.contentResolver
+                val name = resolver.query(uri,arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use {
+                    if(it.moveToFirst()) it.getString(0) else null
+                } ?: "attachment"
+                val bytes = resolver.openInputStream(uri)?.use { input ->
+                    val out = ByteArrayOutputStream(); val buffer = ByteArray(32768)
+                    while(true) { val n=input.read(buffer); if(n<0) break
+                        if(out.size()+n>10*1024*1024) throw ApiException("Each file can be up to 10 MB.")
+                        out.write(buffer,0,n) }; out.toByteArray()
+                } ?: throw ApiException("Could not read attachment.")
+                UploadPart("files[]",name,resolver.getType(uri) ?: "application/octet-stream",bytes)
+            }
+            uploadParts(fields,files,progress)
+        }
+        return result.nullable("message") ?: if(result.optBoolean("pending")) "Post submitted for review." else "Post published."
     }
 
     fun comments(postId: Long): List<FeedComment> {
@@ -126,11 +182,14 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         ) }
     }
 
-    fun messages(conversationId: Long, afterId: Long = 0): List<ChatMessage> {
-        val arr = request(mapOf("action" to "messages", "conversation_id" to conversationId.toString(),
-            "after_id" to afterId.toString()), true)
-            .getJSONObject("data").optJSONArray("messages") ?: JSONArray()
-        return arr.toObjects { o ->
+    fun messages(conversationId: Long, afterId: Long = 0): List<ChatMessage> = messageBatch(conversationId, afterId).messages
+
+    fun messageBatch(conversationId: Long, afterId: Long = 0, beforeId: Long = 0, refreshIds: List<Long> = emptyList()): MessageBatch {
+        val data = request(mapOf("action" to "messages", "conversation_id" to conversationId.toString(),
+            "after_id" to afterId.toString(), "before_id" to beforeId.toString(),
+            "refresh_ids" to refreshIds.joinToString(",")), true).getJSONObject("data")
+        val arr = data.optJSONArray("messages") ?: JSONArray()
+        val rows = arr.toObjects { o ->
             val reply = o.optJSONObject("reply")?.let { r -> ReplyPreview(
                 r.optLong("id"), r.optString("sender"), r.optString("text")
             ) }
@@ -143,16 +202,20 @@ class ApiClient(private val context: Context, private val session: SessionStore)
                 o.nullable("attachment_url"), o.nullable("attachment_name"), o.optBoolean("read"),
                 o.nullable("attachment_type"), o.optString("date_label"), o.optBoolean("deleted"),
                 o.optBoolean("edited"), o.optBoolean("forwarded"), o.optBoolean("starred"),
-                o.optBoolean("pinned"), o.optBoolean("can_edit"), reply, reactions
+                o.optBoolean("pinned"), o.optBoolean("can_edit"), reply, reactions,
+                clientToken = o.nullable("client_token"), encrypted = o.optBoolean("encrypted"), voicePlayed = o.optBoolean("voice_played")
             )
         }
+        val hidden = data.optJSONArray("hidden_ids") ?: JSONArray()
+        return MessageBatch(rows, (0 until hidden.length()).map { hidden.optLong(it) }.toSet(), data.optBoolean("has_more"))
     }
 
-    fun sendText(conversationId: Long, text: String, replyTo: Long? = null) {
+    fun sendText(conversationId: Long, text: String, replyTo: Long? = null, token: String = UUID.randomUUID().toString()): Long {
         val fields = mutableMapOf("action" to "send", "conversation_id" to conversationId.toString(),
-            "content" to text, "client_token" to UUID.randomUUID().toString())
+            "content" to text, "client_token" to token)
         replyTo?.let { fields["reply_to"] = it.toString() }
-        request(fields, true)
+        val response = request(fields, true)
+        return response.optLong("id", response.optJSONObject("data")?.optLong("id") ?: 0)
     }
 
     fun sendVoice(conversationId: Long, clip: VoiceClip, progress: (Float) -> Unit = {}) {
@@ -325,6 +388,7 @@ class ApiClient(private val context: Context, private val session: SessionStore)
             connectTimeout = 15_000
             readTimeout = 25_000
             doOutput = true
+            instanceFollowRedirects = false
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
             setRequestProperty("User-Agent", "TaleemPK-Android/${BuildConfig.VERSION_NAME}")
@@ -334,6 +398,8 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         return parseResponse(conn)
     }
 
+    private data class UploadPart(val field: String, val name: String, val mime: String, val bytes: ByteArray)
+
     private fun multipart(
         fields: Map<String, String>,
         fieldName: String,
@@ -341,32 +407,46 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         mime: String,
         bytes: ByteArray,
         onProgress: (Float) -> Unit = {}
-    ) {
+    ): JSONObject = uploadParts(fields,listOf(UploadPart(fieldName,fileName,mime,bytes)),onProgress)
+
+    private fun uploadParts(fields: Map<String,String>, parts: List<UploadPart>, onProgress: (Float)->Unit): JSONObject {
         val boundary = "TaleemPK-${UUID.randomUUID()}"
+        val fieldsBytes = fields.entries.joinToString("") { (key,value) ->
+            "--$boundary\r\nContent-Disposition: form-data; name=\"$key\"\r\n\r\n$value\r\n"
+        }.toByteArray()
+        val headers = parts.map { part ->
+            "--$boundary\r\nContent-Disposition: form-data; name=\"${part.field}\"; filename=\"${part.name.replace(Regex("[\\r\\n\\\"]"),"_")}\"\r\nContent-Type: ${part.mime}\r\n\r\n".toByteArray()
+        }
+        val footer = "--$boundary--\r\n".toByteArray()
+        val total = fieldsBytes.size.toLong()+footer.size+parts.indices.sumOf { headers[it].size.toLong()+parts[it].bytes.size+2 }
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; connectTimeout = 20_000; readTimeout = 60_000; doOutput = true
+            instanceFollowRedirects = false
+            setFixedLengthStreamingMode(total)
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
             setRequestProperty("User-Agent", "TaleemPK-Android/${BuildConfig.VERSION_NAME}")
             session.token?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
+        try {
         conn.outputStream.buffered().use { out ->
-            fun text(value: String) = out.write(value.toByteArray())
-            fields.forEach { (key, value) ->
-                text("--$boundary\r\nContent-Disposition: form-data; name=\"$key\"\r\n\r\n$value\r\n")
+            out.write(fieldsBytes)
+            var written = fieldsBytes.size.toLong(); var lastPercent = -1
+            parts.forEachIndexed { index, part ->
+                out.write(headers[index]); written += headers[index].size
+                var sent = 0
+                while (sent < part.bytes.size) {
+                    val count = minOf(32 * 1024, part.bytes.size - sent)
+                    out.write(part.bytes,sent,count); sent+=count; written+=count
+                    val percent = (written*100/total).toInt()
+                    if(percent>lastPercent) { onProgress(written.toFloat()/total); lastPercent=percent }
+                }
+                out.write("\r\n".toByteArray()); written+=2
             }
-            text("--$boundary\r\nContent-Disposition: form-data; name=\"$fieldName\"; filename=\"${fileName.replace("\"", "")}\"\r\n")
-            text("Content-Type: $mime\r\n\r\n")
-            var sent = 0
-            while (sent < bytes.size) {
-                val count = minOf(32 * 1024, bytes.size - sent)
-                out.write(bytes, sent, count)
-                sent += count
-                onProgress(sent.toFloat() / bytes.size.coerceAtLeast(1))
-            }
-            text("\r\n--$boundary--\r\n")
+            out.write(footer); out.flush(); onProgress(1f)
         }
-        parseResponse(conn)
+        return parseResponse(conn)
+        } finally { conn.disconnect() }
     }
 
     private fun parseResponse(conn: HttpURLConnection): JSONObject {
