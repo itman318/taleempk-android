@@ -34,7 +34,7 @@ class _CallScreenState extends State<CallScreen> {
   Timer? pollTimer;
   int callId = 0, lastSignalId = 0, seconds = 0;
   String status = 'Calling…';
-  bool muted = false, cameraOff = false, speaker = true, ending = false;
+  bool muted = false, cameraOff = false, ending = false;
 
   @override
   void initState() {
