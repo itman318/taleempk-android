@@ -1746,11 +1746,11 @@ private fun fullEmojiGroups(): List<Pair<String, List<String>>> = listOf(
         }
         HorizontalDivider(color = Line)
         ActionRow(Icons.Default.Reply, "Reply", reply)
-        if (message.content.isNotBlank() && !message.deleted) ActionRow(Icons.Default.ContentCopy, "Copy text", action = {
+        if (message.content.isNotBlank() && !message.deleted && !message.encrypted) ActionRow(Icons.Default.ContentCopy, "Copy text", action = {
             clipboard.setText(AnnotatedString(message.content)); close()
         })
         if (message.canEdit && message.content.isNotBlank()) ActionRow(Icons.Default.Edit, "Edit message", edit)
-        if (!message.deleted) ActionRow(Icons.Default.Forward, "Forward message", forward)
+        if (!message.deleted && !message.encrypted) ActionRow(Icons.Default.Forward, "Forward message", forward)
         if (!message.deleted) ActionRow(if (message.starred) Icons.Default.StarBorder else Icons.Default.Star,
             if (message.starred) "Remove star" else "Star message", star)
         if (!message.deleted) ActionRow(Icons.Default.PushPin, if (message.pinned) "Unpin message" else "Pin message", pin)
