@@ -339,7 +339,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   colors: [AppColors.blue, Color(0xFF5C48E8)],
                 )
               : null,
-          color: m.mine ? null : Colors.white,
+          color: m.mine
+              ? null
+              : (Theme.of(context).brightness == Brightness.dark
+                    ? const Color(0xFF141F32)
+                    : Colors.white),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(18),
             topRight: const Radius.circular(18),
@@ -380,7 +384,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               Text(
                 m.content,
                 style: TextStyle(
-                  color: m.mine ? Colors.white : AppColors.ink,
+                  color: m.mine ? Colors.white : Theme.of(context).colorScheme.onSurface,
                   height: 1.35,
                   fontStyle: m.deleted ? FontStyle.italic : null,
                 ),
@@ -406,7 +410,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             '${r.emoji} ${r.count}',
                             style: TextStyle(
                               fontSize: 12,
-                              color: m.mine ? Colors.white : AppColors.ink,
+                              color: m.mine ? Colors.white : Theme.of(context).colorScheme.onSurface,
                             ),
                           ),
                         ),
@@ -549,7 +553,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: m.mine ? Colors.white : AppColors.ink,
+                color: m.mine ? Colors.white : Theme.of(context).colorScheme.onSurface,
                 fontWeight: FontWeight.w700,
               ),
             ),
