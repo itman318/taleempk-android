@@ -155,7 +155,16 @@ class _AuthScreenState extends State<AuthScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 22),
+                        if (!register)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: busy ? null : _forgotPassword,
+                              icon: const Icon(Icons.key_rounded, size: 17),
+                              label: const Text('Forgot password?'),
+                            ),
+                          ),
+                        const SizedBox(height: 10),
                         FilledButton(
                           onPressed: busy ? null : _submit,
                           child: busy
@@ -220,6 +229,75 @@ class _AuthScreenState extends State<AuthScreen> {
         : null,
     decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon)),
   );
+
+  Future<void> _forgotPassword() async {
+    final controller = TextEditingController(text: identifier.text.trim());
+    final value = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheet) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          24,
+          26,
+          24,
+          MediaQuery.viewInsetsOf(sheet).bottom + 26,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(Icons.lock_reset_rounded, size: 48, color: AppColors.blue),
+            const SizedBox(height: 14),
+            Text(
+              'Reset your password',
+              style: Theme.of(sheet).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Enter the email address linked to your TaleemPK account.',
+              style: TextStyle(color: AppColors.muted),
+            ),
+            const SizedBox(height: 18),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.emailAddress,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Email address',
+                prefixIcon: Icon(Icons.mail_outline_rounded),
+              ),
+            ),
+            const SizedBox(height: 14),
+            FilledButton(
+              onPressed: () => Navigator.pop(sheet, controller.text.trim()),
+              child: const Text('Send reset link'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (value == null || value.isEmpty || !mounted) return;
+    setState(() => busy = true);
+    try {
+      final message = await AppScope.of(context).api.forgotPassword(value);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
 
   Future<void> _submit() async {
     if (!formKey.currentState!.validate()) return;
