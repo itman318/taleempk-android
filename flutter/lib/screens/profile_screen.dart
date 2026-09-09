@@ -75,11 +75,11 @@ class ProfileScreen extends StatelessWidget {
             _tile(
               Icons.info_outline_rounded,
               'About TaleemPK',
-              'Version 2.1.0 · Made for Pakistan',
+              'Version 2.2.0 · Made for Pakistan',
               () => showAboutDialog(
                 context: context,
                 applicationName: 'TaleemPK',
-                applicationVersion: '2.1.0',
+                applicationVersion: '2.2.0',
                 applicationLegalese: 'A premium learning community by MS Digital Software House.',
               ),
             ),
