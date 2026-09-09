@@ -93,6 +93,14 @@ class ApiClient {
     return _authResult(data);
   }
 
+  Future<String> forgotPassword(String email) async {
+    final data = await _request({
+      'action': 'forgot_password',
+      'email': email.trim(),
+    }, authenticated: false);
+    return '${data['message'] ?? 'If that email exists, a password reset link has been sent.'}';
+  }
+
   Future<String> register({
     required String role,
     required String name,
