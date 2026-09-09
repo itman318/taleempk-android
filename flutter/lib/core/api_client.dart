@@ -285,10 +285,48 @@ class ApiClient {
     }
   }
 
-  Future<void> toggleConversationMute(int conversationId) => _request({
-    'action': 'manage_chat',
-    'id': '$conversationId',
-    'do': 'toggle_mute',
+  Future<bool> toggleConversationMute(int conversationId) async {
+    final data = await _request({
+      'action': 'manage_chat',
+      'id': '$conversationId',
+      'do': 'toggle_mute',
+    });
+    return data['muted'] == true;
+  }
+
+  Future<Map<String, dynamic>> toggleBlock(int userId) => _request({
+    'action': 'block_user',
+    'id': '$userId',
+  });
+
+  Future<Map<String, dynamic>> reportUser(
+    int userId, {
+    String reason = 'other',
+    String details = '',
+  }) => _request({
+    'action': 'report_user',
+    'target': 'user:$userId',
+    'reason': reason,
+    'details': details,
+  });
+
+  Future<Map<String, dynamic>> callAction(
+    String action, {
+    int conversationId = 0,
+    int callId = 0,
+    String kind = 'audio',
+    String signalKind = '',
+    String payload = '',
+    int afterSignalId = 0,
+  }) => _request({
+    'action': 'call',
+    'do': action,
+    if (conversationId > 0) 'conversation_id': '$conversationId',
+    if (callId > 0) 'id': '$callId',
+    if (kind.isNotEmpty) 'kind': kind,
+    if (signalKind.isNotEmpty) 'signal_kind': signalKind,
+    if (payload.isNotEmpty) 'payload': payload,
+    if (afterSignalId > 0) 'after': '$afterSignalId',
   });
 
   Future<void> forwardMessage(int messageId, int conversationId) =>
@@ -450,6 +488,12 @@ class ApiClient {
     }
 
     if (map == null || map.isEmpty) {
+      if (status >= 200 && status < 300 && raw.isEmpty) {
+        // Some shared-hosting stacks finish a successful PHP mutation but
+        // strip its tiny response body. Treat only a 2xx empty body as an
+        // acknowledgement; the UI immediately refreshes from the read API.
+        return <String, dynamic>{};
+      }
       throw ApiException(
         status >= 500
             ? 'TaleemPK is temporarily unavailable.'
@@ -470,7 +514,9 @@ class ApiClient {
     if (status >= 400 || map['ok'] != true) {
       throw ApiException(message, status: status);
     }
-    return _map(map['data']);
+    if (map['data'] is Map) return _map(map['data']);
+    final shared = <String, dynamic>{...map}..remove('ok');
+    return shared;
   }
 
   bool _isSessionFailure(String message) {
