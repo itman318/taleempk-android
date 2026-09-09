@@ -1358,7 +1358,7 @@ class VoiceBubble extends StatefulWidget {
 
 class _VoiceBubbleState extends State<VoiceBubble> {
   final player = AudioPlayer();
-  bool ready = false;
+  bool ready = false, listened = false;
   String? localPath;
   @override
   void dispose() {
@@ -1384,6 +1384,7 @@ class _VoiceBubbleState extends State<VoiceBubble> {
         await player.setFilePath(localPath!);
         ready = true;
       }
+      if (!listened) listened = true;
       player.playing ? await player.pause() : await player.play();
       setState(() {});
     } catch (e) {
@@ -1397,6 +1398,9 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     builder: (_, snap) {
       final position = snap.data ?? Duration.zero,
           total = Duration(seconds: widget.message.voiceSeconds);
+      final accent = listened
+          ? const Color(0xFF18B783)
+          : (widget.message.mine ? Colors.white : AppColors.blue);
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1406,38 +1410,74 @@ class _VoiceBubbleState extends State<VoiceBubble> {
               stream: player.playingStream,
               builder: (_, s) => Icon(
                 s.data == true ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                color: widget.message.mine ? Colors.white : AppColors.blue,
+                color: accent,
               ),
             ),
           ),
           SizedBox(
-            width: 125,
+            width: 145,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                LinearProgressIndicator(
-                  value: total.inMilliseconds == 0
-                      ? 0
-                      : (position.inMilliseconds / total.inMilliseconds).clamp(
-                          0,
-                          1,
-                        ),
-                  backgroundColor: Colors.white24,
-                  color: widget.message.mine ? Colors.white : AppColors.blue,
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 2.5,
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 5,
+                    ),
+                    overlayShape: SliderComponentShape.noOverlay,
+                  ),
+                  child: Slider(
+                    min: 0,
+                    max: total.inMilliseconds.toDouble().clamp(1, double.infinity),
+                    value: position.inMilliseconds
+                        .toDouble()
+                        .clamp(0, total.inMilliseconds.toDouble().clamp(1, double.infinity)),
+                    activeColor: accent,
+                    inactiveColor: widget.message.mine
+                        ? Colors.white24
+                        : Theme.of(context).dividerColor,
+                    onChanged: ready
+                        ? (value) => player.seek(
+                              Duration(milliseconds: value.round()),
+                            )
+                        : null,
+                  ),
                 ),
-                const SizedBox(height: 5),
-                Text(
-                  _voiceDuration(
-                    position.inSeconds > 0
-                        ? position.inSeconds
-                        : widget.message.voiceSeconds,
-                  ),
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: widget.message.mine
-                        ? Colors.white70
-                        : AppColors.muted,
-                  ),
+                Row(
+                  children: [
+                    Icon(
+                      listened
+                          ? Icons.graphic_eq_rounded
+                          : Icons.multitrack_audio_rounded,
+                      size: 14,
+                      color: accent,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _voiceDuration(
+                        position.inSeconds > 0
+                            ? position.inSeconds
+                            : widget.message.voiceSeconds,
+                      ),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: listened ? FontWeight.w700 : FontWeight.w500,
+                        color: listened
+                            ? accent
+                            : (widget.message.mine
+                                  ? Colors.white70
+                                  : AppColors.muted),
+                      ),
+                    ),
+                    if (listened) ...[
+                      const SizedBox(width: 5),
+                      Text(
+                        'played',
+                        style: TextStyle(fontSize: 9, color: accent),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
