@@ -25,11 +25,10 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
-            isMinifyEnabled = true
-            isShrinkResources = true
-            // AGP 9.1 no longer materializes the legacy default file reliably.
-            // Keep R8 enabled and use the app's explicit release rules.
-            proguardFiles("proguard-rules.pro")
+            // Flutter release/AOT and icon tree-shaking remain enabled. R8 is
+            // disabled until AGP 9.1's missing default rules file is resolved.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
