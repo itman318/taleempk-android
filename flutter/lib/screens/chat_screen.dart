@@ -693,8 +693,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               title: const Text('Document or file'),
               onTap: () async {
                 Navigator.pop(sheet);
-                final file = await FilePicker.platform.pickFiles();
-                final path = file?.files.single.path;
+                final file = await FilePicker.pickFile();
+                final path = file?.path;
                 if (path != null) _upload(path);
               },
             ),
