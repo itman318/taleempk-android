@@ -95,6 +95,86 @@ ThemeData studyHubTheme() {
   );
 }
 
+ThemeData studyHubDarkTheme() {
+  final scheme = ColorScheme.fromSeed(
+    seedColor: AppColors.violet,
+    brightness: Brightness.dark,
+    primary: const Color(0xFF8EA2FF),
+    secondary: const Color(0xFFAE97FF),
+    surface: const Color(0xFF10192A),
+    error: const Color(0xFFFF7180),
+  );
+  return ThemeData(
+    useMaterial3: true,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: const Color(0xFF071020),
+    fontFamily: 'sans',
+    textTheme: const TextTheme(
+      headlineLarge: TextStyle(
+        fontWeight: FontWeight.w800,
+        letterSpacing: -1.1,
+        color: Color(0xFFF4F7FF),
+      ),
+      headlineMedium: TextStyle(
+        fontWeight: FontWeight.w800,
+        letterSpacing: -.7,
+        color: Color(0xFFF4F7FF),
+      ),
+      titleLarge: TextStyle(
+        fontWeight: FontWeight.w800,
+        color: Color(0xFFF4F7FF),
+      ),
+      titleMedium: TextStyle(
+        fontWeight: FontWeight.w700,
+        color: Color(0xFFF4F7FF),
+      ),
+      bodyLarge: TextStyle(height: 1.45, color: Color(0xFFE7ECF8)),
+      bodyMedium: TextStyle(height: 1.42, color: Color(0xFFE7ECF8)),
+    ),
+    cardTheme: CardThemeData(
+      color: const Color(0xFF10192A),
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: const BorderSide(color: Color(0x1FFFFFFF)),
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: const Color(0xFF172033),
+      labelStyle: const TextStyle(color: Color(0xFFB8C2D8)),
+      hintStyle: const TextStyle(color: Color(0xFF8994AA)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0x2FFFFFFF)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0x2FFFFFFF)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFF8EA2FF), width: 1.6),
+      ),
+    ),
+    navigationBarTheme: const NavigationBarThemeData(
+      backgroundColor: Color(0xFF10192A),
+      indicatorColor: Color(0x338EA2FF),
+      height: 70,
+      labelTextStyle: WidgetStatePropertyAll(
+        TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+      ),
+    ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: const Color(0xFF1A2740),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    ),
+  );
+}
+
 class BrandMark extends StatelessWidget {
   const BrandMark({
     super.key,
