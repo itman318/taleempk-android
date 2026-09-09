@@ -41,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && post_body_was_too_large()) {
 
 function mobile_out(array $data = [], int $status = 200): void
 {
+    while (ob_get_level() > 0) { @ob_end_clean(); }
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['ok' => $status < 400, 'data' => $data], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -49,6 +50,7 @@ function mobile_out(array $data = [], int $status = 200): void
 
 function mobile_error(string $message, int $status = 400): void
 {
+    while (ob_get_level() > 0) { @ob_end_clean(); }
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['ok' => false, 'error' => $message], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -131,40 +133,24 @@ if ($action === 'health') {
 }
 
 if ($action === 'forgot_password') {
-    if (!api_burst_limit('mobile_forgot_password', 5)) {
-        mobile_error('Too many reset requests. Wait a minute and try again.', 429);
+    if (!api_burst_limit('mobile_forgot_password', 3)) {
+        mobile_error('Too many reset requests from this connection. Wait a minute and try again.', 429);
     }
     $email = strtolower(trim((string) ($_POST['email'] ?? '')));
     if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         mobile_error('Enter a valid email address.');
     }
-    $user = fetch_one("SELECT id,name,email FROM users WHERE email=? AND status='active' LIMIT 1", [$email]);
-    if ($user) {
-        try {
-            $plain = bin2hex(random_bytes(32));
-            $hash = hash('sha256', $plain);
-            if (table_exists('password_resets')) {
-                q('DELETE FROM password_resets WHERE email=? OR expires_at<=NOW()', [$email]);
-                insert_row('password_resets', [
-                    'email' => $email,
-                    'token_hash' => $hash,
-                    'expires_at' => date('Y-m-d H:i:s', time() + 3600),
-                ]);
-                $link = url('reset-password.php?token=' . rawurlencode($plain) . '&email=' . rawurlencode($email));
-                if (function_exists('send_email')) {
-                    send_email(
-                        $email,
-                        'Reset your TaleemPK password',
-                        '<p>Hello ' . e((string)$user['name']) . ',</p>' .
-                        '<p>Use the secure link below to reset your TaleemPK password. The link expires in one hour.</p>' .
-                        '<p><a href="' . e($link) . '">Reset password</a></p>' .
-                        '<p>If you did not request this, you can ignore this email.</p>'
-                    );
-                }
-            }
-        } catch (Throwable $e) {}
+    $u = fetch_one('SELECT id, name, email, reset_expires FROM users WHERE email = ? LIMIT 1', [$email]);
+    $recent = $u && $u['reset_expires']
+        && strtotime((string) $u['reset_expires']) > time() + 6600;
+    if ($u && !$recent) {
+        $token = bin2hex(random_bytes(24));
+        q('UPDATE users SET reset_token = ?, reset_expires = DATE_ADD(NOW(), INTERVAL 2 HOUR) WHERE id = ?',
+          [hash('sha256', $token), $u['id']]);
+        [$subject, $html] = mail_msg_reset((string) $u['name'], url('reset.php?t=' . $token), 2);
+        queue_mail((string) $u['email'], $subject, $html, (string) $u['name'], 'reset');
     }
-    mobile_out(['message'=>'If that email exists, a password reset link has been sent.']);
+    mobile_out(['message' => 'If an account uses that email, a reset link is on its way. It works for two hours.']);
 }
 
 if ($action === 'register') {
