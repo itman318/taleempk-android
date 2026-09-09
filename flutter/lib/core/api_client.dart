@@ -412,26 +412,100 @@ class ApiClient {
     List<int> bytes, {
     required bool expireSessionOn401,
   }) async {
-    dynamic root;
+    final raw = utf8.decode(bytes, allowMalformed: true)
+        .replaceFirst('\uFEFF', '')
+        .trim();
+
+    Map<String, dynamic>? map;
     try {
-      root = jsonDecode(utf8.decode(bytes));
+      final decoded = jsonDecode(raw);
+      map = _map(decoded);
     } catch (_) {
+      // Shared hosting can prepend PHP warnings/banners or append a second
+      // response even when the TaleemPK request itself succeeded. Mirror the
+      // proven native Android parser and use the final valid API envelope.
+      final envelopes = _extractJsonEnvelopes(raw);
+      for (final candidate in envelopes.reversed) {
+        if (candidate.containsKey('ok')) {
+          map = candidate;
+          break;
+        }
+      }
+    }
+
+    if (map == null || map.isEmpty) {
       throw ApiException(
         status >= 500
             ? 'TaleemPK is temporarily unavailable.'
+            : status == 404
+            ? 'The TaleemPK mobile service is not installed correctly.'
+            : raw.isEmpty
+            ? 'The server returned an empty response.'
             : 'The server returned an invalid response.',
         status: status,
       );
     }
-    final map = _map(root);
+
     final message = '${map['error'] ?? 'Something went wrong.'}';
-    if (status == 401 && expireSessionOn401) {
+    final authFailure = status == 401 && _isSessionFailure(message);
+    if (authFailure && expireSessionOn401) {
       await _expireSession(message);
     }
     if (status >= 400 || map['ok'] != true) {
       throw ApiException(message, status: status);
     }
     return _map(map['data']);
+  }
+
+  bool _isSessionFailure(String message) {
+    final value = message.toLowerCase();
+    return value.contains('session') ||
+        value.contains('sign in') ||
+        value.contains('token') ||
+        value.contains('authentication') ||
+        value.contains('unauthorized');
+  }
+
+  List<Map<String, dynamic>> _extractJsonEnvelopes(String raw) {
+    final found = <Map<String, dynamic>>[];
+    var start = -1, depth = 0;
+    var quoted = false, escaped = false;
+    for (var i = 0; i < raw.length; i++) {
+      final ch = raw[i];
+      if (start < 0) {
+        if (ch == '{') {
+          start = i;
+          depth = 1;
+        }
+        continue;
+      }
+      if (quoted) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch == '\\') {
+          escaped = true;
+        } else if (ch == '"') {
+          quoted = false;
+        }
+        continue;
+      }
+      if (ch == '"') {
+        quoted = true;
+      } else if (ch == '{') {
+        depth++;
+      } else if (ch == '}') {
+        depth--;
+        if (depth == 0) {
+          try {
+            final decoded = jsonDecode(raw.substring(start, i + 1));
+            final candidate = _map(decoded);
+            if (candidate.isNotEmpty) found.add(candidate);
+          } catch (_) {}
+          start = -1;
+        }
+      }
+    }
+    return found;
   }
 
   Future<void> _expireSession(String message) async {
