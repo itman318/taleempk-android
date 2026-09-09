@@ -1433,10 +1433,15 @@ class _VoiceBubbleState extends State<VoiceBubble> {
                   ),
                   child: Slider(
                     min: 0,
-                    max: total.inMilliseconds.toDouble().clamp(1, double.infinity),
-                    value: position.inMilliseconds
-                        .toDouble()
-                        .clamp(0, total.inMilliseconds.toDouble().clamp(1, double.infinity)),
+                    max: total.inMilliseconds > 0
+                        ? total.inMilliseconds.toDouble()
+                        : 1.0,
+                    value: position.inMilliseconds.toDouble().clamp(
+                          0.0,
+                          total.inMilliseconds > 0
+                              ? total.inMilliseconds.toDouble()
+                              : 1.0,
+                        ),
                     activeColor: accent,
                     inactiveColor: widget.message.mine
                         ? Colors.white24
