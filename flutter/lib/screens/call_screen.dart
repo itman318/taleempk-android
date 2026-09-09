@@ -14,10 +14,12 @@ class CallScreen extends StatefulWidget {
     super.key,
     required this.conversation,
     required this.video,
+    this.incomingCallId = 0,
   });
 
   final Conversation conversation;
   final bool video;
+  final int incomingCallId;
 
   @override
   State<CallScreen> createState() => _CallScreenState();
@@ -45,17 +47,22 @@ class _CallScreenState extends State<CallScreen> {
     await remoteRenderer.initialize();
     try {
       final api = AppScope.of(context).api;
-      final started = await api.startCall(
-        widget.conversation.id,
-        video: widget.video,
-      );
-      callId = _int(started['call_id']);
+      final isIncoming = widget.incomingCallId > 0;
+      final setup = isIncoming
+          ? await api.acceptCall(widget.incomingCallId)
+          : await api.startCall(
+              widget.conversation.id,
+              video: widget.video,
+            );
+      callId = isIncoming
+          ? widget.incomingCallId
+          : _int(setup['call_id']);
       if (callId <= 0) {
         throw const ApiException('The call could not be started.');
       }
 
-      final ice = (started['ice'] is List)
-          ? (started['ice'] as List)
+      final ice = (setup['ice'] is List)
+          ? (setup['ice'] as List)
                 .whereType<Map>()
                 .map((e) => e.cast<String, dynamic>())
                 .toList()
@@ -106,12 +113,16 @@ class _CallScreenState extends State<CallScreen> {
         await peer!.addTrack(track, localStream!);
       }
 
-      final offer = await peer!.createOffer();
-      await peer!.setLocalDescription(offer);
-      await api.sendCallSignal(callId, 'offer', {
-        'type': offer.type,
-        'sdp': offer.sdp,
-      });
+      if (!isIncoming) {
+        final offer = await peer!.createOffer();
+        await peer!.setLocalDescription(offer);
+        await api.sendCallSignal(callId, 'offer', {
+          'type': offer.type,
+          'sdp': offer.sdp,
+        });
+      } else {
+        status = 'Connecting…';
+      }
 
       pollTimer = Timer.periodic(
         const Duration(milliseconds: 900),
@@ -163,7 +174,22 @@ class _CallScreenState extends State<CallScreen> {
           final payload = signal['payload'];
           if (payload is! Map) continue;
           final data = payload.cast<String, dynamic>();
-          if (kind == 'answer') {
+          if (kind == 'offer') {
+            await peer?.setRemoteDescription(
+              RTCSessionDescription(
+                '${data['sdp'] ?? ''}',
+                '${data['type'] ?? 'offer'}',
+              ),
+            );
+            final answer = await peer?.createAnswer();
+            if (answer != null) {
+              await peer?.setLocalDescription(answer);
+              await AppScope.of(context).api.sendCallSignal(callId, 'answer', {
+                'type': answer.type,
+                'sdp': answer.sdp,
+              });
+            }
+          } else if (kind == 'answer') {
             await peer?.setRemoteDescription(
               RTCSessionDescription(
                 '${data['sdp'] ?? ''}',
