@@ -320,6 +320,7 @@ $nativeSharedHandlers = [
     'message_action' => 'chat_message.php',
     'manage_chat'    => 'chat_manage.php',
     'search_chat'    => 'chat_search.php',
+    'chat_date'      => 'chat_date.php',
     'block_user'     => 'block.php',
     'report_user'    => 'report.php',
     'call'           => 'call.php',
