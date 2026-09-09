@@ -307,6 +307,15 @@ if ($action === 'logout') {
 $u = mobile_user();
 $uid = (int) $u['id'];
 
+/* Bridge the verified bearer identity into the mature browser mutation
+   handlers. The website bootstrap may already have cached current_user() as
+   guest before the bearer token is checked, so the companion auth.php patch
+   reads this explicit native identity before that cache. */
+$_SESSION['uid'] = $uid;
+$GLOBALS['NATIVE_API_USER'] = $u;
+$_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
+if (!defined('NATIVE_API_AUTHENTICATED')) { define('NATIVE_API_AUTHENTICATED', true); }
+
 /* Reuse the mature website chat handlers behind bearer authentication. Each
    handler still performs its own membership, feature, verification and abuse
    checks; only the browser-only CSRF check is bypassed for this authenticated
@@ -329,8 +338,6 @@ $nativeSharedHandlers = [
     'create_comment' => 'comment_create.php',
 ];
 if (isset($nativeSharedHandlers[$action])) {
-    $_SESSION['uid'] = $uid;
-    if (!defined('NATIVE_API_AUTHENTICATED')) { define('NATIVE_API_AUTHENTICATED', true); }
     require __DIR__ . '/' . $nativeSharedHandlers[$action];
 }
 
