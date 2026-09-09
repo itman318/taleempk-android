@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -45,6 +46,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   double? uploadProgress;
   String? error, recordPath;
   String searchQuery = '';
+  final selectedIds = <int>{};
 
   @override
   void initState() {
@@ -256,9 +258,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
           if (recording) _recordingBar(),
           if (uploadProgress != null) _uploadBar(),
-          if (reply != null && !_chatBlocked) _replyBar(),
-          if (_chatBlocked) _blockedBanner() else _composer(),
-          if (showEmoji && !_chatBlocked) _emojiPanel(),
+          if (reply != null && !_chatBlocked && selectedIds.isEmpty) _replyBar(),
+          if (selectedIds.isNotEmpty)
+            _selectionBar()
+          else if (_chatBlocked)
+            _blockedBanner()
+          else
+            _composer(),
+          if (showEmoji && !_chatBlocked && selectedIds.isEmpty) _emojiPanel(),
         ],
       ),
     ),
@@ -324,7 +331,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget _bubble(ChatMessage m) => Align(
     alignment: m.mine ? Alignment.centerRight : Alignment.centerLeft,
     child: GestureDetector(
-      onLongPress: () => _messageActions(m),
+      onTap: selectedIds.isNotEmpty ? () => _toggleSelected(m.id) : null,
+      onLongPress: () => selectedIds.isNotEmpty
+          ? _toggleSelected(m.id)
+          : _messageActions(m),
       onHorizontalDragEnd: (d) {
         if (d.primaryVelocity!.abs() > 280)
           setState(
@@ -362,6 +372,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             bottomLeft: Radius.circular(m.mine ? 18 : 5),
             bottomRight: Radius.circular(m.mine ? 5 : 18),
           ),
+          border: selectedIds.contains(m.id)
+              ? Border.all(color: AppColors.success, width: 2.2)
+              : null,
           boxShadow: const [
             BoxShadow(
               color: Color(0x1008142F),
@@ -711,38 +724,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Widget _emojiPanel() {
     const emoji = [
-      '😀',
-      '😃',
-      '😄',
-      '😁',
-      '😂',
-      '🤣',
-      '😊',
-      '😍',
-      '🥰',
-      '😘',
-      '😎',
-      '🤓',
-      '🤔',
-      '🙌',
-      '👏',
-      '👍',
-      '👎',
-      '❤️',
-      '🔥',
-      '🎉',
-      '✅',
-      '💯',
-      '📚',
-      '✏️',
-      '🧠',
-      '🏆',
-      '🇵🇰',
-      '🙏',
-      '🌟',
-      '💡',
-      '❓',
-      '🚀',
+      '😀','😃','😄','😁','😆','😅','😂','🤣','😊','😇','🙂','🙃','😉','😌',
+      '😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓',
+      '😎','🥳','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩',
+      '🥺','😢','😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😱','😨','😰',
+      '😥','😓','🤗','🤔','🫡','🤭','🫢','🤫','🤥','😶','😐','😑','😬','🙄',
+      '😯','😦','😧','😮','😲','🥱','😴','🤤','😪','😵','🤐','🤢','🤮','🤧',
+      '😷','🤒','🤕','👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙',
+      '👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤝','👏','🙌','🫶',
+      '🙏','✍️','💪','🧠','👀','👁️','❤️','🩷','🧡','💛','💚','💙','🩵','💜',
+      '🖤','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓','💗','💖','💘',
+      '💝','💟','🔥','✨','⭐','🌟','💫','💥','💯','✅','❌','⚠️','❓','❗',
+      '🎉','🎊','🏆','🥇','📚','📖','✏️','📝','🎓','💡','🚀','🇵🇰'
     ];
     return Container(
       height: 210,
@@ -1414,12 +1407,176 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int _asInt(dynamic value) =>
       value is int ? value : int.tryParse('$value') ?? 0;
 
+  void _toggleSelected(int id) {
+    setState(() {
+      if (!selectedIds.add(id)) selectedIds.remove(id);
+    });
+  }
+
+  Widget _selectionBar() => Container(
+    color: Theme.of(context).colorScheme.surface,
+    padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+    child: Row(
+      children: [
+        IconButton(
+          tooltip: 'Cancel selection',
+          onPressed: () => setState(selectedIds.clear),
+          icon: const Icon(Icons.close_rounded),
+        ),
+        Text(
+          '${selectedIds.length} selected',
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        const Spacer(),
+        IconButton(
+          tooltip: 'Copy selected text',
+          onPressed: _copySelected,
+          icon: const Icon(Icons.copy_rounded),
+        ),
+        IconButton(
+          tooltip: 'Delete selected',
+          onPressed: _deleteSelected,
+          icon: const Icon(Icons.delete_outline_rounded, color: AppColors.danger),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _copySelected() async {
+    final text = messages
+        .where((m) => selectedIds.contains(m.id) && m.content.isNotEmpty)
+        .map((m) => m.content)
+        .join('\n');
+    if (text.isEmpty) {
+      showMessage(context, 'Selected messages have no text to copy.');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) showMessage(context, 'Selected messages copied.');
+  }
+
+  Future<void> _deleteSelected() async {
+    final chosen = messages.where((m) => selectedIds.contains(m.id)).toList();
+    if (chosen.isEmpty) return;
+    final canDeleteForAll = chosen.every((m) => m.mine);
+    final everyone = canDeleteForAll
+        ? await showDialog<bool>(
+              context: context,
+              builder: (d) => AlertDialog(
+                title: Text('Delete ${chosen.length} messages?'),
+                content: const Text(
+                  'Choose whether to remove them only for you or for everyone.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(d, false),
+                    child: const Text('For me'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(d, true),
+                    child: const Text('For everyone'),
+                  ),
+                ],
+              ),
+            )
+        : false;
+    try {
+      await AppScope.of(context).api.deleteMessages(
+        chosen.map((m) => m.id).toList(),
+        everyone: everyone == true,
+      );
+      selectedIds.clear();
+      await _load();
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _reactWith(ChatMessage m, String emoji) async {
+    try {
+      await AppScope.of(context).api.react(m.id, emoji);
+      await _load();
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _reportMessage(ChatMessage m) async {
+    final details = TextEditingController();
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (d) => AlertDialog(
+            title: const Text('Report message'),
+            content: TextField(
+              controller: details,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: 'Tell us what is wrong with this message',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(d, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(d, true),
+                child: const Text('Report'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!ok || !mounted) {
+      details.dispose();
+      return;
+    }
+    try {
+      final data = await AppScope.of(context).api.reportMessage(
+        m.id,
+        details: details.text.trim(),
+      );
+      if (mounted) {
+        showMessage(context, '${data['message'] ?? 'Message reported.'}');
+      }
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    } finally {
+      details.dispose();
+    }
+  }
+
   Future<void> _messageActions(ChatMessage m) async {
     await showModalBottomSheet<void>(
       context: context,
       builder: (sheet) => SafeArea(
         child: Wrap(
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: ['👍','❤️','😂','😮','😢','🔥']
+                    .map(
+                      (emoji) => InkWell(
+                        borderRadius: BorderRadius.circular(30),
+                        onTap: () {
+                          Navigator.pop(sheet);
+                          _reactWith(m, emoji);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(7),
+                          child: Text(
+                            emoji,
+                            style: const TextStyle(fontSize: 28),
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+            const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.reply_rounded),
               title: const Text('Reply'),
@@ -1432,6 +1589,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     text: m.content.isNotEmpty ? m.content : 'Attachment',
                   ),
                 );
+              },
+            ),
+            if (m.content.isNotEmpty && !m.deleted)
+              ListTile(
+                leading: const Icon(Icons.copy_rounded),
+                title: const Text('Copy'),
+                onTap: () async {
+                  Navigator.pop(sheet);
+                  await Clipboard.setData(ClipboardData(text: m.content));
+                  if (mounted) showMessage(context, 'Message copied.');
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.flag_outlined, color: AppColors.danger),
+              title: const Text(
+                'Report message',
+                style: TextStyle(color: AppColors.danger),
+              ),
+              onTap: () {
+                Navigator.pop(sheet);
+                _reportMessage(m);
               },
             ),
             ListTile(
@@ -1474,6 +1652,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 } catch (e) {
                   if (mounted) showMessage(context, apiMessage(e));
                 }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.check_box_outlined),
+              title: const Text('Select messages'),
+              onTap: () {
+                Navigator.pop(sheet);
+                setState(() => selectedIds.add(m.id));
               },
             ),
             if (m.canEdit)
