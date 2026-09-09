@@ -103,20 +103,20 @@ class PremiumAppBar extends StatelessWidget implements PreferredSizeWidget {
       children: [
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w800,
             letterSpacing: -.5,
-            color: AppColors.ink,
+            color: Theme.of(context).colorScheme.onSurface,
           ),
         ),
         if (subtitle != null)
           Text(
             subtitle!,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w500,
-              color: AppColors.muted,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
       ],
