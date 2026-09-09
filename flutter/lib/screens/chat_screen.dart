@@ -150,8 +150,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFF071020)
-        : const Color(0xFFEFF3F8),
+        ? const Color(0xFF08111F)
+        : const Color(0xFFF2F5FA),
     appBar: AppBar(
       toolbarHeight: 68,
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -351,21 +351,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       },
       child: Container(
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * .79,
+          maxWidth: MediaQuery.sizeOf(context).width *
+              (m.voiceSeconds > 0 ? .86 : .79),
         ),
         margin: const EdgeInsets.only(bottom: 7),
         padding: const EdgeInsets.fromLTRB(13, 10, 11, 7),
         decoration: BoxDecoration(
-          gradient: m.mine
+          gradient: m.mine && m.voiceSeconds == 0
               ? const LinearGradient(
-                  colors: [AppColors.blue, Color(0xFF5C48E8)],
+                  colors: [Color(0xFF2459D7), Color(0xFF5545D9)],
                 )
               : null,
-          color: m.mine
-              ? null
-              : (Theme.of(context).brightness == Brightness.dark
-                    ? const Color(0xFF141F32)
-                    : Colors.white),
+          color: m.voiceSeconds > 0
+              ? (m.mine
+                    ? const Color(0xFF172B4D)
+                    : (Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF152133)
+                          : Colors.white))
+              : (m.mine
+                    ? null
+                    : (Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF141F32)
+                          : Colors.white)),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(18),
             topRight: const Radius.circular(18),
