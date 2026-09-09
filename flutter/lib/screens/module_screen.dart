@@ -255,7 +255,7 @@ class _ModuleScreenState extends State<ModuleScreen> {
   }
 
   String _fallbackTitle() => widget.module.isEmpty
-      ? 'StudyHub'
+      ? 'TaleemPK'
       : '${widget.module[0].toUpperCase()}${widget.module.substring(1)}';
   IconData _icon(String key) => switch (key) {
     'library' => Icons.local_library_rounded,

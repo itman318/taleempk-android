@@ -26,7 +26,7 @@ class StudyHubApp extends StatelessWidget {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: state,
     builder: (context, _) => MaterialApp(
-      title: 'StudyHub',
+      title: 'TaleemPK',
       debugShowCheckedModeBanner: false,
       theme: studyHubTheme(),
       darkTheme: ThemeData.dark(useMaterial3: true).copyWith(
@@ -42,7 +42,7 @@ class StudyHubApp extends StatelessWidget {
         AppStatus.signedOut => const AuthScreen(),
         AppStatus.signedIn => const HomeShell(),
         AppStatus.offline => OfflineScreen(
-          message: state.error ?? 'Could not connect to StudyHub.',
+          message: state.error ?? 'Could not connect to TaleemPK.',
         ),
       },
     ),
@@ -108,7 +108,7 @@ class _SplashScreenState extends State<SplashScreen>
                     BrandMark(size: 82, light: true),
                     SizedBox(height: 22),
                     Text(
-                      'Pakistan’s learning community',
+                      'Learn today. Lead tomorrow.',
                       style: TextStyle(
                         color: Color(0xCCFFFFFF),
                         fontSize: 15,

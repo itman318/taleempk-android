@@ -7,7 +7,9 @@ import 'models.dart';
 enum AppStatus { starting, signedOut, loading, signedIn, offline }
 
 class AppState extends ChangeNotifier {
-  AppState(this.api);
+  AppState(this.api) {
+    api.onSessionExpired = _sessionExpired;
+  }
   final ApiClient api;
   AppStatus status = AppStatus.starting;
   BootstrapData? bootstrap;
@@ -15,6 +17,13 @@ class AppState extends ChangeNotifier {
   bool darkMode = false;
 
   User? get user => bootstrap?.user;
+
+  void _sessionExpired(String message) {
+    bootstrap = null;
+    error = message;
+    status = AppStatus.signedOut;
+    notifyListeners();
+  }
 
   Future<void> start() async {
     final prefs = await SharedPreferences.getInstance();

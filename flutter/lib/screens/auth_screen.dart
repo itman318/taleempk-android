@@ -181,7 +181,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           child: Text(
                             register
                                 ? 'Already a member? Sign in'
-                                : 'New to StudyHub? Create account',
+                                : 'New to TaleemPK? Create account',
                           ),
                         ),
                         if (!register)

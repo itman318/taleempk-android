@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -36,9 +37,11 @@ class ApiClient {
     defaultValue: 'https://taleempk.online/api/mobile.php',
   );
   static final _storage = FlutterSecureStorage(aOptions: AndroidOptions());
-  static const _tokenKey = 'studyhub_mobile_token';
+  static const _tokenKey = 'taleempk_mobile_token';
+  static const _legacyTokenKey = 'studyhub_mobile_token';
   final http.Client _http;
   String? _token;
+  void Function(String message)? onSessionExpired;
 
   String? get token => _token;
   Map<String, String> get authHeaders =>
@@ -46,6 +49,13 @@ class ApiClient {
 
   Future<bool> restoreSession() async {
     _token = await _storage.read(key: _tokenKey);
+    if (_token == null || _token!.isEmpty) {
+      _token = await _storage.read(key: _legacyTokenKey);
+      if (_token != null && _token!.isNotEmpty) {
+        await _storage.write(key: _tokenKey, value: _token);
+        await _storage.delete(key: _legacyTokenKey);
+      }
+    }
     return _token != null && _token!.isNotEmpty;
   }
 
@@ -57,6 +67,7 @@ class ApiClient {
   Future<void> clearToken() async {
     _token = null;
     await _storage.delete(key: _tokenKey);
+    await _storage.delete(key: _legacyTokenKey);
   }
 
   Future<Map<String, dynamic>> health() =>
@@ -211,6 +222,7 @@ class ApiClient {
     String field = 'attachment',
     int voiceSeconds = 0,
     int? replyTo,
+    void Function(double progress)? onProgress,
   }) async {
     final fields = <String, String>{
       'action': 'send',
@@ -220,8 +232,56 @@ class ApiClient {
       if (voiceSeconds > 0) 'voice_seconds': '$voiceSeconds',
       if (replyTo != null) 'reply_to': '$replyTo',
     };
-    await _multipart(fields, field, filePath);
+    await _multipart(fields, field, filePath, onProgress: onProgress);
   }
+
+  Future<Uint8List> attachmentBytes(String url) async {
+    if (_token == null || _token!.isEmpty) {
+      throw const ApiException('Sign in to continue.', status: 401);
+    }
+    try {
+      final source = Uri.parse(url);
+      final id = source.queryParameters['id'];
+      if (id == null || int.tryParse(id) == null) {
+        throw const ApiException('This attachment link is invalid.');
+      }
+      final response = await _http
+          .post(
+            Uri.parse(endpoint),
+            headers: authHeaders,
+            body: {'action': 'file', 'id': id, 'access_token': _token!},
+          )
+          .timeout(const Duration(seconds: 45));
+      if (response.statusCode == 401) {
+        await _expireSession('Your session has expired. Please sign in again.');
+        throw const ApiException(
+          'Your session has expired. Please sign in again.',
+          status: 401,
+        );
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiException(
+          response.statusCode == 404
+              ? 'This attachment is no longer available.'
+              : 'The attachment could not be downloaded.',
+          status: response.statusCode,
+        );
+      }
+      return response.bodyBytes;
+    } on TimeoutException {
+      throw const ApiException('The attachment download timed out.');
+    } on SocketException {
+      throw const ApiException('The connection was lost during download.');
+    } on http.ClientException {
+      throw const ApiException('Could not download the secure attachment.');
+    }
+  }
+
+  Future<void> toggleConversationMute(int conversationId) => _request({
+    'action': 'manage_chat',
+    'id': '$conversationId',
+    'do': 'toggle_mute',
+  });
 
   Future<void> react(int id, String emoji) =>
       _request({'action': 'reaction', 'message_id': '$id', 'emoji': emoji});
@@ -255,20 +315,33 @@ class ApiClient {
     bool authenticated = true,
     bool get = false,
   }) async {
-    if (authenticated && (_token == null || _token!.isEmpty))
+    if (authenticated && (_token == null || _token!.isEmpty)) {
       throw const ApiException('Sign in to continue.', status: 401);
+    }
+    final requestFields = <String, String>{...fields};
+    if (authenticated && _token != null) {
+      requestFields['access_token'] = _token!;
+    }
     try {
       final response = get
           ? await _http
                 .get(
-                  Uri.parse(endpoint).replace(queryParameters: fields),
+                  Uri.parse(endpoint).replace(queryParameters: requestFields),
                   headers: authHeaders,
                 )
                 .timeout(const Duration(seconds: 18))
           : await _http
-                .post(Uri.parse(endpoint), headers: authHeaders, body: fields)
+                .post(
+                  Uri.parse(endpoint),
+                  headers: authHeaders,
+                  body: requestFields,
+                )
                 .timeout(const Duration(seconds: 24));
-      return _decode(response.statusCode, response.bodyBytes);
+      return await _decode(
+        response.statusCode,
+        response.bodyBytes,
+        expireSessionOn401: authenticated,
+      );
     } on TimeoutException {
       throw const ApiException(
         'The server took too long to respond. Check your connection and try again.',
@@ -278,25 +351,53 @@ class ApiClient {
         'You appear to be offline. Check your internet connection.',
       );
     } on http.ClientException {
-      throw const ApiException('Could not connect securely to StudyHub.');
+      throw const ApiException('Could not connect securely to TaleemPK.');
     }
   }
 
   Future<Map<String, dynamic>> _multipart(
     Map<String, String> fields,
     String fileField,
-    String filePath,
-  ) async {
+    String filePath, {
+    void Function(double progress)? onProgress,
+  }) async {
+    if (_token == null || _token!.isEmpty) {
+      throw const ApiException('Sign in to continue.', status: 401);
+    }
+    final file = File(filePath);
+    final length = await file.length();
+    var sent = 0;
+    final stream = file.openRead().transform<List<int>>(
+      StreamTransformer<List<int>, List<int>>.fromHandlers(
+        handleData: (chunk, sink) {
+          sent += chunk.length;
+          if (length > 0) onProgress?.call((sent / length).clamp(0, 1));
+          sink.add(chunk);
+        },
+      ),
+    );
     final request = http.MultipartRequest('POST', Uri.parse(endpoint))
       ..fields.addAll(fields)
       ..headers.addAll(authHeaders);
-    request.files.add(await http.MultipartFile.fromPath(fileField, filePath));
+    request.fields['access_token'] = _token!;
+    request.files.add(
+      http.MultipartFile(
+        fileField,
+        http.ByteStream(stream),
+        length,
+        filename: filePath.split(Platform.pathSeparator).last,
+      ),
+    );
     try {
       final streamed = await _http
           .send(request)
           .timeout(const Duration(seconds: 90));
       final bytes = await streamed.stream.toBytes();
-      return _decode(streamed.statusCode, bytes);
+      return await _decode(
+        streamed.statusCode,
+        bytes,
+        expireSessionOn401: true,
+      );
     } on TimeoutException {
       throw const ApiException('Upload timed out. Please try again.');
     } on SocketException {
@@ -306,26 +407,36 @@ class ApiClient {
     }
   }
 
-  Map<String, dynamic> _decode(int status, List<int> bytes) {
+  Future<Map<String, dynamic>> _decode(
+    int status,
+    List<int> bytes, {
+    required bool expireSessionOn401,
+  }) async {
     dynamic root;
     try {
       root = jsonDecode(utf8.decode(bytes));
     } catch (_) {
       throw ApiException(
         status >= 500
-            ? 'StudyHub is temporarily unavailable.'
+            ? 'TaleemPK is temporarily unavailable.'
             : 'The server returned an invalid response.',
         status: status,
       );
     }
     final map = _map(root);
-    if (status == 401) clearToken();
-    if (status >= 400 || map['ok'] != true)
-      throw ApiException(
-        '${map['error'] ?? 'Something went wrong.'}',
-        status: status,
-      );
+    final message = '${map['error'] ?? 'Something went wrong.'}';
+    if (status == 401 && expireSessionOn401) {
+      await _expireSession(message);
+    }
+    if (status >= 400 || map['ok'] != true) {
+      throw ApiException(message, status: status);
+    }
     return _map(map['data']);
+  }
+
+  Future<void> _expireSession(String message) async {
+    await clearToken();
+    onSessionExpired?.call(message);
   }
 
   AuthResult _authResult(Map<String, dynamic> data) => AuthResult(

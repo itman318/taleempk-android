@@ -135,7 +135,7 @@ class BrandMark extends StatelessWidget {
       if (showName) ...[
         const SizedBox(width: 13),
         Text(
-          'StudyHub',
+          'TaleemPK',
           style: TextStyle(
             fontSize: size * .38,
             fontWeight: FontWeight.w900,

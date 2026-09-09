@@ -74,12 +74,12 @@ class ProfileScreen extends StatelessWidget {
             ),
             _tile(
               Icons.info_outline_rounded,
-              'About StudyHub',
-              'Version 2.0.0 · Made for Pakistan',
+              'About TaleemPK',
+              'Version 2.1.0 · Made for Pakistan',
               () => showAboutDialog(
                 context: context,
-                applicationName: 'StudyHub',
-                applicationVersion: '2.0.0',
+                applicationName: 'TaleemPK',
+                applicationVersion: '2.1.0',
                 applicationLegalese: 'A premium learning community by MS Digital Software House.',
               ),
             ),

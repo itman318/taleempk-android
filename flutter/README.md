@@ -1,7 +1,7 @@
-# StudyHub Flutter
+# TaleemPK Flutter
 
 Premium Flutter Android app for `https://taleempk.online`, sharing the existing
-StudyHub users, content and chat data through a revocable bearer-token API.
+TaleemPK users, content and chat data through a revocable bearer-token API.
 
 ## What is included
 
@@ -18,7 +18,7 @@ StudyHub users, content and chat data through a revocable bearer-token API.
 ## Server installation
 
 Upload `backend/api/mobile.php` to the website as `api/mobile.php`. The supplied
-`StudyHub-v23.47-flutter-ready.zip` already includes the matching migration and
+`TaleemPK-v23.48-flutter-ready.zip` already includes the matching migration and
 native API gateway support. Loading the website once creates the device-session
 tables automatically.
 

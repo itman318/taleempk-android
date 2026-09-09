@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
 import '../core/app_state.dart';
+import '../core/api_client.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
 import '../widgets/common.dart';
@@ -27,9 +29,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Timer? poll, recordTimer, presenceDebounce;
   ChatPresence? presence;
   ReplyPreview? reply;
-  bool loading = true, sending = false, recording = false, showEmoji = false;
+  bool loading = true,
+      sending = false,
+      recording = false,
+      showEmoji = false,
+      polling = false,
+      typingSent = false,
+      searching = false;
   int recordSeconds = 0;
+  double? uploadProgress;
   String? error, recordPath;
+  String searchQuery = '';
 
   @override
   void initState() {
@@ -74,11 +84,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void _schedulePoll() {
     poll?.cancel();
-    poll = Timer(const Duration(milliseconds: 1900), _poll);
+    if (mounted) poll = Timer(const Duration(milliseconds: 2100), _poll);
   }
 
   Future<void> _poll() async {
-    if (!mounted) return;
+    if (!mounted || polling) return;
+    polling = true;
     try {
       final after = messages.isEmpty ? 0 : messages.last.id;
       final fresh = await AppScope.of(context).api
@@ -95,13 +106,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _toBottom();
       }
       if (mounted) setState(() => presence = p);
-    } catch (_) {}
+    } catch (_) {
+      // A transient poll failure must not erase already loaded messages.
+    } finally {
+      polling = false;
+    }
     _schedulePoll();
   }
 
   void _typing() {
+    if (mounted) setState(() {});
     presenceDebounce?.cancel();
-    if (textController.text.trim().isNotEmpty)
+    if (textController.text.trim().isNotEmpty && !typingSent) {
+      typingSent = true;
       AppScope.of(context).api
           .presence(widget.conversation.id, 'text')
           .catchError(
@@ -112,10 +129,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               readThrough: 0,
             ),
           );
-    presenceDebounce = Timer(
-      const Duration(seconds: 2),
-      () => AppScope.of(context).api.presence(widget.conversation.id, ''),
-    );
+    }
+    presenceDebounce = Timer(const Duration(seconds: 2), () {
+      typingSent = false;
+      if (mounted) {
+        AppScope.of(context).api.presence(widget.conversation.id, '');
+      }
+    });
   }
 
   @override
@@ -126,65 +146,79 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
       titleSpacing: 0,
-      title: Row(
-        children: [
-          UserAvatar(
-            url: widget.conversation.avatar,
-            name: widget.conversation.title,
-            radius: 20,
-            online: widget.conversation.online,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      title: searching
+          ? TextField(
+              autofocus: true,
+              onChanged: (value) => setState(() => searchQuery = value),
+              decoration: const InputDecoration(
+                hintText: 'Search this conversation',
+                border: InputBorder.none,
+                filled: false,
+              ),
+            )
+          : Row(
               children: [
-                Text(
-                  widget.conversation.title,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: AppColors.ink,
-                  ),
+                UserAvatar(
+                  url: widget.conversation.avatar,
+                  name: widget.conversation.title,
+                  radius: 20,
+                  online: widget.conversation.online,
                 ),
-                Text(
-                  presence?.active == true
-                      ? (presence!.kind == 'voice'
-                            ? '${presence!.name} is recording…'
-                            : '${presence!.name} is typing…')
-                      : widget.conversation.statusText,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: presence?.active == true
-                        ? AppColors.success
-                        : AppColors.muted,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.conversation.title,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.ink,
+                        ),
+                      ),
+                      Text(
+                        presence?.active == true
+                            ? (presence!.kind == 'voice'
+                                  ? '${presence!.name} is recording…'
+                                  : '${presence!.name} is typing…')
+                            : widget.conversation.statusText,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: presence?.active == true
+                              ? AppColors.success
+                              : AppColors.muted,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ),
-        ],
-      ),
       actions: [
         IconButton(
-          onPressed: () => showMessage(
-            context,
-            'Audio and video calls follow your website privacy settings.',
-          ),
-          icon: const Icon(Icons.call_outlined),
+          tooltip: searching ? 'Close search' : 'Search messages',
+          onPressed: () => setState(() {
+            searching = !searching;
+            if (!searching) searchQuery = '';
+          }),
+          icon: Icon(searching ? Icons.close_rounded : Icons.search_rounded),
         ),
         PopupMenuButton<String>(
           itemBuilder: (_) => const [
-            PopupMenuItem(value: 'search', child: Text('Search messages')),
             PopupMenuItem(value: 'mute', child: Text('Mute notifications')),
           ],
-          onSelected: (v) => showMessage(
-            context,
-            v == 'search'
-                ? 'Message search is available from the conversation menu.'
-                : 'Conversation notification setting updated.',
-          ),
+          onSelected: (_) async {
+            try {
+              await AppScope.of(context).api
+                  .toggleConversationMute(widget.conversation.id);
+              if (mounted)
+                showMessage(context, 'Notification setting updated.');
+            } catch (e) {
+              if (mounted) showMessage(context, apiMessage(e));
+            }
+          },
         ),
       ],
     ),
@@ -206,6 +240,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 : _messageList(),
           ),
           if (recording) _recordingBar(),
+          if (uploadProgress != null) _uploadBar(),
           if (reply != null) _replyBar(),
           _composer(),
           if (showEmoji) _emojiPanel(),
@@ -214,42 +249,62 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ),
   );
 
-  Widget _messageList() => ListView.builder(
-    controller: scroll,
-    padding: const EdgeInsets.fromLTRB(12, 16, 12, 14),
-    itemCount: messages.length,
-    itemBuilder: (_, i) {
-      final m = messages[i],
-          showDate = i == 0 || messages[i - 1].dateLabel != m.dateLabel;
-      return Column(
-        children: [
-          if (showDate)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0x1908142F),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  m.dateLabel,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.muted,
-                    fontWeight: FontWeight.w700,
+  Widget _messageList() {
+    final needle = searchQuery.trim().toLowerCase();
+    final visible = needle.isEmpty
+        ? messages
+        : messages
+              .where(
+                (m) =>
+                    m.content.toLowerCase().contains(needle) ||
+                    m.sender.toLowerCase().contains(needle) ||
+                    (m.attachmentName?.toLowerCase().contains(needle) ?? false),
+              )
+              .toList();
+    if (visible.isEmpty && needle.isNotEmpty) {
+      return const EmptyView(
+        icon: Icons.search_off_rounded,
+        title: 'No matching messages',
+        message: 'Try a different word or name.',
+      );
+    }
+    return ListView.builder(
+      controller: scroll,
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 14),
+      itemCount: visible.length,
+      itemBuilder: (_, i) {
+        final m = visible[i],
+            showDate = i == 0 || visible[i - 1].dateLabel != m.dateLabel;
+        return Column(
+          children: [
+            if (showDate)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0x1908142F),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    m.dateLabel,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.muted,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
-            ),
-          _bubble(m),
-        ],
-      );
-    },
-  );
+            _bubble(m),
+          ],
+        );
+      },
+    );
+  }
 
   Widget _bubble(ChatMessage m) => Align(
     alignment: m.mine ? Alignment.centerRight : Alignment.centerLeft,
@@ -315,10 +370,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               _metaLine(Icons.forward_rounded, 'Forwarded', m.mine),
             if (m.reply != null) _quoted(m.reply!, m.mine),
             if (m.voiceSeconds > 0 && !m.deleted)
-              VoiceBubble(
-                message: m,
-                headers: AppScope.of(context).api.authHeaders,
-              )
+              VoiceBubble(message: m, api: AppScope.of(context).api)
             else if (m.attachmentUrl != null && !m.deleted)
               _attachment(m)
             else
@@ -450,40 +502,101 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ],
     ),
   );
-  Widget _attachment(ChatMessage m) => InkWell(
-    onTap: () => showMessage(
-      context,
-      'Secure attachment: ${m.attachmentName ?? 'File'}',
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: .16),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(
-            _fileIcon(m.attachmentType),
-            color: m.mine ? Colors.white : AppColors.blue,
-          ),
+  Widget _attachment(ChatMessage m) {
+    final image = _isImage(m.attachmentType);
+    return InkWell(
+      onTap: () => _openAttachment(m),
+      borderRadius: BorderRadius.circular(14),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 260),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (image)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(13),
+                child: SecureChatImage(
+                  api: AppScope.of(context).api,
+                  url: m.attachmentUrl!,
+                  mine: m.mine,
+                ),
+              )
+            else
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .16),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      _fileIcon(m.attachmentType),
+                      color: m.mine ? Colors.white : AppColors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  const Icon(Icons.download_rounded, size: 19),
+                ],
+              ),
+            const SizedBox(height: 6),
+            Text(
+              m.attachmentName ?? 'Attachment',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: m.mine ? Colors.white : AppColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 9),
-        Flexible(
-          child: Text(
-            m.attachmentName ?? 'Attachment',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: m.mine ? Colors.white : AppColors.ink,
-              fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+
+  Future<void> _openAttachment(ChatMessage m) async {
+    try {
+      final bytes = await AppScope.of(context).api
+          .attachmentBytes(m.attachmentUrl!);
+      if (!mounted) return;
+      if (_isImage(m.attachmentType)) {
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => Dialog.fullscreen(
+            backgroundColor: Colors.black,
+            child: Stack(
+              children: [
+                Center(
+                  child: InteractiveViewer(
+                    minScale: .7,
+                    maxScale: 5,
+                    child: Image.memory(bytes, fit: BoxFit.contain),
+                  ),
+                ),
+                SafeArea(
+                  child: IconButton.filledTonal(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-      ],
-    ),
-  );
+        );
+        return;
+      }
+      final saved = await FilePicker.saveFile(
+        dialogTitle: 'Save secure attachment',
+        fileName: m.attachmentName ?? 'TaleemPK-file',
+        bytes: bytes,
+      );
+      if (mounted && saved != null) showMessage(context, 'Attachment saved.');
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
 
   Widget _replyBar() => Container(
     color: Colors.white,
@@ -539,6 +652,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             controller: textController,
             minLines: 1,
             maxLines: 5,
+            maxLength: 4000,
+            buildCounter: (
+              _, {
+              required currentLength,
+              required isFocused,
+              maxLength,
+            }) => null,
             onTap: () => setState(() => showEmoji = false),
             decoration: InputDecoration(
               hintText: 'Message',
@@ -648,6 +768,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ),
   );
 
+  Widget _uploadBar() => Container(
+    color: Colors.white,
+    padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.cloud_upload_outlined,
+              size: 18,
+              color: AppColors.blue,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Sending attachment ${(uploadProgress! * 100).round()}%',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+            ),
+          ],
+        ),
+        const SizedBox(height: 7),
+        LinearProgressIndicator(value: uploadProgress),
+      ],
+    ),
+  );
+
   Future<void> _sendText() async {
     final text = textController.text.trim();
     if (text.isEmpty) return;
@@ -721,16 +867,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _upload(String path) async {
-    setState(() => sending = true);
+    setState(() {
+      sending = true;
+      uploadProgress = 0;
+    });
     try {
-      await AppScope.of(context).api
-          .sendFile(widget.conversation.id, path, replyTo: reply?.id);
+      await AppScope.of(context).api.sendFile(
+        widget.conversation.id,
+        path,
+        replyTo: reply?.id,
+        onProgress: (value) {
+          if (mounted) setState(() => uploadProgress = value);
+        },
+      );
       reply = null;
       await _load();
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));
     }
-    if (mounted) setState(() => sending = false);
+    if (mounted) {
+      setState(() {
+        sending = false;
+        uploadProgress = null;
+      });
+    }
   }
 
   Future<void> _toggleRecording() async {
@@ -748,7 +908,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     final dir = await getTemporaryDirectory();
     recordPath =
-        '${dir.path}/studyhub_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        '${dir.path}/taleempk_${DateTime.now().millisecondsSinceEpoch}.m4a';
     await recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.aacLc,
@@ -764,7 +924,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() => recordSeconds++);
-      AppScope.of(context).api.presence(widget.conversation.id, 'voice');
+      if (recordSeconds % 3 == 0) {
+        AppScope.of(context).api.presence(widget.conversation.id, 'voice');
+      }
       if (recordSeconds >= 120) _finishRecording();
     });
   }
@@ -775,7 +937,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     setState(() => recording = false);
     AppScope.of(context).api.presence(widget.conversation.id, '');
     if (path == null || recordSeconds < 1) return;
-    setState(() => sending = true);
+    setState(() {
+      sending = true;
+      uploadProgress = 0;
+    });
     try {
       await AppScope.of(context).api.sendFile(
         widget.conversation.id,
@@ -783,6 +948,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         field: 'voice',
         voiceSeconds: recordSeconds,
         replyTo: reply?.id,
+        onProgress: (value) {
+          if (mounted) setState(() => uploadProgress = value);
+        },
       );
       reply = null;
       await _load();
@@ -792,7 +960,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       try {
         File(path).deleteSync();
       } catch (_) {}
-      if (mounted) setState(() => sending = false);
+      if (mounted) {
+        setState(() {
+          sending = false;
+          uploadProgress = null;
+        });
+      }
     }
   }
 
@@ -846,6 +1019,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 _load();
               },
             ),
+            ListTile(
+              leading: Icon(
+                m.pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+              ),
+              title: Text(m.pinned ? 'Unpin' : 'Pin'),
+              onTap: () async {
+                Navigator.pop(sheet);
+                try {
+                  await AppScope.of(context).api.togglePin(m.id);
+                  await _load();
+                } catch (e) {
+                  if (mounted) showMessage(context, apiMessage(e));
+                }
+              },
+            ),
             if (m.canEdit)
               ListTile(
                 leading: const Icon(Icons.edit_outlined),
@@ -877,7 +1065,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _quickReaction(ChatMessage m) async {
-    const values = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
+    const values = ['❤️', '👍', '😂', '😮', '😢', '🔥'];
     await showDialog<void>(
       context: context,
       builder: (d) => AlertDialog(
@@ -967,14 +1155,74 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       : type == 'pdf'
       ? Icons.picture_as_pdf_rounded
       : Icons.description_rounded;
+  bool _isImage(String? type) =>
+      ['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(type?.toLowerCase());
   String _duration(int seconds) =>
       '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
 }
 
+class SecureChatImage extends StatefulWidget {
+  const SecureChatImage({
+    super.key,
+    required this.api,
+    required this.url,
+    required this.mine,
+  });
+  final ApiClient api;
+  final String url;
+  final bool mine;
+
+  @override
+  State<SecureChatImage> createState() => _SecureChatImageState();
+}
+
+class _SecureChatImageState extends State<SecureChatImage> {
+  late final Future<Uint8List> bytes = widget.api.attachmentBytes(widget.url);
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Uint8List>(
+    future: bytes,
+    builder: (context, snapshot) {
+      if (snapshot.hasData) {
+        return Image.memory(
+          snapshot.data!,
+          width: 240,
+          height: 190,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+        );
+      }
+      if (snapshot.hasError) {
+        return Container(
+          width: 240,
+          height: 120,
+          alignment: Alignment.center,
+          color: widget.mine ? Colors.white12 : const Color(0xFFF2F4F8),
+          child: const Icon(
+            Icons.broken_image_outlined,
+            color: AppColors.muted,
+          ),
+        );
+      }
+      return Container(
+        width: 240,
+        height: 150,
+        alignment: Alignment.center,
+        color: widget.mine ? Colors.white12 : const Color(0xFFF2F4F8),
+        child: const SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    },
+  );
+}
+
 class VoiceBubble extends StatefulWidget {
-  const VoiceBubble({super.key, required this.message, required this.headers});
+  const VoiceBubble({super.key, required this.message, required this.api});
   final ChatMessage message;
-  final Map<String, String> headers;
+  final ApiClient api;
   @override
   State<VoiceBubble> createState() => _VoiceBubbleState();
 }
@@ -982,26 +1230,36 @@ class VoiceBubble extends StatefulWidget {
 class _VoiceBubbleState extends State<VoiceBubble> {
   final player = AudioPlayer();
   bool ready = false;
+  String? localPath;
   @override
   void dispose() {
     player.dispose();
+    final path = localPath;
+    if (path != null) {
+      try {
+        File(path).deleteSync();
+      } catch (_) {}
+    }
     super.dispose();
   }
 
   Future<void> _toggle() async {
     try {
       if (!ready) {
-        await player.setAudioSource(
-          AudioSource.uri(
-            Uri.parse(widget.message.attachmentUrl!),
-            headers: widget.headers,
-          ),
+        final bytes = await widget.api.attachmentBytes(
+          widget.message.attachmentUrl!,
         );
+        final dir = await getTemporaryDirectory();
+        localPath = '${dir.path}/taleempk_voice_${widget.message.id}.m4a';
+        await File(localPath!).writeAsBytes(bytes, flush: true);
+        await player.setFilePath(localPath!);
         ready = true;
       }
       player.playing ? await player.pause() : await player.play();
       setState(() {});
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
   }
 
   @override

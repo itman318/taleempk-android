@@ -37,53 +37,11 @@ class HomeScreen extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
           children: [
             _hero(context, user),
-            const SizedBox(height: 22),
-            const Text(
-              'Community today',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AppColors.ink,
-              ),
-            ),
-            const SizedBox(height: 12),
-            GridView.count(
-              crossAxisCount: 2,
-              childAspectRatio: 1.55,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              children: [
-                _stat(
-                  'Members',
-                  data.stats.members,
-                  Icons.groups_2_rounded,
-                  AppColors.blue,
-                ),
-                _stat(
-                  'Active today',
-                  data.stats.activeToday,
-                  Icons.bolt_rounded,
-                  AppColors.success,
-                ),
-                _stat(
-                  'Messages',
-                  data.stats.messagesToday,
-                  Icons.forum_rounded,
-                  AppColors.violet,
-                ),
-                _stat(
-                  'Quiz attempts',
-                  data.stats.quizAttempts,
-                  Icons.workspace_premium_rounded,
-                  const Color(0xFFF19B38),
-                ),
-              ],
-            ),
+            const SizedBox(height: 16),
+            _learningPromise(),
             const SizedBox(height: 24),
             const Text(
-              'Your learning space',
+              'Explore TaleemPK',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
@@ -171,43 +129,42 @@ class HomeScreen extends StatelessWidget {
     ),
   );
 
-  Widget _stat(String label, int value, IconData icon, Color color) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(15),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: .11),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: color, size: 22),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _compact(value),
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                    color: AppColors.ink,
-                  ),
+  Widget _learningPromise() => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: const Color(0x143157E8)),
+    ),
+    child: const Row(
+      children: [
+        CircleAvatar(
+          radius: 23,
+          backgroundColor: Color(0x123157E8),
+          child: Icon(Icons.psychology_alt_rounded, color: AppColors.blue),
+        ),
+        SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Learn with purpose',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              ),
+              SizedBox(height: 4),
+              Text(
+                'Plan your studies, practise smarter and grow with trusted learning resources.',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.4,
+                  color: AppColors.muted,
                 ),
-                Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, color: AppColors.muted),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     ),
   );
 
@@ -285,11 +242,6 @@ class HomeScreen extends StatelessWidget {
     'results' => Icons.workspace_premium_rounded,
     _ => Icons.auto_stories_rounded,
   };
-  String _compact(int n) => n >= 1000000
-      ? '${(n / 1000000).toStringAsFixed(1)}M'
-      : n >= 1000
-      ? '${(n / 1000).toStringAsFixed(1)}K'
-      : '$n';
   String _role(String role) =>
       role.isEmpty ? '' : '${role[0].toUpperCase()}${role.substring(1)}';
 }

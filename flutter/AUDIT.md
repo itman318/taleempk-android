@@ -1,8 +1,8 @@
-# StudyHub Flutter v2.0 – audit and implementation summary
+# TaleemPK Flutter v2.1 – audit and implementation summary
 
 ## Product direction
 
-The app is a native Flutter client, not a browser wrapper. It uses StudyHub's
+The app is a native Flutter client, not a browser wrapper. It uses TaleemPK's
 existing accounts and database through a narrow JSON API. The visual system is
 navy, electric blue and violet with restrained gradients, large touch targets,
 clear hierarchy and lightweight transitions.
@@ -32,6 +32,8 @@ clear hierarchy and lightweight transitions.
 - Registration/login rate limits and existing website moderation gates retained
 - Native CSRF exemption applies only after the bearer token is authenticated
 - Android backups disabled to avoid accidental token extraction
+- Authorization-header fallback for shared Apache/FastCGI hosts
+- Global 401 handling returns every protected screen to sign-in immediately
 
 ## Performance decisions
 
@@ -41,6 +43,9 @@ clear hierarchy and lightweight transitions.
 - Presence polling is short-lived and failures back off without blocking input
 - Images are cached; list screens avoid unnecessary nested scrolling
 - Client tokens make retried sends idempotent on compatible website builds
+- Debounced typing and guarded polling prevent duplicate/flooded chat requests
+- Secure inline image preview, file download and upload progress
+- Working conversation search, mute, pin and server-compatible reactions
 
 ## Deployment verification
 
@@ -49,4 +54,3 @@ workflow resolves dependencies, runs `flutter analyze`, runs model tests and
 builds a release APK. PHP companion changes were checked against the v23.39
 schema and shared API guards; the archive's brace checker reports no issue in
 the new mobile endpoint.
-
