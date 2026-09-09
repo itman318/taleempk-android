@@ -5,7 +5,9 @@ plugins {
 
 android {
     namespace = "online.taleempk.studyhub"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_secure_storage 11 requires Android API 37 at compile time.
+    // This does not raise minSdk or change runtime device compatibility.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
