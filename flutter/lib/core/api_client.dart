@@ -310,23 +310,60 @@ class ApiClient {
     'details': details,
   });
 
-  Future<Map<String, dynamic>> callAction(
-    String action, {
-    int conversationId = 0,
-    int callId = 0,
-    String kind = 'audio',
-    String signalKind = '',
-    String payload = '',
+  Future<Map<String, dynamic>> startCall(
+    int conversationId, {
+    required bool video,
+  }) => _request({
+    'action': 'call',
+    'do': 'start',
+    'conversation_id': '$conversationId',
+    'kind': video ? 'video' : 'audio',
+  });
+
+  Future<Map<String, dynamic>> acceptCall(int callId) => _request({
+    'action': 'call',
+    'do': 'accept',
+    'call_id': '$callId',
+  });
+
+  Future<void> declineCall(int callId) => _request({
+    'action': 'call',
+    'do': 'decline',
+    'call_id': '$callId',
+  });
+
+  Future<void> endCall(int callId, {String reason = 'hangup'}) => _request({
+    'action': 'call',
+    'do': 'end',
+    'call_id': '$callId',
+    'reason': reason,
+  });
+
+  Future<Map<String, dynamic>> callState(
+    int callId, {
     int afterSignalId = 0,
   }) => _request({
     'action': 'call',
-    'do': action,
-    if (conversationId > 0) 'conversation_id': '$conversationId',
-    if (callId > 0) 'id': '$callId',
-    if (kind.isNotEmpty) 'kind': kind,
-    if (signalKind.isNotEmpty) 'signal_kind': signalKind,
-    if (payload.isNotEmpty) 'payload': payload,
-    if (afterSignalId > 0) 'after': '$afterSignalId',
+    'do': 'state',
+    'call_id': '$callId',
+    'after': '$afterSignalId',
+  });
+
+  Future<Map<String, dynamic>> watchCalls() => _request({
+    'action': 'call',
+    'do': 'watch',
+  });
+
+  Future<void> sendCallSignal(
+    int callId,
+    String kind,
+    Map<String, dynamic> payload,
+  ) => _request({
+    'action': 'call',
+    'do': 'signal',
+    'call_id': '$callId',
+    'kind': kind,
+    'payload': jsonEncode(payload),
   });
 
   Future<void> forwardMessage(int messageId, int conversationId) =>
