@@ -144,7 +144,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: c.unread > 0 ? AppColors.ink : AppColors.muted,
+                color: c.unread > 0
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
                 fontWeight: c.unread > 0 ? FontWeight.w600 : FontWeight.w400,
               ),
             ),
