@@ -1057,6 +1057,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.forward_rounded),
+              title: const Text('Forward'),
+              onTap: () {
+                Navigator.pop(sheet);
+                _forward(m);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.add_reaction_outlined),
               title: const Text('React'),
               onTap: () {
@@ -1118,6 +1126,71 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  Future<void> _forward(ChatMessage message) async {
+    try {
+      final chats = await AppScope.of(context).api.conversations();
+      if (!mounted) return;
+      final target = await showModalBottomSheet<Conversation>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheet) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(sheet).height * .62,
+            child: Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 18, 20, 10),
+                  child: Row(
+                    children: [
+                      Icon(Icons.forward_rounded, color: AppColors.blue),
+                      SizedBox(width: 10),
+                      Text(
+                        'Forward message',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView(
+                    children: chats
+                        .where((chat) => chat.id != widget.conversation.id)
+                        .map(
+                          (chat) => ListTile(
+                            leading: UserAvatar(
+                              url: chat.avatar,
+                              name: chat.title,
+                              radius: 20,
+                              online: chat.online,
+                            ),
+                            title: Text(chat.title),
+                            subtitle: Text(
+                              chat.statusText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () => Navigator.pop(sheet, chat),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (target == null || !mounted) return;
+      await AppScope.of(context).api.forwardMessage(message.id, target.id);
+      if (mounted) showMessage(context, 'Message forwarded to ${target.title}.');
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
   }
 
   Future<void> _quickReaction(ChatMessage m) async {
