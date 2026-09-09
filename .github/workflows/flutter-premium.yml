@@ -1,0 +1,39 @@
+name: Build StudyHub Flutter APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'flutter/**'
+      - '.github/workflows/flutter-premium.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'flutter/**'
+      - '.github/workflows/flutter-premium.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StudyHub-Flutter-APK
+          path: flutter/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
