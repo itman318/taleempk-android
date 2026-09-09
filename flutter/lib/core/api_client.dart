@@ -366,6 +366,15 @@ class ApiClient {
     'payload': jsonEncode(payload),
   });
 
+  Future<Map<String, dynamic>> jumpToDate(
+    int conversationId,
+    String date,
+  ) => _request({
+    'action': 'chat_date',
+    'conversation_id': '$conversationId',
+    'date': date,
+  });
+
   Future<void> forwardMessage(int messageId, int conversationId) =>
       _request({
         'action': 'message_action',
