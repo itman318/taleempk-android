@@ -12,6 +12,8 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import java.util.UUID
 import online.taleempk.studyhub.data.*
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -41,6 +43,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var uploadProgress by mutableStateOf<Float?>(null); private set
     var uploadLabel by mutableStateOf(""); private set
     var activeModule by mutableStateOf<ModuleContent?>(null); private set
+    var notifications by mutableStateOf<List<AppNotification>>(emptyList()); private set
+    var notificationUnread by mutableStateOf(0); private set
+    var frontNotification by mutableStateOf<AppNotification?>(null); private set
+    fun dismissFrontNotification(){frontNotification=null}
+    var notificationsOpen by mutableStateOf(false); private set
+    var notificationLoading by mutableStateOf(false); private set
+    var feedLoadingMore by mutableStateOf(false); private set
+    var feedHasMore by mutableStateOf(true); private set
+    var publishing by mutableStateOf(false); private set
+    var publishProgress by mutableStateOf<Float?>(null); private set
+    private val postActions = mutableSetOf<Long>()
+    var chatLoading by mutableStateOf(false); private set
+    var historyLoading by mutableStateOf(false); private set
+    var hasOlderMessages by mutableStateOf(false); private set
+    private var chatGeneration = 0L
+    private var syncingGeneration: Long? = null
+    private var presenceGeneration: Long? = null
+    private val pendingByChat = mutableMapOf<Long, List<ChatMessage>>()
+    private val sendsInFlight = mutableSetOf<String>()
+    private val drafts = mutableMapOf<Long, String>()
+    fun draft(id: Long) = drafts[id].orEmpty()
+    fun saveDraft(id: Long, text: String) { drafts[id] = text }
 
     init { restore() }
 
@@ -97,13 +121,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshHome() = launch { bootstrap = withContext(Dispatchers.IO) { api.bootstrap() } }
-    fun refreshFeed() = launch { posts = withContext(Dispatchers.IO) { api.feed() } }
+    fun refreshFeed() = launch { posts = withContext(Dispatchers.IO) { api.feed() }; feedHasMore=posts.size==20 }
     fun refreshChats() = launch { conversations = withContext(Dispatchers.IO) { api.conversations() } }
 
     fun openNativeRoute(route: String) {
-        when (route.substringBefore('?')) {
+        val uri = Uri.parse(route)
+        val path = uri.path.orEmpty().substringAfterLast('/')
+        when (path) {
+            "post.php" -> {
+                val id = uri.getQueryParameter("id")?.toLongOrNull() ?: return
+                launch { val post = withContext(Dispatchers.IO) { api.feed(postId=id) }.firstOrNull()
+                    if(post==null) error="This post is no longer available." else {
+                        posts=(listOf(post)+posts).distinctBy{it.id}; screen=RootScreen.FEED; openComments(post)
+                    } }
+            }
             "feed.php" -> selectScreen(RootScreen.FEED)
-            "chat.php" -> selectScreen(RootScreen.CHATS)
+            "chat.php" -> {
+                val id = (uri.getQueryParameter("id") ?: uri.getQueryParameter("c"))?.toLongOrNull()
+                if(id==null) selectScreen(RootScreen.CHATS) else launch {
+                    conversations=withContext(Dispatchers.IO){api.conversations()}
+                    conversations.firstOrNull{it.id==id}?.let(::openConversation)
+                        ?: run { screen=RootScreen.CHATS; error="This conversation is no longer available." }
+                }
+            }
             "study.php" -> openModule("study")
             "library.php" -> openModule("library")
             "quiz.php" -> openModule("quizzes")
@@ -112,7 +152,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             "results.php" -> openModule("results")
             "edit-profile.php" -> openModule("profile")
             "settings.php" -> openModule("settings")
-            "notifications.php" -> openModule("notifications")
+            "notifications.php" -> openNotifications()
             "support.php" -> openModule("support")
             else -> error = "This section is being prepared for the native app."
         }
@@ -122,23 +162,87 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         activeModule = withContext(Dispatchers.IO) { api.module(key) }
     }
     fun closeModule() { activeModule = null }
+
+    fun refreshNotifications() {
+        if(notificationLoading || authStage!=AuthStage.SIGNED_IN) return
+        notificationLoading=true
+        val token=session.token
+        viewModelScope.launch { try {
+            val batch=withContext(Dispatchers.IO){api.notifications()}
+            if(session.token==token && authStage==AuthStage.SIGNED_IN) {
+                val previous=notifications.firstOrNull()?.id
+                if(previous!=null)batch.items.firstOrNull{it.id>previous && !it.read}?.let{frontNotification=it}
+                notifications=batch.items; notificationUnread=batch.unread
+            }
+        } catch(e: CancellationException){throw e} catch(_:Exception){} finally{notificationLoading=false} }
+    }
+    fun openNotifications(){ notificationsOpen=true; refreshNotifications() }
+    fun closeNotifications(){ notificationsOpen=false }
+    fun readNotification(item: AppNotification?)=launch(showSpinner=false){
+        withContext(Dispatchers.IO){api.readNotification(item?.id ?: 0)}
+        notifications=notifications.map{if(item==null || item.id==it.id) it.copy(read=true) else it}
+        notificationUnread=if(item==null) 0 else (notificationUnread-if(item.read) 0 else 1).coerceAtLeast(0)
+        if(item!=null && item.route.isNotBlank()){notificationsOpen=false; openNativeRoute(item.route)}
+    }
+    fun loadMoreFeed(){
+        if(feedLoadingMore || !feedHasMore || posts.isEmpty())return
+        feedLoadingMore=true
+        val before=posts.minOf{it.id}
+        launch(showSpinner=false){try{
+            val more=withContext(Dispatchers.IO){api.feed(before)}
+            posts=(posts+more).distinctBy{it.id};feedHasMore=more.size==20
+        }finally{feedLoadingMore=false}}
+    }
+    fun publish(draft: PostDraft, after:()->Unit){
+        if(publishing)return
+        publishing=true
+        launch(showSpinner=false){try{
+            notice=withContext(Dispatchers.IO){api.publishPost(draft){p->viewModelScope.launch{publishProgress=p}}}
+            after() // Mutation acknowledged; a refresh failure must never prompt a duplicate post.
+            refreshFeed()
+        }finally{publishing=false;publishProgress=null}}
+    }
+    fun postReaction(post: FeedPost,type:String){
+        if(!postActions.add(post.id))return
+        launch(showSpinner=false){try{
+            val result=withContext(Dispatchers.IO){api.reactPost(post.id,type)}
+            posts=posts.map{if(it.id==post.id)it.copy(likes=result.optInt("likes",it.likes),
+                dislikes=result.optInt("dislikes",it.dislikes),liked=result.optBoolean("liked"),
+                reaction=result.optString("reaction").takeUnless{it=="null"}.orEmpty())else it}
+        }finally{postActions.remove(post.id)}}
+    }
+    fun savePost(post:FeedPost){
+        if(!postActions.add(post.id))return
+        launch(showSpinner=false){try{
+            val saved=withContext(Dispatchers.IO){api.savePost(post.id)}
+            posts=posts.map{if(it.id==post.id)it.copy(saved=saved)else it}
+        }finally{postActions.remove(post.id)}}
+    }
+    fun repost(post:FeedPost){
+        if(!postActions.add(post.id))return
+        launch(showSpinner=false){try{
+            val reposted=withContext(Dispatchers.IO){api.repost(post.id)}
+            notice=if(reposted)"Reposted to your community." else "Repost removed."
+            refreshFeed()
+        }finally{postActions.remove(post.id)}}
+    }
     fun refreshModule() { activeModule?.key?.let(::openModule) }
 
     fun createPost(content: String, question: Boolean, after: () -> Unit) = launch {
         withContext(Dispatchers.IO) { api.createPost(content.trim(), question) }
-        posts = withContext(Dispatchers.IO) { api.feed() }
         after()
+        refreshFeed()
     }
 
     fun togglePostLike(post: FeedPost) = launch(showSpinner = false) {
-        withContext(Dispatchers.IO) { api.togglePostLike(post.id) }
-        posts = withContext(Dispatchers.IO) { api.feed() }
+        postReaction(post,"like")
     }
 
     fun openComments(post: FeedPost) {
         commentPost = post
         feedComments = emptyList()
-        launch(showSpinner = false) { feedComments = withContext(Dispatchers.IO) { api.comments(post.id) } }
+        launch(showSpinner = false) { val rows = withContext(Dispatchers.IO) { api.comments(post.id) }
+            if(commentPost?.id==post.id)feedComments=rows }
     }
 
     fun closeComments() { commentPost = null; feedComments = emptyList() }
@@ -147,10 +251,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val post = commentPost ?: return
         launch(showSpinner = false) {
             withContext(Dispatchers.IO) { api.addComment(post.id, content.trim()) }
-            feedComments = withContext(Dispatchers.IO) { api.comments(post.id) }
-            posts = withContext(Dispatchers.IO) { api.feed() }
-            commentPost = posts.firstOrNull { it.id == post.id } ?: post
             after()
+            val rows=withContext(Dispatchers.IO){api.comments(post.id)}
+            if(commentPost?.id==post.id)feedComments=rows
+            posts=posts.map{if(it.id==post.id)it.copy(comments=it.comments+1)else it}
         }
     }
 
@@ -187,31 +291,71 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openConversation(item: Conversation) {
+        selectedConversation?.let { sendPresence(it.id, "") }
+        chatGeneration++
+        screen = RootScreen.CHATS
+        activeModule = null
         selectedConversation = item
         remotePresence = ChatPresence()
-        launch { messages = withContext(Dispatchers.IO) { api.messages(item.id) } }
+        messages = pendingByChat[item.id].orEmpty()
+        hasOlderMessages = false
+        chatLoading = true
+        refreshMessages()
     }
 
     fun closeConversation() {
         selectedConversation?.let { sendPresence(it.id, "") }
-        selectedConversation = null; messages = emptyList(); remotePresence = ChatPresence(); refreshChats()
+        chatGeneration++
+        selectedConversation = null; messages = emptyList(); remotePresence = ChatPresence(); chatLoading = false; refreshChats()
     }
-    fun refreshMessages() { selectedConversation?.let { c -> launch(showSpinner = false) {
-        val after = messages.maxOfOrNull { it.id } ?: 0L
-        val fresh = withContext(Dispatchers.IO) { api.messages(c.id, after) }
-        if (fresh.isNotEmpty()) messages = (messages + fresh).distinctBy { it.id }.sortedBy { it.id }
-    } } }
+    fun refreshMessages() {
+        val c = selectedConversation ?: return
+        val generation = chatGeneration
+        if (syncingGeneration == generation) return
+        syncingGeneration = generation
+        val after = messages.filter { it.id > 0 }.maxOfOrNull { it.id } ?: 0L
+        val refreshIds = messages.filter { it.id > 0 }.takeLast(100).map { it.id }
+        launch(showSpinner = false) {
+            try {
+                val batch = withContext(Dispatchers.IO) { api.messageBatch(c.id, after, refreshIds = refreshIds) }
+                if (generation == chatGeneration) {
+                    messages = ChatSync.merge(messages, batch)
+                    pendingByChat[c.id] = messages.filter { it.id < 0 }
+                    if (after == 0L) hasOlderMessages = batch.hasMore
+                }
+            } finally { if (syncingGeneration == generation) syncingGeneration = null
+                if (generation == chatGeneration) chatLoading = false }
+        }
+    }
+
+    fun loadOlderMessages() {
+        val c = selectedConversation ?: return
+        val before = messages.filter { it.id > 0 }.minOfOrNull { it.id } ?: return
+        if (historyLoading) return
+        val generation = chatGeneration
+        historyLoading = true
+        launch(showSpinner = false) { try {
+            val batch = withContext(Dispatchers.IO) { api.messageBatch(c.id, beforeId = before) }
+            if (generation == chatGeneration) { messages = ChatSync.merge(messages,batch); hasOlderMessages = batch.hasMore }
+        } finally { historyLoading = false } }
+    }
 
     fun syncPresence(kind: String) {
         val c = selectedConversation ?: return
+        val generation = chatGeneration
+        if (presenceGeneration == generation) return
+        presenceGeneration = generation
         viewModelScope.launch {
             try {
                 val presence = withContext(Dispatchers.IO) { api.presence(c.id, kind) }
+                if (generation != chatGeneration) return@launch
                 remotePresence = presence
                 if (presence.readThrough > 0) messages = messages.map { m ->
                     if (m.mine && m.id <= presence.readThrough && !m.read) m.copy(read = true) else m
                 }
-            } catch (_: Exception) { }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { }
+            finally { if (presenceGeneration == generation) presenceGeneration = null }
         }
     }
 
@@ -225,63 +369,93 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (body.isEmpty()) return
         val pendingId = -System.nanoTime()
         val replyMessage = messages.firstOrNull { it.id == replyTo }
-        messages = messages + ChatMessage(
+        val pending = ChatMessage(
             id = pendingId, senderId = bootstrap?.user?.id ?: 0, sender = bootstrap?.user?.name ?: "You",
             content = body, time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date()), mine = true,
             voiceSeconds = 0, attachmentUrl = null, attachmentName = null, read = false,
-            dateLabel = "Today", reply = replyMessage?.let { ReplyPreview(it.id, it.sender,
+            dateLabel = "Today", clientToken = UUID.randomUUID().toString(), reply = replyMessage?.let { ReplyPreview(it.id, it.sender,
                 it.content.ifBlank { it.attachmentName ?: "Voice message" }) }
         )
+        pendingByChat[c.id] = pendingByChat[c.id].orEmpty() + pending
+        messages = messages + pending
         after()
+        sendPending(c.id, pending)
+    }
+
+    fun retryMessage(message: ChatMessage) {
+        val c = selectedConversation ?: return
+        if (message.id < 0 && message.failed) sendPending(c.id, message)
+    }
+
+    private fun sendPending(conversationId: Long, pending: ChatMessage) {
+        val accountToken=session.token
+        val token = pending.clientToken ?: return
+        if (!sendsInFlight.add(token)) return
+        fun update(row: ChatMessage?) {
+            if(session.token!=accountToken)return
+            pendingByChat[conversationId] = pendingByChat[conversationId].orEmpty().mapNotNull {
+                if (it.clientToken == token) row?.takeIf { it.id < 0 } else it
+            }
+            if (selectedConversation?.id == conversationId) messages = messages.mapNotNull {
+                if (it.clientToken == token) row else it
+            }.distinctBy { it.id }
+        }
+        update(pending.copy(failed = false))
         launch(showSpinner = false) {
             try {
-                withContext(Dispatchers.IO) { api.sendText(c.id, body, replyTo) }
-                messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+                val id = withContext(Dispatchers.IO) { api.sendText(conversationId, pending.content, pending.reply?.id, token) }
+                if (id <= 0) throw ApiException("Message acknowledgement was missing. Tap the message to retry.")
+                update(pending.copy(id = id, failed = false, canEdit = true))
+                if (selectedConversation?.id == conversationId) refreshMessages()
+            } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
-                messages = messages.filterNot { it.id == pendingId }
+                update(pending.copy(failed = true))
                 throw e
-            }
+            } finally { sendsInFlight.remove(token) }
         }
     }
 
     fun sendVoice(clip: VoiceClip, after: () -> Unit) {
         val c = selectedConversation ?: return
+        if (uploadProgress != null) return
         launch(showSpinner = false) {
             uploadLabel = "Sending voice message…"; uploadProgress = 0f
             try {
                 withContext(Dispatchers.IO) { api.sendVoice(c.id, clip) { p ->
                     viewModelScope.launch { uploadProgress = p }
                 } }
-                messages = withContext(Dispatchers.IO) { api.messages(c.id) }
                 java.io.File(clip.filePath).delete()
                 after()
+                if (selectedConversation?.id == c.id) refreshMessages()
             } finally { uploadProgress = null; uploadLabel = "" }
         }
     }
 
     fun sendAttachment(uri: Uri) {
         val c = selectedConversation ?: return
+        if (uploadProgress != null) return
         launch(showSpinner = false) {
             uploadLabel = "Uploading attachment…"; uploadProgress = 0f
             try {
                 withContext(Dispatchers.IO) { api.sendAttachment(c.id, uri) { p ->
                     viewModelScope.launch { uploadProgress = p }
                 } }
-                messages = withContext(Dispatchers.IO) { api.messages(c.id) }
+                if (selectedConversation?.id == c.id) refreshMessages()
             } finally { uploadProgress = null; uploadLabel = "" }
         }
     }
 
     fun sendEditedImage(uri: Uri, rotation: Int, squareCrop: Boolean, caption: String, after: () -> Unit) {
         val c = selectedConversation ?: return
+        if (uploadProgress != null) return
         launch(showSpinner = false) {
             uploadLabel = "Optimising photo…"; uploadProgress = 0f
             try {
                 withContext(Dispatchers.IO) { api.sendEditedImage(c.id, uri, rotation, squareCrop, caption) { p ->
                     viewModelScope.launch { uploadLabel = "Uploading photo…"; uploadProgress = p }
                 } }
-                messages = withContext(Dispatchers.IO) { api.messages(c.id) }
                 after()
+                if (selectedConversation?.id == c.id) refreshMessages()
             } finally { uploadProgress = null; uploadLabel = "" }
         }
     }
@@ -320,9 +494,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun toggleMute() {
         val c = selectedConversation ?: return
-        chatAction {
-            api.toggleMute(c.id)
-            selectedConversation = c.copy(muted = !c.muted)
+        launch(showSpinner = false) {
+            withContext(Dispatchers.IO) { api.toggleMute(c.id) }
+            if (selectedConversation?.id == c.id) selectedConversation = c.copy(muted = !c.muted)
         }
     }
 
@@ -330,14 +504,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val c = selectedConversation ?: return
         launch(showSpinner = false) {
             withContext(Dispatchers.IO) { action() }
-            messages = withContext(Dispatchers.IO) { api.messages(c.id) }
             after()
+            if (selectedConversation?.id == c.id) refreshMessages()
         }
     }
 
     fun logout() = launch {
         try { withContext(Dispatchers.IO) { api.logout() } }
         finally {
+            chatGeneration++; pendingByChat.clear(); drafts.clear(); notifications=emptyList(); notificationUnread=0; notificationsOpen=false
             bootstrap = null; posts = emptyList(); commentPost = null; feedComments = emptyList()
             conversations = emptyList(); messages = emptyList(); remotePresence = ChatPresence()
             uploadProgress = null; uploadLabel = ""; activeModule = null
@@ -349,12 +524,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun launch(showSpinner: Boolean = true, work: suspend () -> Unit) {
         if (busy && showSpinner) return
         viewModelScope.launch {
+            val requestToken = session.token
             if (showSpinner) busy = true
             error = null
             try { work() }
+            catch (e: CancellationException) { throw e }
             catch (e: ApiException) {
                 error = e.message ?: "Request failed."
-                if (e.status == 401) { session.token = null; authStage = AuthStage.LOGIN }
+                if (e.status == 401 && session.token == requestToken) {
+                    /* A shared action may return 401 with an intact bearer session.
+                       Confirm revocation before discarding the user's account state. */
+                    val revoked = withContext(Dispatchers.IO) {
+                        try { api.bootstrap(); false } catch (check: ApiException) { check.status == 401 }
+                        catch (_: Exception) { false }
+                    }
+                    if (revoked && session.token == requestToken) {
+                        chatGeneration++; session.token = null; authStage = AuthStage.LOGIN
+                        bootstrap = null; posts = emptyList(); conversations = emptyList(); messages = emptyList()
+                        selectedConversation = null; activeModule = null; pendingByChat.clear(); drafts.clear()
+                    }
+                }
                 else if (authStage == AuthStage.STARTING) authStage = AuthStage.LOGIN
             }
             catch (e: Exception) {
