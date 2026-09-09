@@ -44,8 +44,11 @@ class ApiClient {
   void Function(String message)? onSessionExpired;
 
   String? get token => _token;
-  Map<String, String> get authHeaders =>
-      _token == null ? const {} : {'Authorization': 'Bearer $_token'};
+  Map<String, String> get authHeaders => {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json',
+        if (_token != null) 'Authorization': 'Bearer $_token',
+      };
 
   Future<bool> restoreSession() async {
     _token = await _storage.read(key: _tokenKey);
@@ -395,11 +398,28 @@ class ApiClient {
     'id': '$id',
     'content': content,
   });
-  Future<void> deleteMessage(int id, {required bool everyone}) => _request({
+  Future<void> deleteMessage(int id, {required bool everyone}) =>
+      deleteMessages([id], everyone: everyone);
+
+  Future<void> deleteMessages(
+    List<int> ids, {
+    required bool everyone,
+  }) => _request({
     'action': 'message_action',
     'do': 'delete',
-    'ids': '$id',
+    'ids': ids.join(','),
     'scope': everyone ? 'all' : 'me',
+  });
+
+  Future<Map<String, dynamic>> reportMessage(
+    int messageId, {
+    String reason = 'other',
+    String details = '',
+  }) => _request({
+    'action': 'report_user',
+    'target': 'message:$messageId',
+    'reason': reason,
+    'details': details,
   });
 
   Future<void> logout() async {
