@@ -180,11 +180,26 @@ class Conversation {
     required this.online,
     required this.statusText,
     required this.muted,
+    this.otherId = 0,
+    this.otherUsername = '',
+    this.selfBlocked = false,
+    this.blockedByOther = false,
+    this.callsEnabled = false,
+    this.videoCallsEnabled = false,
   });
-  final int id, unread;
-  final String title, lastMessage, lastActivity, statusText;
+  final int id, unread, otherId;
+  final String title, lastMessage, lastActivity, statusText, otherUsername;
   final String? avatar;
-  final bool isGroup, online, muted;
+  final bool isGroup,
+      online,
+      muted,
+      selfBlocked,
+      blockedByOther,
+      callsEnabled,
+      videoCallsEnabled;
+
+  bool get blocked => selfBlocked || blockedByOther;
+
   factory Conversation.fromJson(Map<String, dynamic> j) => Conversation(
     id: _int(j['id']),
     title: '${j['title'] ?? ''}',
@@ -196,6 +211,12 @@ class Conversation {
     online: _bool(j['online']),
     statusText: '${j['status_text'] ?? ''}',
     muted: _bool(j['muted']),
+    otherId: _int(j['other_id']),
+    otherUsername: '${j['other_username'] ?? ''}',
+    selfBlocked: _bool(j['self_blocked']),
+    blockedByOther: _bool(j['blocked_by_other']),
+    callsEnabled: _bool(j['calls_enabled']),
+    videoCallsEnabled: _bool(j['video_calls_enabled']),
   );
 }
 
