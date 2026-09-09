@@ -69,7 +69,18 @@ if ($isEnc) {
    column; table_exists/column checks elsewhere in this codebase guard
    exactly that case, and the same caution applies here. */
 $clientToken = mb_substr(trim((string) ($_POST['client_token'] ?? '')),0,40);
+$member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id = ? AND user_id = ?', [$cid, uid()]);
+if (!$member) { json_out(['ok' => false, 'error' => 'That conversation is not yours.'], 403); }
 if ($clientToken !== '') {
+    /* Serialize the same logical send across concurrent retries. The existing
+       token index is not unique; a lookup alone has a check/insert race. */
+    $sendLock='tpk_send_'.substr(hash('sha256',$cid.':'.uid().':'.$clientToken),0,48);
+    try { $locked=(int)fetch_col('SELECT GET_LOCK(?,5)',[$sendLock])===1; }
+    catch (PDOException $e) { $locked=false; }
+    if(!$locked)json_out(['ok'=>false,'error'=>'This message is still processing. Please retry in a moment.'],503);
+    register_shutdown_function(static function() use ($sendLock): void {
+        try { q('SELECT RELEASE_LOCK(?)',[$sendLock]); } catch(Throwable $ignored) {}
+    });
     try {
         $dupe = fetch_one(
             'SELECT id FROM messages WHERE conversation_id = ? AND sender_id = ? AND client_token = ?
@@ -79,9 +90,6 @@ if ($clientToken !== '') {
         if ($dupe) { json_out(['ok' => true, 'id' => (int) $dupe['id']]); }
     } catch (PDOException $e) { /* column not migrated yet on this install */ }
 }
-
-$member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id = ? AND user_id = ?', [$cid, uid()]);
-if (!$member) { json_out(['ok' => false, 'error' => 'That conversation is not yours.'], 403); }
 
 $conv = fetch_one('SELECT type, title FROM conversations WHERE id = ?', [$cid]);
 $conversationTitle = ($conv && $conv['type'] === 'group' && $conv['title'] !== '')

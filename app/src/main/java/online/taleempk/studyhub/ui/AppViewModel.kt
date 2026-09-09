@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelChildren
 import java.util.UUID
 import online.taleempk.studyhub.data.*
 import java.text.SimpleDateFormat
@@ -52,6 +53,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var feedLoadingMore by mutableStateOf(false); private set
     var feedHasMore by mutableStateOf(true); private set
     var publishing by mutableStateOf(false); private set
+    var lookupTitle by mutableStateOf<String?>(null); private set
+    var lookupResults by mutableStateOf<List<ChatLookup>>(emptyList());private set
+    fun closeLookup(){lookupTitle=null;lookupResults=emptyList()}
+    fun findMessages(query:String?=null)=launch {
+        lookupResults=withContext(Dispatchers.IO){api.findMessages(query)}
+        lookupTitle=if(query==null)"Starred messages" else "Message search"
+    }
+    fun openLookup(result:ChatLookup){closeLookup();openNativeRoute("chat.php?id=${result.conversationId}")}
     var publishProgress by mutableStateOf<Float?>(null); private set
     private val postActions = mutableSetOf<Long>()
     var chatLoading by mutableStateOf(false); private set
@@ -62,13 +71,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var presenceGeneration: Long? = null
     private val pendingByChat = mutableMapOf<Long, List<ChatMessage>>()
     private val sendsInFlight = mutableSetOf<String>()
+    private val playedVoiceIds = mutableSetOf<Long>()
+    fun voiceStarted(message: ChatMessage){
+        if(message.mine || message.id<=0 || !playedVoiceIds.add(message.id))return
+        viewModelScope.launch {try{withContext(Dispatchers.IO){api.voicePlayed(message.id)}}
+            catch(e:CancellationException){throw e}catch(_:Exception){playedVoiceIds.remove(message.id)}}
+    }
     private val drafts = mutableMapOf<Long, String>()
+    private var visibleMessageIds = emptyList<Long>()
+    fun visibleMessages(ids:List<Long>){visibleMessageIds=ids.filter{it>0}.take(60)}
     fun draft(id: Long) = drafts[id].orEmpty()
     fun saveDraft(id: Long, text: String) { drafts[id] = text }
 
     init { restore() }
 
     fun clearError() { error = null }
+    fun reportError(message:String){error=message}
     fun clearNotice() { notice = null }
     fun showLogin() { error = null; authStage = AuthStage.LOGIN }
     fun showRegister() { error = null; notice = null; authStage = AuthStage.REGISTER }
@@ -314,7 +332,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (syncingGeneration == generation) return
         syncingGeneration = generation
         val after = messages.filter { it.id > 0 }.maxOfOrNull { it.id } ?: 0L
-        val refreshIds = messages.filter { it.id > 0 }.takeLast(100).map { it.id }
+        val refreshIds = (visibleMessageIds+messages.filter { it.id > 0 }.takeLast(40).map { it.id }).distinct().take(100)
         launch(showSpinner = false) {
             try {
                 val batch = withContext(Dispatchers.IO) { api.messageBatch(c.id, after, refreshIds = refreshIds) }
@@ -483,6 +501,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun openPostMedia(media:PostMedia)=launch {
+        val file=withContext(Dispatchers.IO){api.downloadPostMedia(media)}
+        val app=getApplication<Application>()
+        val uri=FileProvider.getUriForFile(app,"${app.packageName}.fileprovider",file)
+        val mime=when(media.type.lowercase()){ "pdf"->"application/pdf";"txt"->"text/plain";"doc"->"application/msword";"docx"->"application/vnd.openxmlformats-officedocument.wordprocessingml.document";else->"application/octet-stream" }
+        val intent=Intent(Intent.ACTION_VIEW).setDataAndType(uri,mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        app.startActivity(Intent.createChooser(intent,"Open document").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
     fun react(message: ChatMessage, emoji: String) = chatAction { api.react(message.id, emoji) }
     fun toggleStar(message: ChatMessage) = chatAction { api.toggleStar(message.id) }
     fun togglePin(message: ChatMessage) = chatAction { api.togglePin(message.id) }
@@ -512,13 +539,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() = launch {
         try { withContext(Dispatchers.IO) { api.logout() } }
         finally {
-            chatGeneration++; pendingByChat.clear(); drafts.clear(); notifications=emptyList(); notificationUnread=0; notificationsOpen=false
-            bootstrap = null; posts = emptyList(); commentPost = null; feedComments = emptyList()
-            conversations = emptyList(); messages = emptyList(); remotePresence = ChatPresence()
-            uploadProgress = null; uploadLabel = ""; activeModule = null
-            selectedConversation = null; authStage = AuthStage.LOGIN
-            notice = null
+            resetSignedOut()
         }
+    }
+
+    private fun resetSignedOut(){
+        chatGeneration++;session.token=null;pendingByChat.clear();drafts.clear();playedVoiceIds.clear()
+        notifications=emptyList();notificationUnread=0;notificationsOpen=false;frontNotification=null
+        bootstrap=null;posts=emptyList();commentPost=null;feedComments=emptyList();conversations=emptyList();messages=emptyList()
+        selectedConversation=null;activeModule=null;remotePresence=ChatPresence();uploadProgress=null;uploadLabel="";lookupTitle=null;lookupResults=emptyList()
+        publishing=false;publishProgress=null;visibleMessageIds=emptyList();busy=false;authStage=AuthStage.LOGIN;notice=null
+        viewModelScope.coroutineContext.cancelChildren()
     }
 
     private fun launch(showSpinner: Boolean = true, work: suspend () -> Unit) {
@@ -526,7 +557,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val requestToken = session.token
             if (showSpinner) busy = true
-            error = null
+            if(showSpinner)error = null
             try { work() }
             catch (e: CancellationException) { throw e }
             catch (e: ApiException) {
@@ -539,9 +570,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         catch (_: Exception) { false }
                     }
                     if (revoked && session.token == requestToken) {
-                        chatGeneration++; session.token = null; authStage = AuthStage.LOGIN
-                        bootstrap = null; posts = emptyList(); conversations = emptyList(); messages = emptyList()
-                        selectedConversation = null; activeModule = null; pendingByChat.clear(); drafts.clear()
+                        resetSignedOut()
                     }
                 }
                 else if (authStage == AuthStage.STARTING) authStage = AuthStage.LOGIN

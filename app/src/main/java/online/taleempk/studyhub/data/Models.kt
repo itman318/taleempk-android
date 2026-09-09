@@ -129,6 +129,7 @@ data class MessageBatch(val messages: List<ChatMessage>, val hiddenIds: Set<Long
 
 data class AppNotification(val id: Long, val message: String, val type: String, val route: String, val time: String, val read: Boolean)
 data class NotificationBatch(val items: List<AppNotification>, val unread: Int)
+data class ChatLookup(val id:Long,val conversationId:Long,val title:String,val sender:String,val text:String,val time:String)
 
 data class AuthResult(
     val token: String? = null,

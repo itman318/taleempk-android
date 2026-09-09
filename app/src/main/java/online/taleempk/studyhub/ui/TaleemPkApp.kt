@@ -75,6 +75,8 @@ import coil.request.CachePolicy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import online.taleempk.studyhub.R
 import online.taleempk.studyhub.data.*
 import online.taleempk.studyhub.media.VoiceRecorder
@@ -461,7 +463,7 @@ private fun MainShell(vm: AppViewModel) {
         topBar = {
             when {
                 vm.notificationsOpen -> NativeModuleTopBar("Notifications",vm::closeNotifications,vm::refreshNotifications)
-                activeChat != null -> ChatTopBar(activeChat, vm::closeConversation, { chatSearch = !chatSearch }, vm::toggleMute)
+                activeChat != null -> ChatTopBar(activeChat, vm::closeConversation, { chatSearch = !chatSearch }, vm::toggleMute,{vm.findMessages()})
                 activeModule != null -> NativeModuleTopBar(activeModule.title, vm::closeModule, vm::refreshModule)
                 else -> AppTopBar(vm.bootstrap?.user?.name ?: "TaleemPK",vm.notificationUnread,vm::openNotifications)
             }
@@ -507,6 +509,15 @@ private fun MainShell(vm: AppViewModel) {
             }) { Text(it) } }
         }
     }
+    vm.lookupTitle?.let{title->AlertDialog(onDismissRequest=vm::closeLookup,title={Text(title)},
+        text={if(vm.lookupResults.isEmpty())Text("No matching messages.") else LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            items(vm.lookupResults,key={it.id}){result->Surface(Modifier.fillMaxWidth().clickable{vm.openLookup(result)},color=Mist,shape=RoundedCornerShape(12.dp)){
+                Column(Modifier.padding(12.dp)){Text(result.title,fontWeight=FontWeight.Bold,fontSize=13.sp)
+                    Text("${result.sender} · ${result.time}",fontSize=10.sp,color=Muted)
+                    Spacer(Modifier.height(5.dp));Text(result.text,fontSize=13.sp)
+                    Text("Open conversation",Modifier.padding(top=6.dp),fontSize=11.sp,color=Green)}
+            }}
+        }},confirmButton={TextButton(vm::closeLookup){Text("Close")}})}
 }
 
 @Composable
@@ -683,8 +694,12 @@ private fun moduleItemIcon(kind: String): ImageVector = when (kind) {
 }
 
 @Composable
-private fun ChatTopBar(c: Conversation, back: () -> Unit, search: () -> Unit, mute: () -> Unit) {
+private fun ChatTopBar(c: Conversation, back: () -> Unit, search: () -> Unit, mute: () -> Unit, stars:()->Unit) {
     var menu by remember { mutableStateOf(false) }
+    var safety by remember{mutableStateOf(false)}
+    if(safety)AlertDialog(onDismissRequest={safety=false},title={Text("Chat privacy")},
+        text={Text("Messages travel over HTTPS. Read and typing indicators follow your account privacy settings. Encrypted history needs the website's key unlock. You can mute this conversation from the menu.")},
+        confirmButton={TextButton({safety=false}){Text("Got it")}})
     Surface(color = Navy, shadowElevation = 5.dp) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(72.dp).padding(end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(back) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
@@ -709,7 +724,8 @@ private fun ChatTopBar(c: Conversation, back: () -> Unit, search: () -> Unit, mu
                         onClick = { menu = false; mute() }
                     )
                     DropdownMenuItem(text = { Text("Chat safety & details") },
-                        leadingIcon = { Icon(Icons.Default.Security, null) }, onClick = { menu = false })
+                        leadingIcon = { Icon(Icons.Default.Security, null) }, onClick = { menu = false;safety=true })
+                    DropdownMenuItem(text={Text("Starred messages")},leadingIcon={Icon(Icons.Default.StarBorder,null)},onClick={menu=false;stars()})
                 }
             }
         }
@@ -848,9 +864,9 @@ private fun FeedScreen(
                         Text(it,Modifier.padding(14.dp),fontSize=14.sp,lineHeight=20.sp)}}
                     p.media.forEach{m->
                         if(m.type.lowercase() in listOf("jpg","jpeg","png","gif","webp","image")){
-                            AsyncImage(ImageRequest.Builder(LocalContext.current).data(m.url).crossfade(true).build(),m.name,
+                            AsyncImage(ImageRequest.Builder(LocalContext.current).data(m.url).apply{vm.authHeaders().forEach{(key,value)->addHeader(key,value)}}.memoryCacheKey(m.url+vm.authHeaders().hashCode()).diskCachePolicy(CachePolicy.DISABLED).size(1000).crossfade(true).build(),m.name,
                                 Modifier.fillMaxWidth().heightIn(min=140.dp,max=360.dp).padding(top=10.dp).clip(RoundedCornerShape(14.dp)),contentScale=ContentScale.Fit)
-                        }else Surface(Modifier.fillMaxWidth().padding(top=8.dp),color=Mist,shape=RoundedCornerShape(12.dp)){
+                        }else Surface(Modifier.fillMaxWidth().padding(top=8.dp).clickable{vm.openPostMedia(m)},color=Mist,shape=RoundedCornerShape(12.dp)){
                             Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Description,null,tint=Green)
                                 Spacer(Modifier.width(8.dp));Text(m.name,Modifier.weight(1f),fontSize=12.sp)}
                         }
@@ -996,6 +1012,7 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     val context = LocalContext.current
     val recorder = remember { VoiceRecorder(context) }
     val listState = rememberLazyListState()
+    val scrollScope=rememberCoroutineScope()
     var recording by remember { mutableStateOf(false) }
     var recordingStart by remember { mutableLongStateOf(0L) }
     var elapsed by remember { mutableIntStateOf(0) }
@@ -1006,6 +1023,14 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     var text by remember(chat.id) { mutableStateOf(vm.draft(chat.id)) }
     var lastTyped by remember(chat.id) { mutableLongStateOf(0L) }
     val lifecycle=LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(listState,chat.id){snapshotFlow{listState.layoutInfo.visibleItemsInfo.mapNotNull{it.key as? Long}}
+        .collect{vm.visibleMessages(it)}}
+    DisposableEffect(lifecycle){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->
+        if(event==Lifecycle.Event.ON_STOP){
+            if(recording){try{preview=recorder.stop()}catch(_:Exception){recorder.cancel()};recording=false}
+            vm.syncPresence("")
+        }
+    };lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
     var query by remember { mutableStateOf("") }
     var emojiOpen by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<ChatMessage?>(null) }
@@ -1037,9 +1062,10 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     LaunchedEffect(recording) { vm.syncPresence(if(recording)"voice" else "") }
     LaunchedEffect(shown.size) {
         if (shown.isNotEmpty()) {
-            if (!didInitialScroll) { listState.scrollToItem(shown.lastIndex); didInitialScroll = true }
+            val lastItem=shown.lastIndex+if(vm.hasOlderMessages)1 else 0
+            if (!didInitialScroll) { listState.scrollToItem(lastItem); didInitialScroll = true }
             else if (listState.firstVisibleItemIndex >= (shown.lastIndex - 6).coerceAtLeast(0)) {
-                listState.animateScrollToItem(shown.lastIndex)
+                listState.animateScrollToItem(lastItem)
             }
         }
     }
@@ -1058,7 +1084,8 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
         if (allowed) try {
             recorder.start(); recordingStart = SystemClock.elapsedRealtime(); elapsed = 0; liveWave = emptyList(); recording = true
-        } catch (_: Exception) { }
+        } catch (e: Exception) { vm.reportError(e.message ?: "Could not start the microphone.") }
+        else vm.reportError("Allow microphone access to record a voice message.")
     }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> imageToEdit = uri }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::sendAttachment) }
@@ -1072,9 +1099,13 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
                     trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Default.Close, "Clear") } },
                     singleLine = true, shape = RoundedCornerShape(16.dp))
             }
+            if(query.trim().length>=2)TextButton({vm.findMessages(query.trim())},Modifier.align(Alignment.End)){Text("Search all conversations",fontSize=12.sp)}
         }
         ChatSecurityBanner()
-        pinned?.let { PinnedMessageBar(it) { replyTo = it; editing = null } }
+        pinned?.let { pinnedMessage -> PinnedMessageBar(pinnedMessage) {
+            val index=shown.indexOfFirst{it.id==pinnedMessage.id}
+            if(index>=0)scrollScope.launch{listState.animateScrollToItem(index+if(vm.hasOlderMessages)1 else 0)}
+        } }
         LazyColumn(
             Modifier.weight(1f), state = listState,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 14.dp),
@@ -1089,6 +1120,7 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
                     onReaction = { vm.react(message, it) }, onAttachment = { vm.openAttachment(message) },
                     onReply = { if(message.id>0){replyTo = message; editing = null} }, onForward = { if(message.id>0 && !message.encrypted)forwarding = message },
                     onRetry={vm.retryMessage(message)},
+                    onVoiceStarted={vm.voiceStarted(message)},
                     showSender = !message.mine && (index == 0 || shown[index - 1].senderId != message.senderId ||
                         shown[index - 1].dateLabel != message.dateLabel))
             }
@@ -1127,7 +1159,7 @@ private fun ChatThread(vm: AppViewModel, chat: Conversation, searchOpen: Boolean
         }
     }
 
-    imageToEdit?.let { uri -> ImageEditorDialog(uri, close = { imageToEdit = null }) { rotation, square, caption ->
+    imageToEdit?.let { uri -> ImageEditorDialog(uri, close = { if(vm.uploadProgress==null)imageToEdit = null }, error=vm.error, busy=vm.uploadProgress!=null) { rotation, square, caption ->
         vm.sendEditedImage(uri, rotation, square, caption) { imageToEdit = null }
     } }
 
@@ -1226,7 +1258,7 @@ private fun UploadProgressBar(label: String, progress: Float) {
     Surface(color = Color.White, shadowElevation = 3.dp) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp)) {
             Row {
-                Text(label.ifBlank { "Uploading…" }, Modifier.weight(1f), fontSize = 11.sp,
+                Text(if(progress>=1f)"Processing on server…" else label.ifBlank { "Uploading…" }, Modifier.weight(1f), fontSize = 11.sp,
                     color = Ink, fontWeight = FontWeight.SemiBold)
                 Text("${(progress.coerceIn(0f, 1f) * 100).toInt()}%", fontSize = 11.sp, color = Green, fontWeight = FontWeight.Bold)
             }
@@ -1283,6 +1315,8 @@ private fun ForwardMessageDialog(
 private fun ImageEditorDialog(
     uri: Uri,
     close: () -> Unit,
+    error: String? = null,
+    busy: Boolean = false,
     send: (rotation: Int, squareCrop: Boolean, caption: String) -> Unit
 ) {
     val context = LocalContext.current
@@ -1290,18 +1324,23 @@ private fun ImageEditorDialog(
     var square by remember(uri) { mutableStateOf(false) }
     var caption by remember(uri) { mutableStateOf("") }
     var preview by remember(uri) { mutableStateOf<Bitmap?>(null) }
+    var previewLoading by remember(uri){mutableStateOf(true)}
     LaunchedEffect(uri, rotation, square) {
+        previewLoading=true
         preview = withContext(Dispatchers.IO) { loadImagePreview(context, uri, rotation, square) }
+        previewLoading=false
     }
     AlertDialog(
         onDismissRequest = close,
         title = { Column {
             Text("Edit photo", fontWeight = FontWeight.Black)
             Text("Preview and adjust before sending", color = Muted, fontSize = 11.sp)
+            if(error!=null)Text(error,color=MaterialTheme.colorScheme.error,fontSize=11.sp)
         } },
-        text = { Column {
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
             Surface(Modifier.fillMaxWidth().height(270.dp), color = Color(0xFF0C1426), shape = RoundedCornerShape(18.dp)) {
-                if (preview == null) Box(contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Lime) }
+                if (previewLoading) Box(contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Lime) }
+                else if(preview==null)Box(Modifier.padding(20.dp),contentAlignment=Alignment.Center){Text("This image could not be opened. Choose another photo.",color=Color.White)}
                 else Image(preview!!.asImageBitmap(), "Photo preview", Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit)
             }
@@ -1318,9 +1357,9 @@ private fun ImageEditorDialog(
             OutlinedTextField(caption, { if (it.length <= 4000) caption = it }, Modifier.fillMaxWidth(),
                 placeholder = { Text("Add a caption…") }, minLines = 1, maxLines = 3, shape = RoundedCornerShape(14.dp))
         } },
-        confirmButton = { Button({ send(rotation, square, caption) }, enabled = preview != null,
-            colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Icon(Icons.Default.Send, null); Spacer(Modifier.width(6.dp)); Text("Send") } },
-        dismissButton = { TextButton(close) { Text("Cancel") } }
+        confirmButton = { Button({ send(rotation, square, caption) }, enabled = preview != null && !busy,
+            colors = ButtonDefaults.buttonColors(containerColor = Navy)) { Icon(Icons.Default.Send, null); Spacer(Modifier.width(6.dp)); Text(if(busy)"Uploading…" else "Send") } },
+        dismissButton = { TextButton(close,enabled=!busy) { Text("Cancel") } }
     )
 }
 
@@ -1354,6 +1393,7 @@ private fun MessageBubble(
     onReply: () -> Unit,
     onForward: () -> Unit,
     onRetry: () -> Unit,
+    onVoiceStarted: () -> Unit,
     showSender: Boolean
 ) {
     val bubble = if (m.mine) Navy else Color.White
@@ -1403,7 +1443,7 @@ private fun MessageBubble(
                         Spacer(Modifier.width(7.dp)); Text("This message was deleted", color = foreground.copy(.7f), fontSize = 13.sp)
                     }
                 } else {
-                    if (m.voiceSeconds > 0) VoicePlayer(m.attachmentUrl, m.voiceSeconds, headers, m.mine)
+                    if (m.voiceSeconds > 0) VoicePlayer(m.attachmentUrl, m.voiceSeconds, headers, m.mine,onVoiceStarted)
                     else if (m.attachmentUrl != null && m.attachmentType?.lowercase() in listOf("jpg", "jpeg", "png", "gif", "webp")) {
                         ProtectedNetworkImage(m.attachmentUrl, headers, m.mine, onAttachment)
                     } else if (m.attachmentUrl != null) AttachmentCard(m, m.mine, onAttachment)
@@ -1413,6 +1453,7 @@ private fun MessageBubble(
                     if (m.pinned) Icon(Icons.Default.PushPin, null, Modifier.size(12.dp), tint = foreground.copy(.58f))
                     if (m.starred) Icon(Icons.Default.Star, null, Modifier.padding(start = 3.dp).size(12.dp), tint = Lime)
                     if (m.edited) Text(" edited ·", color = foreground.copy(.55f), fontSize = 9.sp)
+                    if(m.voicePlayed)Text("Played · ",color=if(m.mine)Lime else Green,fontSize=9.sp)
                     Text(m.time, color = foreground.copy(.57f), fontSize = 9.sp)
                     if (m.mine) { Spacer(Modifier.width(3.dp)); Icon(when{m.failed->Icons.Default.ErrorOutline;m.id<0->Icons.Default.Schedule;m.read->Icons.Default.DoneAll;else->Icons.Default.Done},
                         when{m.failed->"Failed; tap to retry";m.id<0->"Sending";m.read->"Read";else->"Sent"}, Modifier.size(14.dp), tint = if (m.read) Lime else foreground.copy(.70f)) }
@@ -1527,7 +1568,8 @@ private fun VoicePlayer(url: String?, seconds: Int, headers: Map<String, String>
                                 if(disposed || player!==it)return@setOnPreparedListener
                                 loading=false;VoiceCoordinator.activeUrl=url
                                 prepared = true; duration = it.duration.coerceAtLeast(duration)
-                                it.playbackParams = it.playbackParams.setSpeed(speed); it.start(); playing = true;onStarted()
+                                it.playbackParams = it.playbackParams.setSpeed(speed)
+                                if(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)){it.start(); playing = true;onStarted()}
                             }
                             mp.setOnCompletionListener { playing = false; position = 0; it.seekTo(0) }
                             mp.setOnErrorListener { failed, _, _ -> failed.release(); player = null; playing = false; prepared = false; loading=false;playbackError=true; true }
@@ -1592,9 +1634,6 @@ private fun PremiumComposer(
     var field by remember { mutableStateOf(TextFieldValue(text,TextRange(text.length))) }
     val keyboard=LocalSoftwareKeyboardController.current
     LaunchedEffect(text){if(text!=field.text)field=TextFieldValue(text,TextRange(text.length))}
-    var emojiCategory by remember { mutableIntStateOf(0) }
-    var recentEmojis by remember { mutableStateOf<List<String>>(emptyList()) }
-    val groups = remember { fullEmojiGroups() }
     Surface(color = Color.White, shadowElevation = 10.dp) {
         Column(Modifier.navigationBarsPadding()) {
             val contextMessage = editing ?: reply
@@ -1661,30 +1700,15 @@ private fun PremiumComposer(
     }
 }
 
-private fun fullEmojiGroups(): List<Pair<String, List<String>>> = listOf(
-    "Faces" to "😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🫣 🤭 🫢 🫡 🤫 🫠 🤥 😶 🫥 😐 🫤 😑 😬 🙄 😯 😦 😧 😮 😲 🥱 😴 🤤 😪 😵 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕".split(" "),
-    "People" to "👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦿 🦵 🦶 👂 👃 🧠 🫀 🫁 👀 👁️ 👅 👄 🫦 👶 🧒 👦 👧 🧑 👱 👨 🧔 👩 🧓 👴 👵 🙍 🙎 🙅 🙆 💁 🙋 🧏 🙇 🤦 🤷 👮 👷 💂 🕵️ 👩‍⚕️ 👩‍🎓 👩‍🏫 👩‍⚖️ 👩‍🌾 👩‍🍳 👩‍🔧 👩‍💻 👩‍🎨 👩‍🚀 👩‍🚒 🧕 👳 🤵 👰 🤰 🫃 🫄 🤱".split(" "),
-    "Animals" to "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐻‍❄️ 🐨 🐯 🦁 🐮 🐷 🐽 🐸 🐵 🙈 🙉 🙊 🐒 🐔 🐧 🐦 🐤 🐣 🐥 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪱 🐛 🦋 🐌 🐞 🐜 🪰 🪲 🪳 🦟 🦗 🕷️ 🦂 🐢 🐍 🦎 🐙 🦑 🦐 🦞 🦀 🐠 🐟 🐡 🐬 🐳 🐋 🦈 🐊 🐅 🐆 🦓 🦍 🦧 🐘 🦛 🦏 🐪 🐫 🦒 🦬 🐃 🐂 🐄 🐎 🐖 🐏 🐑 🦙 🐐 🦌 🐕 🐩 🦮 🐕‍🦺 🐈 🐈‍⬛ 🪶 🐓 🦃 🦚 🦜 🦢 🦩 🕊️ 🐇 🦝 🦨 🦡 🦫 🦦 🦥 🐁 🐀 🐿️ 🦔".split(" "),
-    "Food" to "🍏 🍎 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🥦 🥬 🥒 🌶️ 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🫘 🥐 🥯 🍞 🥖 🫓 🥨 🧀 🥚 🍳 🧈 🥞 🧇 🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🫔 🌮 🌯 🥙 🧆 🥪 🥫 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🍯 🥛 ☕ 🫖 🍵 🧃 🥤 🧋 🧊 🥄 🍴 🍽️".split(" "),
-    "Activities" to "⚽ 🏀 🏈 ⚾ 🥎 🎾 🏐 🏉 🥏 🎱 🪀 🏓 🏸 🏒 🏑 🥍 🏏 🪃 🥅 ⛳ 🪁 🛝 🏹 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🛷 ⛸️ 🥌 🎿 ⛷️ 🏂 🪂 🏋️ 🤼 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🏄 🏊 🤽 🚣 🧗 🚵 🚴 🏆 🥇 🥈 🥉 🏅 🎖️ 🏵️ 🎗️ 🎫 🎟️ 🎪 🤹 🎭 🩰 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🪘 🎷 🎺 🪗 🎸 🪕 🎻 🎲 ♟️ 🎯 🎳 🎮 🧩".split(" "),
-    "Travel" to "🚗 🚕 🚙 🚌 🚎 🏎️ 🚓 🚑 🚒 🚐 🛻 🚚 🚛 🚜 🛵 🏍️ 🛺 🚲 🛴 🚨 🚔 🚍 🚘 🚖 ✈️ 🛫 🛬 🛩️ 💺 🚁 🚀 🛸 🚂 🚆 🚇 🚊 🚉 🚢 ⛵ 🚤 🛥️ 🛳️ ⛴️ ⚓ 🛟 ⛽ 🚧 🚦 🗺️ 🗿 🗽 🗼 🏰 🏯 🏟️ 🎡 🎢 🎠 ⛲ ⛱️ 🏖️ 🏝️ 🏜️ 🌋 ⛰️ 🏕️ ⛺ 🏠 🏡 🏢 🏥 🏦 🏨 🏪 🏫 🕋 🕌 ⛪ 🛕 🕍 🌁 🌃 🏙️ 🌄 🌅 🌆 🌇 🌉 🌌".split(" "),
-    "Objects" to "⌚ 📱 💻 ⌨️ 🖥️ 🖨️ 🖱️ 💾 💿 📷 📹 🎥 📞 ☎️ 📺 📻 🎙️ ⏰ ⏳ 📡 🔋 🔌 💡 🔦 🕯️ 🧯 🛢️ 💸 💵 💴 💶 💷 🪙 💳 💎 ⚖️ 🪜 🧰 🔧 🔨 ⚒️ 🛠️ ⛏️ 🔩 ⚙️ 🧱 ⛓️ 🧲 🔫 💣 🧨 🪓 🔪 🗡️ 🛡️ 🚬 ⚰️ 🪦 ⚱️ 🏺 🔮 📿 🧿 🪬 💈 🧪 🔬 🔭 📚 📖 📝 ✏️ 🖊️ 🖌️ 🖍️ 📌 📍 📎 🖇️ 📏 📐 ✂️ 🗃️ 🗄️ 🗑️ 🔒 🔓 🔐 🔑 🗝️ 🔨 🪄 🎁 🎈 ✉️ 📩 📨 📧 💌 📥 📤 📦 🏷️ 🪧 📪 📫 📬 📭 📮 📜 📄 📃 📑 📊 📈 📉 🗒️ 🗓️ 📆 📅".split(" "),
-    "Symbols" to "❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ☮️ ✝️ ☪️ 🕉️ ☸️ ✡️ 🔯 🕎 ☯️ ☦️ 🛐 ⛎ ♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ 🆔 ⚛️ ☢️ ☣️ 📴 📳 🈶 🈚 🈸 🈺 🈷️ ✴️ 🆚 💮 🉐 ㊙️ ㊗️ 🈴 🈵 🈹 🈲 🅰️ 🅱️ 🆎 🆑 🅾️ 🆘 ❌ ⭕ 🛑 ⛔ 📛 🚫 💯 💢 ♨️ 🚷 🚯 🚳 🚱 🔞 📵 ❗ ❕ ❓ ❔ ‼️ ⁉️ 🔅 🔆 ⚠️ 🚸 🔱 ⚜️ 🔰 ♻️ ✅ 🈯 💹 ❇️ ✳️ ❎ 🌐 💠 Ⓜ️ 🌀 💤 🏧 🚾 ♿ 🅿️ 🛗 🈳 🈂️ 🛂 🛃 🛄 🛅 🚹 🚺 🚼 ⚧️ 🚻 🚮 🎦 📶 🈁 🔣 ℹ️ 🔤 🔡 🔠 🆖 🆗 🆙 🆒 🆕 🆓 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 ▶️ ⏸️ ⏯️ ⏹️ ⏺️ ⏭️ ⏮️ ⏩ ⏪ 🔀 🔁 🔂 ➕ ➖ ➗ ✖️ ♾️ 💲 ©️ ®️ ™️".split(" "),
-    "Flags" to "🇵🇰 🇦🇪 🇸🇦 🇶🇦 🇰🇼 🇹🇷 🇦🇫 🇧🇩 🇮🇳 🇨🇳 🇯🇵 🇰🇷 🇲🇾 🇸🇬 🇦🇺 🇳🇿 🇬🇧 🇺🇸 🇨🇦 🇩🇪 🇫🇷 🇮🇹 🇪🇸 🇵🇹 🇳🇱 🇧🇪 🇨🇭 🇦🇹 🇸🇪 🇳🇴 🇩🇰 🇫🇮 🇵🇱 🇬🇷 🇮🇪 🇧🇷 🇦🇷 🇲🇽 🇿🇦 🇪🇬 🇲🇦 🇳🇬 🇰🇪 🇮🇩 🇹🇭 🇻🇳 🇵🇭 🏳️ 🏴 🏁 🚩 🏳️‍🌈".split(" ")
-)
-
 @Composable private fun VoicePreview(clip: VoiceClip, onDelete: () -> Unit, onSend: () -> Unit) {
-    Surface(color = Color.White, shadowElevation = 10.dp) {
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(Modifier.size(42.dp), color = SoftLime, shape = CircleShape) {
-                Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.GraphicEq, null, tint = Navy) }
+    Surface(color=Color.White,shadowElevation=10.dp){
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(14.dp)){
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                Text("Review voice message",Modifier.weight(1f),fontWeight=FontWeight.Bold,fontSize=13.sp)
+                IconButton(onDelete){Icon(Icons.Default.DeleteOutline,"Discard voice recording",tint=MaterialTheme.colorScheme.error)}
+                FilledIconButton(onSend,colors=IconButtonDefaults.filledIconButtonColors(containerColor=Navy)){Icon(Icons.Default.Send,"Send voice message")}
             }
-            Spacer(Modifier.width(11.dp)); Column(Modifier.weight(1f)) {
-                Text("Voice message ready", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("${formatDuration(clip.seconds)} · Review before sending", color = Muted, fontSize = 10.sp)
-            }
-            IconButton(onDelete) { Icon(Icons.Default.DeleteOutline, "Delete recording", tint = MaterialTheme.colorScheme.error) }
-            FilledIconButton(onSend, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Navy)) { Icon(Icons.Default.Send, "Send voice") }
+            VoicePlayer(Uri.fromFile(File(clip.filePath)).toString(),clip.seconds,emptyMap(),false)
         }
     }
 }

@@ -31,7 +31,7 @@ $action = strtolower(trim((string) ($_POST['action'] ?? $_GET['action'] ?? '')))
 
 /* Health is intentionally browser-checkable; authenticated state reads stay
    POST so credentials and account actions never leak into intermediary logs. */
-$publicGet = $_SERVER['REQUEST_METHOD'] === 'GET' && in_array($action, ['health', 'file'], true);
+$publicGet = $_SERVER['REQUEST_METHOD'] === 'GET' && in_array($action, ['health', 'file', 'post_file'], true);
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !$publicGet) {
     mobile_error('This endpoint only accepts POST.', 405);
 }
@@ -635,9 +635,13 @@ if ($action === 'messages') {
     $otherReadThrough = (int)($u['show_receipts'] ?? 1) === 1 ? (int)fetch_col(
         'SELECT COALESCE(MIN(CASE WHEN u.show_receipts=1 THEN cm.last_read_id ELSE 0 END),0) FROM conversation_members cm JOIN users u ON u.id=cm.user_id WHERE cm.conversation_id=? AND cm.user_id<>?', [$cid,$uid]) : 0;
     $reactionMap = [];
+    $playedMap=[];
     $messageIds = array_map(static fn(array $m): int => (int)$m['id'], $rows);
     if ($messageIds) {
         $ph = implode(',', array_fill(0, count($messageIds), '?'));
+        if ((int)($u['show_receipts'] ?? 1)===1 && table_exists('message_plays')) {
+            foreach(fetch_all("SELECT DISTINCT mp.message_id FROM message_plays mp JOIN users u ON u.id=mp.user_id WHERE mp.user_id<>? AND u.show_receipts=1 AND mp.message_id IN ($ph)",array_merge([$uid],$messageIds)) as $play)$playedMap[(int)$play['message_id']]=true;
+        }
         $reactionRows = fetch_all("SELECT message_id,emoji,COUNT(*) n,MAX(user_id=?) mine
                                      FROM message_reactions WHERE message_id IN ($ph)
                                     GROUP BY message_id,emoji ORDER BY MIN(id)", array_merge([$uid], $messageIds));
@@ -648,7 +652,7 @@ if ($action === 'messages') {
         }
     }
     usort($rows, static fn($a,$b) => (int)$a['id'] <=> (int)$b['id']);
-    $items = array_map(static function(array $m) use ($uid, $otherReadThrough, $reactionMap): array {
+    $items = array_map(static function(array $m) use ($uid, $otherReadThrough, $reactionMap, $playedMap): array {
         $mine = (int)$m['sender_id']===$uid;
         $read = $mine && $otherReadThrough >= (int) $m['id'];
         $deleted = $m['status']==='deleted';
@@ -670,6 +674,7 @@ if ($action === 'messages') {
             'id'=>(int)$m['id'], 'sender_id'=>(int)$m['sender_id'], 'sender'=>$m['sender'],
             'content'=>$deleted ? 'This message was deleted.' : (!empty($m['enc']) ? 'Encrypted message · Unlock in the website chat' : (string)($m['content'] ?? '')),
             'encrypted'=>!empty($m['enc']), 'client_token'=>$m['client_token'] ?? null,
+            'voice_played'=>$mine && isset($playedMap[(int)$m['id']]),
             'time'=>date('g:i A', strtotime($m['created_at'])), 'mine'=>$mine,
             'date_label'=>$dateLabel, 'deleted'=>$deleted, 'edited'=>!empty($m['edited_at']),
             'forwarded'=>!empty($m['forwarded_from']), 'starred'=>(bool)$m['starred'],

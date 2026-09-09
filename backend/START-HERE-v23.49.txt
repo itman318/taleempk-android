@@ -1,0 +1,33 @@
+TaleemPK complete website 23.49 + Android 1.6
+
+1. Back up the current website and database.
+2. Extract this ZIP into the existing website root (normally public_html).
+   Replace matching application files. Keep your existing config/config.php,
+   uploads and database. Do not run install.php again.
+3. Open your website once, then Admin > Health. This build checks 10 key files.
+   api/mobile.php?action=health should return version 23.49.
+4. Install the matching TaleemPK Android 1.6 APK and sign in.
+
+The original automatic logout was caused by the cached guest identity in
+includes/auth.php. This complete package includes that correction, not just
+a different error message in api/mobile.php.
+
+Chat: text retry with stable message identity; recent/visible edits, deletions
+and reactions refresh; older history; privacy-respecting receipts; real typing
+and recording indicators; voice-listened acknowledgement; upload progress;
+native emoji picker with recent emoji and skin/gender variants; photo viewer.
+
+Feed: photos and files, questions/updates, subject, anonymous question,
+followers visibility, up to four attachments, bookmark, like/dislike, repost,
+comments and pagination. Anonymous/Page bylines and follower access corrected.
+
+Notifications: native unread bell, activity list, read-all and front banner
+while the app is open. Native background push is not configured.
+
+Native features still outstanding: WebRTC calls, encrypted-key unlock,
+chat polls and Page publishing/scheduling. Existing website features remain.
+Encrypted history appears as a locked item in the app; use the website to
+unlock it. There is no claim of full native feature parity in this release.
+
+This package does not deploy itself to your host. Local checks do not prove
+that your host has received the files; verify the version after uploading.

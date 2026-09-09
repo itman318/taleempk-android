@@ -93,6 +93,22 @@ class ApiClient(private val context: Context, private val session: SessionStore)
         return NotificationBatch(items,d.optInt("unread"))
     }
     fun readNotification(id: Long) { request(mapOf("action" to "read_notification", "id" to "$id"),true) }
+    fun voicePlayed(id: Long) { request(mapOf("action" to "voice_played", "message_id" to "$id"),true) }
+    fun findMessages(query:String?=null):List<ChatLookup>{
+        val fields=if(query==null)mapOf("action" to "star","do" to "list") else mapOf("action" to "search_chat","q" to query)
+        return (request(fields,true).optJSONArray("results") ?: JSONArray()).toObjects{r->ChatLookup(r.optLong("id"),r.optLong("conversation_id"),r.optString("title",r.optString("where")),r.optString("sender"),r.optString("text"),r.optString("time"))}
+    }
+    fun downloadPostMedia(media: PostMedia): File {
+        val name=media.name.replace(Regex("[^A-Za-z0-9._ -]"),"_").take(140)
+        val file=File(File(context.cacheDir,"shared").apply{mkdirs()},"post-${media.id}-$name")
+        val conn=URL("$endpoint?action=post_file&id=${media.id}").openConnection() as HttpURLConnection
+        conn.connectTimeout=15000;conn.readTimeout=60000;conn.instanceFollowRedirects=false
+        session.token?.let{conn.setRequestProperty("Authorization","Bearer $it")}
+        try{if(conn.responseCode !in 200..299)throw ApiException("This file is no longer available.",conn.responseCode)
+            conn.inputStream.use{input->file.outputStream().use{output->input.copyTo(output)}}
+        }finally{conn.disconnect()}
+        return file
+    }
 
     fun publishPost(draft: PostDraft, progress: (Float) -> Unit): String {
         val fields = mapOf("action" to "create_post", "content" to draft.content.trim(),

@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate companion PHP API
-        run: php -l backend/api/mobile.php
+        run: find backend -name '*.php' -print0 | xargs -0 -n1 php -l
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
