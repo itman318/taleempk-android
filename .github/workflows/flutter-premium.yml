@@ -7,7 +7,7 @@ on:
       - 'flutter/**'
       - '.github/workflows/flutter-premium.yml'
   push:
-    branches: [main]
+    branches: [main, flutter-premium-v2]
     paths:
       - 'flutter/**'
       - '.github/workflows/flutter-premium.yml'
