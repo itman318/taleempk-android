@@ -130,6 +130,52 @@ if ($action === 'health') {
     mobile_out(['service' => 'TaleemPK mobile API', 'version' => defined('APP_VERSION') ? APP_VERSION : 'unknown']);
 }
 
+if ($action === 'forgot_password') {
+    if (!api_burst_limit('mobile_forgot_password', 5)) {
+        mobile_error('Too many reset requests. Wait a minute and try again.', 429);
+    }
+    $email = strtolower(trim((string) ($_POST['email'] ?? '')));
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        mobile_error('Enter a valid email address.');
+    }
+
+    $user = fetch_one("SELECT id,name,email FROM users WHERE email=? AND status='active' LIMIT 1", [$email]);
+    if ($user) {
+        /*
+         * Use the same website password-reset table and mailer when available.
+         * The response stays deliberately generic so the mobile endpoint does
+         * not disclose whether an account exists.
+         */
+        try {
+            $plain = bin2hex(random_bytes(32));
+            $hash = hash('sha256', $plain);
+            if (table_exists('password_resets')) {
+                q('DELETE FROM password_resets WHERE email=? OR expires_at<=NOW()', [$email]);
+                insert_row('password_resets', [
+                    'email' => $email,
+                    'token_hash' => $hash,
+                    'expires_at' => date('Y-m-d H:i:s', time() + 3600),
+                ]);
+                $link = url('reset-password.php?token=' . rawurlencode($plain) . '&email=' . rawurlencode($email));
+                if (function_exists('send_email')) {
+                    send_email(
+                        $email,
+                        'Reset your TaleemPK password',
+                        '<p>Hello ' . e((string)$user['name']) . ',</p>' .
+                        '<p>Use the secure link below to reset your TaleemPK password. The link expires in one hour.</p>' .
+                        '<p><a href="' . e($link) . '">Reset password</a></p>' .
+                        '<p>If you did not request this, you can ignore this email.</p>'
+                    );
+                }
+            }
+        } catch (Throwable $e) {
+            /* Keep the public response generic; server logs can capture mail
+               or legacy-schema failures without exposing account state. */
+        }
+    }
+    mobile_out(['message'=>'If that email exists, a password reset link has been sent.']);
+}
+
 if ($action === 'register') {
     if (!api_burst_limit('mobile_register', 3)) {
         mobile_error('Too many accounts were created from this connection. Wait a minute and try again.', 429);
