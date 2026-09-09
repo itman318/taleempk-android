@@ -1730,14 +1730,17 @@ class VoiceBubble extends StatefulWidget {
   const VoiceBubble({super.key, required this.message, required this.api});
   final ChatMessage message;
   final ApiClient api;
+
   @override
   State<VoiceBubble> createState() => _VoiceBubbleState();
 }
 
 class _VoiceBubbleState extends State<VoiceBubble> {
   final player = AudioPlayer();
-  bool ready = false, listened = false;
+  bool ready = false, listened = false, loading = false;
   String? localPath;
+  double speed = 1.0;
+
   @override
   void dispose() {
     player.dispose();
@@ -1750,127 +1753,258 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     super.dispose();
   }
 
+  Future<void> _prepare() async {
+    if (ready || loading) return;
+    loading = true;
+    if (mounted) setState(() {});
+    try {
+      final bytes = await widget.api.attachmentBytes(
+        widget.message.attachmentUrl!,
+      );
+      final dir = await getTemporaryDirectory();
+      localPath = '${dir.path}/taleempk_voice_${widget.message.id}.m4a';
+      await File(localPath!).writeAsBytes(bytes, flush: true);
+      await player.setFilePath(localPath!);
+      await player.setSpeed(speed);
+      ready = true;
+    } finally {
+      loading = false;
+      if (mounted) setState(() {});
+    }
+  }
+
   Future<void> _toggle() async {
     try {
-      if (!ready) {
-        final bytes = await widget.api.attachmentBytes(
-          widget.message.attachmentUrl!,
-        );
-        final dir = await getTemporaryDirectory();
-        localPath = '${dir.path}/taleempk_voice_${widget.message.id}.m4a';
-        await File(localPath!).writeAsBytes(bytes, flush: true);
-        await player.setFilePath(localPath!);
-        ready = true;
-      }
+      await _prepare();
+      if (!ready) return;
       if (!listened) listened = true;
+      if (player.processingState == ProcessingState.completed) {
+        await player.seek(Duration.zero);
+      }
       player.playing ? await player.pause() : await player.play();
-      setState(() {});
+      if (mounted) setState(() {});
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));
     }
+  }
+
+  Future<void> _cycleSpeed() async {
+    speed = speed == 1.0
+        ? 1.5
+        : speed == 1.5
+        ? 2.0
+        : 1.0;
+    if (ready) await player.setSpeed(speed);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _seek(double fraction) async {
+    await _prepare();
+    if (!ready) return;
+    final total = player.duration ?? Duration(seconds: widget.message.voiceSeconds);
+    final ms = (total.inMilliseconds * fraction.clamp(0.0, 1.0)).round();
+    await player.seek(Duration(milliseconds: ms));
   }
 
   @override
   Widget build(BuildContext context) => StreamBuilder<Duration>(
     stream: player.positionStream,
     builder: (_, snap) {
-      final position = snap.data ?? Duration.zero,
-          total = Duration(seconds: widget.message.voiceSeconds);
+      final position = snap.data ?? Duration.zero;
+      final knownTotal = player.duration ?? Duration(seconds: widget.message.voiceSeconds);
+      final totalMs = knownTotal.inMilliseconds > 0
+          ? knownTotal.inMilliseconds
+          : 1;
+      final progress =
+          (position.inMilliseconds / totalMs).clamp(0.0, 1.0).toDouble();
       final accent = listened
-          ? const Color(0xFF18B783)
-          : (widget.message.mine ? Colors.white : AppColors.blue);
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            onPressed: _toggle,
-            icon: StreamBuilder<bool>(
-              stream: player.playingStream,
-              builder: (_, s) => Icon(
-                s.data == true ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                color: accent,
+          ? const Color(0xFF16A873)
+          : (widget.message.mine ? Colors.white : const Color(0xFF128C7E));
+      final inactive = widget.message.mine
+          ? Colors.white30
+          : (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF566174)
+                : const Color(0xFFCFD5DC));
+
+      return ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 220, maxWidth: 270),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 44,
+              height: 44,
+              child: IconButton.filled(
+                style: IconButton.styleFrom(
+                  backgroundColor: widget.message.mine
+                      ? Colors.white
+                      : const Color(0xFF128C7E),
+                  foregroundColor: widget.message.mine
+                      ? AppColors.navy
+                      : Colors.white,
+                  padding: EdgeInsets.zero,
+                ),
+                onPressed: loading ? null : _toggle,
+                icon: loading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : StreamBuilder<bool>(
+                        stream: player.playingStream,
+                        builder: (_, s) => Icon(
+                          s.data == true
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          size: 29,
+                        ),
+                      ),
               ),
             ),
-          ),
-          SizedBox(
-            width: 145,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: 2.5,
-                    thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 5,
-                    ),
-                    overlayShape: SliderComponentShape.noOverlay,
-                  ),
-                  child: Slider(
-                    min: 0,
-                    max: total.inMilliseconds > 0
-                        ? total.inMilliseconds.toDouble()
-                        : 1.0,
-                    value: position.inMilliseconds.toDouble().clamp(
-                          0.0,
-                          total.inMilliseconds > 0
-                              ? total.inMilliseconds.toDouble()
-                              : 1.0,
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (d) {
+                      final box = context.findRenderObject();
+                      if (box is! RenderBox) return;
+                      final local = box.globalToLocal(d.globalPosition);
+                      final fraction = (local.dx / 150).clamp(0.0, 1.0);
+                      _seek(fraction);
+                    },
+                    onHorizontalDragUpdate: (d) {
+                      final box = context.findRenderObject();
+                      if (box is! RenderBox) return;
+                      final local = box.globalToLocal(d.globalPosition);
+                      final fraction = (local.dx / 150).clamp(0.0, 1.0);
+                      _seek(fraction);
+                    },
+                    child: SizedBox(
+                      height: 31,
+                      child: CustomPaint(
+                        painter: _VoiceWavePainter(
+                          progress: progress,
+                          active: accent,
+                          inactive: inactive,
+                          seed: widget.message.id,
                         ),
-                    activeColor: accent,
-                    inactiveColor: widget.message.mine
-                        ? Colors.white24
-                        : Theme.of(context).dividerColor,
-                    onChanged: ready
-                        ? (value) => player.seek(
-                              Duration(milliseconds: value.round()),
-                            )
-                        : null,
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
                   ),
-                ),
-                Row(
-                  children: [
-                    Icon(
-                      listened
-                          ? Icons.graphic_eq_rounded
-                          : Icons.multitrack_audio_rounded,
-                      size: 14,
-                      color: accent,
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      _voiceDuration(
-                        position.inSeconds > 0
-                            ? position.inSeconds
-                            : widget.message.voiceSeconds,
+                  Row(
+                    children: [
+                      Icon(
+                        listened
+                            ? Icons.graphic_eq_rounded
+                            : Icons.mic_none_rounded,
+                        size: 14,
+                        color: accent,
                       ),
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: listened ? FontWeight.w700 : FontWeight.w500,
-                        color: listened
-                            ? accent
-                            : (widget.message.mine
-                                  ? Colors.white70
-                                  : AppColors.muted),
-                      ),
-                    ),
-                    if (listened) ...[
-                      const SizedBox(width: 5),
+                      const SizedBox(width: 4),
                       Text(
-                        'played',
-                        style: TextStyle(fontSize: 9, color: accent),
+                        _voiceDuration(
+                          position.inSeconds > 0
+                              ? position.inSeconds
+                              : widget.message.voiceSeconds,
+                        ),
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: accent,
+                        ),
+                      ),
+                      if (listened) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          'played',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: accent,
+                          ),
+                        ),
+                      ],
+                      const Spacer(),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(18),
+                        onTap: _cycleSpeed,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: accent.withValues(alpha: .55)),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Text(
+                            '${speed.toStringAsFixed(speed == 1.0 ? 0 : 1)}×',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: accent,
+                            ),
+                          ),
+                        ),
                       ),
                     ],
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       );
     },
   );
+
   String _voiceDuration(int s) =>
       '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+}
+
+class _VoiceWavePainter extends CustomPainter {
+  const _VoiceWavePainter({
+    required this.progress,
+    required this.active,
+    required this.inactive,
+    required this.seed,
+  });
+
+  final double progress;
+  final Color active, inactive;
+  final int seed;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const gap = 3.0;
+    const width = 2.4;
+    final count = (size.width / (width + gap)).floor().clamp(18, 54);
+    final activeUntil = (count * progress).round();
+    for (var i = 0; i < count; i++) {
+      final raw = ((i * 37 + seed * 11) % 17) / 16.0;
+      final height = 8.0 + raw * (size.height - 10.0);
+      final x = i * (width + gap) + width / 2;
+      final y1 = (size.height - height) / 2;
+      final y2 = y1 + height;
+      final paint = Paint()
+        ..color = i < activeUntil ? active : inactive
+        ..strokeWidth = width
+        ..strokeCap = StrokeCap.round;
+      canvas.drawLine(Offset(x, y1), Offset(x, y2), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _VoiceWavePainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.active != active ||
+      oldDelegate.inactive != inactive ||
+      oldDelegate.seed != seed;
 }
 
 class _PulseDot extends StatefulWidget {
