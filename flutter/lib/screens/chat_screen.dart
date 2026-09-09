@@ -32,6 +32,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool loading = true,
       sending = false,
       recording = false,
+      recordingPaused = false,
       showEmoji = false,
       polling = false,
       typingSent = false,
@@ -140,10 +141,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF0F3F9),
+    backgroundColor: Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFF071020)
+        : const Color(0xFFEFF3F8),
     appBar: AppBar(
       toolbarHeight: 68,
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       surfaceTintColor: Colors.transparent,
       titleSpacing: 0,
       title: searching
@@ -175,7 +178,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         style: const TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w800,
-                          color: AppColors.ink,
+                          color: Theme.of(context).colorScheme.onSurface,
                         ),
                       ),
                       Text(
@@ -599,7 +602,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _replyBar() => Container(
-    color: Colors.white,
+    color: Theme.of(context).colorScheme.surface,
     padding: const EdgeInsets.fromLTRB(14, 8, 8, 7),
     child: Row(
       children: [
@@ -635,7 +638,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   );
 
   Widget _composer() => Container(
-    color: Colors.white,
+    color: Theme.of(context).colorScheme.surface,
     padding: const EdgeInsets.fromLTRB(8, 7, 8, 9),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -663,7 +666,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             decoration: InputDecoration(
               hintText: 'Message',
               isDense: true,
-              fillColor: const Color(0xFFF4F6FA),
+              fillColor: Theme.of(context).brightness == Brightness.dark
+                  ? const Color(0xFF172033)
+                  : const Color(0xFFF4F6FA),
               suffixIcon: IconButton(
                 onPressed: () => setState(() => showEmoji = !showEmoji),
                 icon: const Icon(Icons.emoji_emotions_outlined),
@@ -725,7 +730,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ];
     return Container(
       height: 210,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       padding: const EdgeInsets.all(12),
       child: GridView.count(
         crossAxisCount: 8,
@@ -749,21 +754,49 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _recordingBar() => Container(
-    color: const Color(0xFFFFF1F2),
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+    color: Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFF26151D)
+        : const Color(0xFFFFF1F2),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     child: Row(
       children: [
-        const _PulseDot(),
-        const SizedBox(width: 10),
-        Text(
-          'Recording ${_duration(recordSeconds)}',
-          style: const TextStyle(
-            color: AppColors.danger,
-            fontWeight: FontWeight.w800,
+        if (recordingPaused)
+          const Icon(Icons.pause_circle_filled_rounded, color: AppColors.violet)
+        else
+          const _PulseDot(),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            recordingPaused
+                ? 'Paused · ${_duration(recordSeconds)}'
+                : 'Recording · ${_duration(recordSeconds)}',
+            style: TextStyle(
+              color: recordingPaused
+                  ? AppColors.violet
+                  : AppColors.danger,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
-        const Spacer(),
-        TextButton(onPressed: _cancelRecording, child: const Text('Cancel')),
+        IconButton(
+          tooltip: recordingPaused ? 'Resume recording' : 'Pause recording',
+          onPressed: _pauseResumeRecording,
+          icon: Icon(
+            recordingPaused
+                ? Icons.mic_rounded
+                : Icons.pause_rounded,
+          ),
+        ),
+        IconButton(
+          tooltip: 'Delete recording',
+          onPressed: _cancelRecording,
+          icon: const Icon(Icons.delete_outline_rounded),
+        ),
+        IconButton.filled(
+          tooltip: 'Send voice note',
+          onPressed: _finishRecording,
+          icon: const Icon(Icons.send_rounded),
+        ),
       ],
     ),
   );
@@ -919,10 +952,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
     recordSeconds = 0;
     recording = true;
+    recordingPaused = false;
     setState(() {});
     AppScope.of(context).api.presence(widget.conversation.id, 'voice');
     recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
+      if (recordingPaused) return;
       setState(() => recordSeconds++);
       if (recordSeconds % 3 == 0) {
         AppScope.of(context).api.presence(widget.conversation.id, 'voice');
@@ -931,10 +966,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _pauseResumeRecording() async {
+    try {
+      if (recordingPaused) {
+        await recorder.resume();
+        recordingPaused = false;
+        AppScope.of(context).api.presence(widget.conversation.id, 'voice');
+      } else {
+        await recorder.pause();
+        recordingPaused = true;
+        AppScope.of(context).api.presence(widget.conversation.id, '');
+      }
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
   Future<void> _finishRecording() async {
     recordTimer?.cancel();
     final path = await recorder.stop();
-    setState(() => recording = false);
+    setState(() {
+      recording = false;
+      recordingPaused = false;
+    });
     AppScope.of(context).api.presence(widget.conversation.id, '');
     if (path == null || recordSeconds < 1) return;
     setState(() {
@@ -975,6 +1030,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (mounted)
       setState(() {
         recording = false;
+        recordingPaused = false;
         recordSeconds = 0;
       });
     AppScope.of(context).api.presence(widget.conversation.id, '');
