@@ -296,7 +296,7 @@ class ApiClient {
         'action': 'message_action',
         'do': 'forward',
         'id': '$messageId',
-        'conversation_id': '$conversationId',
+        'to': '$conversationId',
       });
 
   Future<void> react(int id, String emoji) =>
