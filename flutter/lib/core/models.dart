@@ -231,7 +231,7 @@ class ReplyPreview {
 }
 
 class ChatMessage {
-  const ChatMessage({
+  ChatMessage({
     required this.id,
     required this.senderId,
     required this.sender,
