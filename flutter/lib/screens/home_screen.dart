@@ -38,14 +38,14 @@ class HomeScreen extends StatelessWidget {
           children: [
             _hero(context, user),
             const SizedBox(height: 16),
-            _learningPromise(),
+            _learningPromise(context),
             const SizedBox(height: 24),
-            const Text(
+            Text(
               'Explore TaleemPK',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: AppColors.ink,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
             ),
             const SizedBox(height: 12),
@@ -129,16 +129,16 @@ class HomeScreen extends StatelessWidget {
     ),
   );
 
-  Widget _learningPromise() => Container(
+  Widget _learningPromise(BuildContext context) => Container(
     padding: const EdgeInsets.all(18),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(22),
       border: Border.all(color: const Color(0x143157E8)),
     ),
-    child: const Row(
+    child: Row(
       children: [
-        CircleAvatar(
+        const CircleAvatar(
           radius: 23,
           backgroundColor: Color(0x123157E8),
           child: Icon(Icons.psychology_alt_rounded, color: AppColors.blue),
@@ -150,7 +150,11 @@ class HomeScreen extends StatelessWidget {
             children: [
               Text(
                 'Learn with purpose',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
               ),
               SizedBox(height: 4),
               Text(
@@ -158,7 +162,7 @@ class HomeScreen extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12.5,
                   height: 1.4,
-                  color: AppColors.muted,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
