@@ -8,12 +8,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/app_state.dart';
 import '../core/api_client.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
 import '../widgets/common.dart';
+import 'call_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.conversation});
@@ -36,7 +38,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       showEmoji = false,
       polling = false,
       typingSent = false,
-      searching = false;
+      searching = false,
+      selfBlocked = false,
+      muted = false;
   int recordSeconds = 0;
   double? uploadProgress;
   String? error, recordPath;
@@ -47,6 +51,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     textController.addListener(_typing);
+    selfBlocked = widget.conversation.selfBlocked;
+    muted = widget.conversation.muted;
     _load();
   }
 
@@ -200,6 +206,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ],
             ),
       actions: [
+        if (!widget.conversation.isGroup &&
+            widget.conversation.callsEnabled &&
+            !_chatBlocked)
+          IconButton(
+            tooltip: 'Voice call',
+            onPressed: () => _startCall(false),
+            icon: const Icon(Icons.call_outlined),
+          ),
+        if (!widget.conversation.isGroup &&
+            widget.conversation.videoCallsEnabled &&
+            !_chatBlocked)
+          IconButton(
+            tooltip: 'Video call',
+            onPressed: () => _startCall(true),
+            icon: const Icon(Icons.videocam_outlined),
+          ),
         IconButton(
           tooltip: searching ? 'Close search' : 'Search messages',
           onPressed: () => setState(() {
@@ -208,20 +230,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           }),
           icon: Icon(searching ? Icons.close_rounded : Icons.search_rounded),
         ),
-        PopupMenuButton<String>(
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'mute', child: Text('Mute notifications')),
-          ],
-          onSelected: (_) async {
-            try {
-              await AppScope.of(context).api
-                  .toggleConversationMute(widget.conversation.id);
-              if (mounted)
-                showMessage(context, 'Notification setting updated.');
-            } catch (e) {
-              if (mounted) showMessage(context, apiMessage(e));
-            }
-          },
+        IconButton(
+          tooltip: 'Conversation options',
+          onPressed: _conversationMenu,
+          icon: const Icon(Icons.more_vert_rounded),
         ),
       ],
     ),
@@ -244,9 +256,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ),
           if (recording) _recordingBar(),
           if (uploadProgress != null) _uploadBar(),
-          if (reply != null) _replyBar(),
-          _composer(),
-          if (showEmoji) _emojiPanel(),
+          if (reply != null && !_chatBlocked) _replyBar(),
+          if (_chatBlocked) _blockedBanner() else _composer(),
+          if (showEmoji && !_chatBlocked) _emojiPanel(),
         ],
       ),
     ),
@@ -806,7 +818,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   );
 
   Widget _uploadBar() => Container(
-    color: Colors.white,
+    color: Theme.of(context).colorScheme.surface,
     padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -831,7 +843,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ),
   );
 
+  bool get _chatBlocked => selfBlocked || widget.conversation.blockedByOther;
+
   Future<void> _sendText() async {
+    if (_chatBlocked) return;
     final text = textController.text.trim();
     if (text.isEmpty) return;
     final currentReply = reply;
@@ -850,6 +865,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pickAttachment() async {
+    if (_chatBlocked) return;
     showModalBottomSheet<void>(
       context: context,
       builder: (sheet) => SafeArea(
@@ -931,6 +947,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _toggleRecording() async {
+    if (_chatBlocked) return;
     if (recording) {
       await _finishRecording();
       return;
@@ -1039,6 +1056,363 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       });
     AppScope.of(context).api.presence(widget.conversation.id, '');
   }
+
+  Widget _blockedBanner() => Container(
+    margin: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+    padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: Theme.of(context).dividerColor),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.lock_outline_rounded, color: AppColors.muted),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                selfBlocked
+                    ? 'You blocked ${widget.conversation.title}'
+                    : 'Messaging is unavailable',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                selfBlocked
+                    ? 'You can’t send or receive new messages from this person.'
+                    : 'This person has blocked this conversation.',
+                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+            ],
+          ),
+        ),
+        if (selfBlocked)
+          FilledButton(
+            onPressed: _toggleBlock,
+            child: const Text('Unblock'),
+          ),
+      ],
+    ),
+  );
+
+  Future<void> _startCall(bool video) async {
+    if (_chatBlocked || widget.conversation.isGroup) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CallScreen(
+          conversation: widget.conversation,
+          video: video,
+        ),
+      ),
+    );
+    if (mounted) _load();
+  }
+
+  Future<void> _conversationMenu() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Wrap(
+          children: [
+            if (!widget.conversation.isGroup &&
+                widget.conversation.otherUsername.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.person_outline_rounded),
+                title: const Text('View profile'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  _openProfile();
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.calendar_month_outlined),
+              title: const Text('Jump to date'),
+              onTap: () {
+                Navigator.pop(sheet);
+                _jumpToDate();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.lock_outline_rounded),
+              title: const Text('Encryption'),
+              onTap: () {
+                Navigator.pop(sheet);
+                _encryptionInfo();
+              },
+            ),
+            if (!widget.conversation.isGroup &&
+                widget.conversation.otherId > 0)
+              ListTile(
+                leading: Icon(
+                  selfBlocked
+                      ? Icons.lock_open_rounded
+                      : Icons.block_rounded,
+                  color: selfBlocked ? AppColors.success : AppColors.danger,
+                ),
+                title: Text(selfBlocked ? 'Unblock' : 'Block'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  _toggleBlock();
+                },
+              ),
+            ListTile(
+              leading: Icon(
+                muted
+                    ? Icons.notifications_active_outlined
+                    : Icons.notifications_off_outlined,
+              ),
+              title: Text(
+                muted ? 'Unmute notifications' : 'Mute notifications',
+              ),
+              onTap: () {
+                Navigator.pop(sheet);
+                _toggleMute();
+              },
+            ),
+            if (!widget.conversation.isGroup &&
+                widget.conversation.otherId > 0)
+              ListTile(
+                leading: const Icon(
+                  Icons.flag_outlined,
+                  color: AppColors.danger,
+                ),
+                title: const Text(
+                  'Report',
+                  style: TextStyle(color: AppColors.danger),
+                ),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  _reportUser();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openProfile() async {
+    final username = widget.conversation.otherUsername;
+    if (username.isEmpty) return;
+    final uri = Uri.parse(
+      'https://taleempk.online/profile.php?u=${Uri.encodeQueryComponent(username)}',
+    );
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+      showMessage(context, 'Profile could not be opened.');
+    }
+  }
+
+  Future<void> _toggleMute() async {
+    try {
+      final next = await AppScope.of(context).api
+          .toggleConversationMute(widget.conversation.id);
+      if (mounted) {
+        setState(() => muted = next);
+        showMessage(
+          context,
+          next ? 'Notifications muted.' : 'Notifications unmuted.',
+        );
+      }
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _toggleBlock() async {
+    if (widget.conversation.otherId <= 0) return;
+    if (!selfBlocked) {
+      final confirm = await showDialog<bool>(
+            context: context,
+            builder: (d) => AlertDialog(
+              title: Text('Block ${widget.conversation.title}?'),
+              content: const Text(
+                'You won’t be able to send or receive messages from this person until you unblock them.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(d, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(d, true),
+                  child: const Text('Block'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!confirm) return;
+    }
+    try {
+      final data = await AppScope.of(context).api
+          .toggleBlock(widget.conversation.otherId);
+      final blocked = data['blocked'] == true;
+      if (mounted) {
+        setState(() {
+          selfBlocked = blocked;
+          if (blocked) {
+            reply = null;
+            showEmoji = false;
+          }
+        });
+        showMessage(
+          context,
+          '${data['message'] ?? (blocked ? 'Blocked.' : 'Unblocked.')}',
+        );
+      }
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _jumpToDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDate: DateTime.now(),
+    );
+    if (picked == null || !mounted) return;
+    final date =
+        '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    try {
+      final data = await AppScope.of(context).api
+          .jumpToDate(widget.conversation.id, date);
+      final anchor = _asInt(data['anchor_id']);
+      if (anchor <= 0) {
+        if (mounted) {
+          showMessage(
+            context,
+            '${data['message'] ?? 'No messages near that date.'}',
+          );
+        }
+        return;
+      }
+      final index = messages.indexWhere((m) => m.id == anchor);
+      if (index >= 0 && scroll.hasClients) {
+        final target = (index * 76.0).clamp(
+          0.0,
+          scroll.position.maxScrollExtent,
+        );
+        await scroll.animateTo(
+          target,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOut,
+        );
+      } else if (mounted) {
+        showMessage(context, 'Date found. Loading that part of chat is next.');
+      }
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _encryptionInfo() async {
+    await showDialog<void>(
+      context: context,
+      builder: (d) => AlertDialog(
+        icon: const Icon(Icons.lock_rounded, color: AppColors.success),
+        title: const Text('Private and encrypted in transit'),
+        content: const Text(
+          'TaleemPK protects app traffic with HTTPS and secure account sessions. End-to-end encrypted web conversations remain protected on the website; native end-to-end key sync is not enabled yet.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(d),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _reportUser() async {
+    const reasons = <String, String>{
+      'spam': 'Spam or scam',
+      'harassment': 'Harassment',
+      'inappropriate': 'Inappropriate content',
+      'impersonation': 'Impersonation',
+      'other': 'Other',
+    };
+    String selected = 'spam';
+    final details = TextEditingController();
+    final submit = await showDialog<bool>(
+          context: context,
+          builder: (d) => StatefulBuilder(
+            builder: (context, setLocal) => AlertDialog(
+              title: Text('Report ${widget.conversation.title}'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: selected,
+                    items: reasons.entries
+                        .map(
+                          (e) => DropdownMenuItem(
+                            value: e.key,
+                            child: Text(e.value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) setLocal(() => selected = value);
+                    },
+                    decoration: const InputDecoration(labelText: 'Reason'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: details,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: 'Details (optional)',
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(d, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(d, true),
+                  child: const Text('Submit report'),
+                ),
+              ],
+            ),
+          ),
+        ) ??
+        false;
+    if (!submit || !mounted) {
+      details.dispose();
+      return;
+    }
+    try {
+      final data = await AppScope.of(context).api.reportUser(
+        widget.conversation.otherId,
+        reason: selected,
+        details: details.text.trim(),
+      );
+      if (mounted) {
+        showMessage(context, '${data['message'] ?? 'Report submitted.'}');
+      }
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    } finally {
+      details.dispose();
+    }
+  }
+
+  int _asInt(dynamic value) =>
+      value is int ? value : int.tryParse('$value') ?? 0;
 
   Future<void> _messageActions(ChatMessage m) async {
     await showModalBottomSheet<void>(
