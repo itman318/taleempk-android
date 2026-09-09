@@ -320,6 +320,9 @@ $nativeSharedHandlers = [
     'message_action' => 'chat_message.php',
     'manage_chat'    => 'chat_manage.php',
     'search_chat'    => 'chat_search.php',
+    'block_user'     => 'block.php',
+    'report_user'    => 'report.php',
+    'call'           => 'call.php',
     'create_post'    => 'post_create.php',
     'react_post'     => 'react.php',
     'create_comment' => 'comment_create.php',
@@ -552,14 +555,29 @@ if ($action === 'conversations') {
                 (SELECT u2.last_seen FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
                   WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_last_seen,
                 (SELECT u2.show_online FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
-                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_show_online
+                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_show_online,
+                (SELECT u2.id FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
+                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_id,
+                (SELECT u2.username FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
+                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_username
            FROM conversation_members cm JOIN conversations c ON c.id=cm.conversation_id
           WHERE cm.user_id=? AND cm.is_archived=0 ORDER BY c.last_activity DESC LIMIT 100",
-        [$uid,$uid,$uid,$uid,$uid]
+        [$uid,$uid,$uid,$uid,$uid,$uid,$uid]
     );
-    $items = array_map(static function(array $c): array {
+    $items = array_map(static function(array $c) use ($uid): array {
         $group = $c['type']==='group';
         $avatar = $group ? $c['avatar'] : $c['other_avatar'];
+        $otherId = (int)($c['other_id'] ?? 0);
+        $selfBlocked = !$group && $otherId > 0
+            ? (bool) fetch_one('SELECT id FROM blocks WHERE user_id=? AND blocked_id=? LIMIT 1', [$uid,$otherId])
+            : false;
+        $blockedByOther = !$group && $otherId > 0
+            ? (bool) fetch_one('SELECT id FROM blocks WHERE user_id=? AND blocked_id=? LIMIT 1', [$otherId,$uid])
+            : false;
+        $callsEnabled = !$group && $otherId > 0
+            && (int)setting('chat_calls',1)===1
+            && table_exists('calls');
+        $videoCallsEnabled = $callsEnabled && (int)setting('call_video',1)===1;
         $online = !$group && (int)($c['other_show_online'] ?? 0) === 1
             && !empty($c['other_last_seen']) && strtotime((string)$c['other_last_seen']) >= time() - 120;
         $status = $group ? 'Study group' : ($online ? 'Online now'
@@ -570,6 +588,9 @@ if ($action === 'conversations') {
             'avatar'=>$avatar ? upload_url($avatar) : null, 'last_message'=>(string)($c['last_message'] ?? ''),
             'last_activity'=>time_ago($c['last_activity']), 'unread'=>(int)$c['unread_count'], 'is_group'=>$group,
             'online'=>$online, 'status_text'=>$status, 'muted'=>(int)$c['is_muted']===1,
+            'other_id'=>$otherId, 'other_username'=>(string)($c['other_username'] ?? ''),
+            'self_blocked'=>$selfBlocked, 'blocked_by_other'=>$blockedByOther,
+            'calls_enabled'=>$callsEnabled, 'video_calls_enabled'=>$videoCallsEnabled,
         ];
     }, $rows);
     mobile_out(['conversations'=>$items]);
