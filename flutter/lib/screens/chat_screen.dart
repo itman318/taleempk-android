@@ -473,7 +473,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             if (m.forwarded)
               _metaLine(Icons.forward_rounded, 'Forwarded', m.mine),
             if (m.reply != null) _quoted(m.reply!, m.mine),
-            if (m.poll != null && !m.deleted)
+            if (m.encrypted && !m.deleted)
+              _encryptedBubble(m)
+            else if (m.poll != null && !m.deleted)
               _pollBubble(m)
             else if (m.voiceSeconds > 0 && !m.deleted)
               VoiceBubble(message: m, api: AppScope.of(context).api)
@@ -488,6 +490,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   fontStyle: m.deleted ? FontStyle.italic : null,
                 ),
               ),
+            if (m.linkPreview != null && !m.deleted && !m.encrypted)
+              _linkPreview(m.linkPreview!, m.mine),
             if (m.reactions.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 7),
@@ -704,6 +708,110 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));
     }
+  }
+
+  Widget _encryptedBubble(ChatMessage message) => InkWell(
+    borderRadius: BorderRadius.circular(12),
+    onTap: _encryptionInfo,
+    child: Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: (message.mine ? Colors.white : AppColors.success)
+            .withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.lock_rounded,
+            size: 18,
+            color: message.mine ? Colors.white : AppColors.success,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'End-to-end encrypted message · open the web chat with your encryption key to read it',
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: message.mine
+                    ? Colors.white
+                    : Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _linkPreview(ChatLinkPreview preview, bool mine) {
+    if (preview.url.isEmpty) return const SizedBox.shrink();
+    final uri = Uri.tryParse(preview.url);
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: uri == null
+            ? null
+            : () => launchUrl(uri, mode: LaunchMode.externalApplication),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 260),
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+            color: (mine ? Colors.white : AppColors.blue)
+                .withValues(alpha: .11),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: (mine ? Colors.white : AppColors.blue)
+                  .withValues(alpha: .18),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (preview.title.isNotEmpty)
+                Text(
+                  preview.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    color: mine
+                        ? Colors.white
+                        : Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+              if (preview.description.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(
+                  preview.description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: mine ? Colors.white70 : AppColors.muted,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Text(
+                uri?.host.isNotEmpty == true ? uri!.host : preview.url,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w700,
+                  color: mine ? Colors.white70 : AppColors.blue,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _pinnedBar() => Container(
