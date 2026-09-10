@@ -495,6 +495,15 @@ class ApiClient {
       _request({'action': 'star', 'message_id': '$id'});
   Future<void> togglePin(int id) =>
       _request({'action': 'pin', 'message_id': '$id'});
+  Future<List<Map<String, dynamic>>> editHistory(int id) async {
+    final data = await _request({
+      'action': 'message_action',
+      'do': 'edit_history',
+      'id': '$id',
+    });
+    return _list(data['history']).map(_map).toList();
+  }
+
   Future<void> editMessage(int id, String content) => _request({
     'action': 'message_action',
     'do': 'edit',
