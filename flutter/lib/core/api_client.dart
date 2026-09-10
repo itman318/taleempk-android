@@ -237,6 +237,7 @@ class ApiClient {
     String filePath, {
     String field = 'attachment',
     int voiceSeconds = 0,
+    String voiceWave = '',
     int? replyTo,
     void Function(double progress)? onProgress,
   }) async {
@@ -246,6 +247,7 @@ class ApiClient {
       'content': '',
       'client_token': _clientToken(),
       if (voiceSeconds > 0) 'voice_seconds': '$voiceSeconds',
+      if (voiceWave.isNotEmpty) 'voice_wave': voiceWave,
       if (replyTo != null) 'reply_to': '$replyTo',
     };
     await _multipart(fields, field, filePath, onProgress: onProgress);
