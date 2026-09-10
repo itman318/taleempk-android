@@ -749,9 +749,17 @@ if ($action === 'messages') {
             $reply = ['id'=>(int)$m['reply_to_id'], 'sender'=>(string)($m['reply_sender'] ?: 'Message'),
                 'text'=>mb_substr($replyText, 0, 120)];
         }
+        $encrypted = !$deleted && (int)($m['enc'] ?? 0)===1;
+        $preview = null;
+        if (!$encrypted && !$deleted && !empty($m['link_preview'])) {
+            $decoded = json_decode((string)$m['link_preview'], true);
+            if (is_array($decoded)) $preview = $decoded;
+        }
         return [
             'id'=>(int)$m['id'], 'sender_id'=>(int)$m['sender_id'], 'sender'=>$m['sender'],
-            'content'=>$deleted ? 'This message was deleted.' : (string)($m['content'] ?? ''),
+            'content'=>$deleted ? 'This message was deleted.'
+                : ($encrypted ? 'Encrypted message' : (string)($m['content'] ?? '')),
+            'encrypted'=>$encrypted, 'link_preview'=>$preview,
             'time'=>date('g:i A', strtotime($m['created_at'])), 'mine'=>$mine,
             'date_label'=>$dateLabel, 'deleted'=>$deleted, 'edited'=>!empty($m['edited_at']),
             'forwarded'=>!empty($m['forwarded_from']), 'starred'=>(bool)$m['starred'],
