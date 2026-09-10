@@ -160,6 +160,21 @@ class ApiClient {
     'content': content,
   });
 
+  Future<void> editComment(int commentId, String content) => _request({
+    'action': 'edit_comment',
+    'kind': 'comment',
+    'id': '$commentId',
+    'content': content,
+  });
+
+  Future<void> deleteComment(int commentId) => _request({
+    'action': 'delete_comment',
+    'id': '$commentId',
+  });
+
+  Future<Map<String, dynamic>> notificationPeek() =>
+      _request({'action': 'notification_peek'});
+
   Future<ModuleData> module(String key) async =>
       ModuleData.fromJson(await _request({'action': 'module', 'module': key}));
   Future<Map<String, dynamic>> moduleAction(String action, {int id = 0}) =>

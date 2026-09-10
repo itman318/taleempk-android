@@ -17,6 +17,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/app_state.dart';
 import '../core/api_client.dart';
 import '../core/models.dart';
+import '../core/native_bridge.dart';
 import '../core/theme.dart';
 import '../widgets/common.dart';
 import 'call_screen.dart';
@@ -30,6 +31,7 @@ Uint8List _processOutgoingPhoto(Map<String, dynamic> args) {
   if (image == null) {
     throw StateError('This image format cannot be edited on this device.');
   }
+  image = img.bakeOrientation(image);
 
   final normalizedTurns = ((turns % 4) + 4) % 4;
   if (normalizedTurns != 0) {
@@ -397,10 +399,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFF07101B)
-        : const Color(0xFFF3F6FA),
+        ? const Color(0xFF06101A)
+        : const Color(0xFFF1F5F9),
     appBar: AppBar(
-      toolbarHeight: 68,
+      toolbarHeight: 82,
       backgroundColor: Theme.of(context).colorScheme.surface,
       surfaceTintColor: Colors.transparent,
       titleSpacing: 0,
@@ -449,6 +451,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           color: presence?.active == true
                               ? AppColors.success
                               : AppColors.muted,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: _encryptionInfo,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 5, top: 1, bottom: 1),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.lock_rounded,
+                                size: 11.5,
+                                color: _threadHasEncryptedMessages
+                                    ? AppColors.success
+                                    : AppColors.blue,
+                              ),
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: Text(
+                                  _threadHasEncryptedMessages
+                                      ? 'End-to-end encrypted on web'
+                                      : 'End-to-end encryption',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 9.8,
+                                    fontWeight: FontWeight.w700,
+                                    color: _threadHasEncryptedMessages
+                                        ? AppColors.success
+                                        : AppColors.blue,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -647,7 +685,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         decoration: BoxDecoration(
           gradient: m.mine && m.voiceSeconds == 0
               ? const LinearGradient(
-                  colors: [Color(0xFF245FD3), Color(0xFF5146D8)],
+                  colors: [Color(0xFF123B64), Color(0xFF285C8D)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 )
@@ -655,20 +693,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           color: m.voiceSeconds > 0
               ? (m.mine
                     ? (m.playedByOther
-                          ? const Color(0xFF0C5D58)
-                          : const Color(0xFF183B63))
+                          ? const Color(0xFF0B665E)
+                          : const Color(0xFF173B63))
                     : (m.playedByMe
                           ? (Theme.of(context).brightness == Brightness.dark
                                 ? const Color(0xFF103C35)
-                                : const Color(0xFFDCF6EF))
+                                : const Color(0xFFE6F7F2))
                           : (Theme.of(context).brightness == Brightness.dark
                                 ? const Color(0xFF142236)
-                                : const Color(0xFFFFFFFF))))
+                                : const Color(0xFFFBFDFF))))
               : (m.mine
                     ? null
                     : (Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF132033)
-                          : const Color(0xFFFFFFFF))),
+                          ? const Color(0xFF111E2E)
+                          : const Color(0xFFFBFDFF))),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(18),
             topRight: const Radius.circular(18),
@@ -1449,6 +1487,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _insertEmoji(String emoji) async {
+    HapticFeedback.selectionClick();
     final value = textController.value;
     final text = value.text;
     var start = value.selection.start;
@@ -1507,6 +1546,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       'Study': const [
         '📚','📖','📕','📗','📘','📙','📓','📔','📒','📝','✏️','🖊️','🖋️','📌','📍','📎','📐','📏','🎓','💡','🔬',
         '🧪','🧬','🔭','🧮','📊','📈','📉','🗂️','📂','🗒️','✅','❓','❗','💯','🔒','🔓','🔐','🔑','🛡️'
+      ],
+      'Symbols': const [
+        '✅','☑️','✔️','❌','✖️','➕','➖','➗','✏️','✒️','🔒','🔓','🔐','🔑','🛡️','⚠️','🚫','⛔',
+        '❓','❔','❗','❕','‼️','⁉️','💯','🔔','🔕','📣','📢','💬','💭','♻️','🔄','🔁','▶️','⏸️','⏹️','⏺️',
+        '⬆️','⬇️','⬅️','➡️','↗️','↘️','↙️','↖️','↩️','↪️','🔵','🟢','🟡','🟠','🔴','🟣','⚫','⚪','🟤'
       ],
       'Nature': const [
         '🔥','☀️','🌤️','⛅','🌥️','☁️','🌧️','⛈️','🌩️','🌨️','❄️','☃️','🌈','☔','💧','🌊','💐','🌹','🌷','🌸',
@@ -1600,6 +1644,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   selected: selected,
                   showCheckmark: false,
                   visualDensity: VisualDensity.compact,
+                  avatar: Icon(
+                    switch (name) {
+                      'Recent' => Icons.history_rounded,
+                      'Smileys' => Icons.emoji_emotions_outlined,
+                      'People' => Icons.front_hand_outlined,
+                      'Hearts' => Icons.favorite_border_rounded,
+                      'Activities' => Icons.celebration_outlined,
+                      'Study' => Icons.school_outlined,
+                      'Symbols' => Icons.category_outlined,
+                      'Nature' => Icons.park_outlined,
+                      'Food' => Icons.restaurant_outlined,
+                      'Flags' => Icons.flag_outlined,
+                      _ => Icons.emoji_emotions_outlined,
+                    },
+                    size: 15,
+                  ),
                   label: Text(name),
                   onSelected: (_) => setState(() => emojiCategory = name),
                 );
@@ -1881,6 +1941,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   );
 
   bool get _chatBlocked => selfBlocked || widget.conversation.blockedByOther;
+  bool get _threadHasEncryptedMessages => messages.any((m) => m.encrypted);
 
   Future<void> _sendText() async {
     if (_chatBlocked) return;
@@ -1915,8 +1976,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               onTap: () async {
                 Navigator.pop(sheet);
                 final images = await ImagePicker().pickMultiImage(
-                  imageQuality: 88,
-                  maxWidth: 2200,
+                  imageQuality: 92,
+                  maxWidth: 2600,
+                  maxHeight: 2600,
                 );
                 if (images.isNotEmpty && mounted) {
                   await _reviewImages(images.map((e) => e.path).toList());
@@ -1958,8 +2020,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 Navigator.pop(sheet);
                 final image = await ImagePicker().pickImage(
                   source: ImageSource.camera,
-                  imageQuality: 88,
-                  maxWidth: 2200,
+                  imageQuality: 92,
+                  maxWidth: 2600,
+                  maxHeight: 2600,
                 );
                 if (image != null && mounted) {
                   await _reviewImages([image.path]);
@@ -2093,8 +2156,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       OutlinedButton.icon(
                         onPressed: () async {
                           final more = await ImagePicker().pickMultiImage(
-                            imageQuality: 88,
-                            maxWidth: 2200,
+                            imageQuality: 92,
+                            maxWidth: 2600,
+                            maxHeight: 2600,
                           );
                           if (more.isNotEmpty && dialog.mounted) {
                             setLocal(() {
@@ -2293,6 +2357,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     if (apply != true) return null;
     if (turns == 0 && !flip && crop == 'original') return sourcePath;
+
+    try {
+      final nativeOutput = await NativeBridge.editPhoto(
+        path: sourcePath,
+        turns: turns,
+        flip: flip,
+        crop: crop,
+      );
+      if (nativeOutput != null) {
+        final nativeFile = File(nativeOutput);
+        if (await nativeFile.exists() && await nativeFile.length() >= 256) {
+          if (mounted) showMessage(context, 'Photo changes applied.');
+          return nativeOutput;
+        }
+      }
+    } catch (_) {
+      // Some Android codecs are device-specific. Fall back to Dart decoding.
+    }
+
     try {
       final bytes = await File(sourcePath).readAsBytes();
       final edited = await compute(_processOutgoingPhoto, <String, dynamic>{
@@ -2308,10 +2391,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!await file.exists() || await file.length() < 256) {
         throw StateError('Edited photo output is empty.');
       }
+      if (mounted) showMessage(context, 'Photo changes applied.');
       return output;
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
-        showMessage(context, 'Photo edit failed. The original photo is still selected.');
+        showMessage(
+          context,
+          'This photo format could not be edited. Try another image or take a new photo.',
+        );
       }
       return null;
     }
@@ -3295,20 +3382,92 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _encryptionInfo() async {
-    await showDialog<void>(
+    final hasEncrypted = _threadHasEncryptedMessages;
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (d) => AlertDialog(
-        icon: const Icon(Icons.lock_rounded, color: AppColors.success),
-        title: const Text('Private and encrypted in transit'),
-        content: const Text(
-          'TaleemPK protects app traffic with HTTPS and secure account sessions. End-to-end encrypted web conversations remain protected on the website; native end-to-end key sync is not enabled yet.',
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(d),
-            child: const Text('Got it'),
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 4, 22, 22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: AppColors.success.withValues(alpha: .11),
+                    borderRadius: BorderRadius.circular(17),
+                  ),
+                  child: const Icon(
+                    Icons.lock_rounded,
+                    color: AppColors.success,
+                    size: 27,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                hasEncrypted ? 'End-to-end encrypted web chat' : 'Encryption & privacy',
+                style: Theme.of(sheet).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                hasEncrypted
+                    ? 'This conversation contains end-to-end encrypted website messages. Their keys stay on the devices that configured encryption, so this native app does not pretend it can decrypt them without native key sync.'
+                    : 'TaleemPK protects this app with HTTPS and secure, revocable account sessions. Optional end-to-end encryption is configured in the TaleemPK web chat with your encryption passphrase.',
+                style: TextStyle(
+                  height: 1.48,
+                  color: Theme.of(sheet).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(sheet).colorScheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.verified_user_outlined, size: 19, color: AppColors.blue),
+                    SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        'Messages sent from the native app use secure transport. They are not labelled end-to-end encrypted unless native encryption keys are available.',
+                        style: TextStyle(fontSize: 12, height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () async {
+                  Navigator.pop(sheet);
+                  final uri = Uri.parse(
+                    'https://taleempk.online/chat.php?c=${widget.conversation.id}',
+                  );
+                  final opened = await launchUrl(
+                    uri,
+                    mode: LaunchMode.externalApplication,
+                  );
+                  if (!opened && mounted) {
+                    showMessage(context, 'Could not open TaleemPK web chat.');
+                  }
+                },
+                icon: const Icon(Icons.open_in_new_rounded),
+                label: const Text('Open encryption settings on web'),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -4418,7 +4577,7 @@ class _VoiceBubbleState extends State<VoiceBubble> {
           ? Colors.white
           : (heard ? const Color(0xFF0E8B76) : const Color(0xFF118B78));
       final playIcon = widget.message.mine
-          ? (heard ? const Color(0xFF0C5D58) : const Color(0xFF17345B))
+          ? (heard ? const Color(0xFF0B665E) : const Color(0xFF17345B))
           : Colors.white;
       final active = widget.message.mine
           ? (heard ? const Color(0xFFC9FFF3) : const Color(0xFFD8EC72))

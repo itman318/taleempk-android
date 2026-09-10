@@ -137,9 +137,10 @@ class ModuleItem {
     required this.meta,
     required this.kind,
     required this.done,
+    this.route = '',
   });
   final int id;
-  final String title, subtitle, meta, kind;
+  final String title, subtitle, meta, kind, route;
   final bool done;
   factory ModuleItem.fromJson(Map<String, dynamic> j) => ModuleItem(
     id: _int(j['id']),
@@ -148,6 +149,7 @@ class ModuleItem {
     meta: '${j['meta'] ?? ''}',
     kind: '${j['kind'] ?? ''}',
     done: _bool(j['done']),
+    route: '${j['route'] ?? ''}',
   );
 }
 

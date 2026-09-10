@@ -146,31 +146,62 @@ class _ModuleScreenState extends State<ModuleScreen> {
     if (item.kind == 'task') {
       try {
         await AppScope.of(context).api.moduleAction('toggle_task', id: item.id);
-        await _load();
+        _load();
       } catch (e) {
-        if (mounted) showMessage(context, apiMessage(e));
+        showMessage(context, apiMessage(e));
+      }
+      return;
+    }
+    if (item.kind == 'setting') {
+      try {
+        if (item.id == 2) {
+          await AppScope.of(context).api.moduleAction('cycle_privacy');
+        } else if (item.id == 3) {
+          await AppScope.of(context).api.moduleAction('toggle_online');
+        } else {
+          showMessage(context, 'Two-step verification is managed from the TaleemPK website.');
+          return;
+        }
+        _load();
+      } catch (e) {
+        showMessage(context, apiMessage(e));
       }
       return;
     }
     if (item.kind == 'notification') {
-      await AppScope.of(context).api
-          .moduleAction('read_notification', id: item.id);
-      await _load();
+      try {
+        await AppScope.of(context).api.moduleAction('read_notification', id: item.id);
+        _load();
+      } catch (e) {
+        showMessage(context, apiMessage(e));
+      }
       return;
     }
-    final route = switch (item.kind) {
-      'resource' => 'resource.php?id=${item.id}',
-      'quiz' => 'quiz-take.php?id=${item.id}',
-      'group' => 'group.php?id=${item.id}',
-      'board' => 'results.php?board=${item.id}',
-      'ticket' => 'support.php?id=${item.id}',
-      _ => '',
-    };
-    if (route.isNotEmpty)
-      await launchUrl(
-        Uri.parse('https://taleempk.online/$route'),
-        mode: LaunchMode.externalApplication,
+
+    if (item.kind == 'quiz' && item.route.isEmpty) {
+      showMessage(
+        context,
+        'This quiz needs the latest TaleemPK mobile API. Update api/mobile.php, then refresh.',
       );
+      return;
+    }
+
+    final route = item.route.isNotEmpty
+        ? item.route
+        : switch (item.kind) {
+            'resource' => 'resource.php?id=${item.id}',
+            'group' => 'group.php?id=${item.id}',
+            'board' => 'results.php?board=${item.id}',
+            'ticket' => 'support.php?id=${item.id}',
+            _ => '',
+          };
+    if (route.isNotEmpty) {
+      final uri = Uri.parse('https://taleempk.online/$route');
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
+        showMessage(context, 'Could not open this item.');
+      }
+    }
   }
 
   Future<void> _newTicket() async {

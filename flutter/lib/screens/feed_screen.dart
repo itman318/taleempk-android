@@ -380,21 +380,52 @@ class _FeedScreenState extends State<FeedScreen> {
           builder: (context, snap) => Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 6, 20, 14),
+                padding: const EdgeInsets.fromLTRB(20, 6, 14, 14),
                 child: Row(
                   children: [
-                    Text(
-                      'Replies',
-                      style: Theme.of(context).textTheme.titleLarge,
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppColors.blue.withValues(alpha: .10),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.forum_outlined,
+                        color: AppColors.blue,
+                        size: 20,
+                      ),
                     ),
-                    const Spacer(),
-                    Text(
-                      '${post.comments}',
-                      style: const TextStyle(color: AppColors.muted),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Comments',
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                          ),
+                          Text(
+                            '${post.comments} ${post.comments == 1 ? 'reply' : 'replies'}',
+                            style: const TextStyle(
+                              color: AppColors.muted,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(sheet),
+                      icon: const Icon(Icons.close_rounded),
                     ),
                   ],
                 ),
               ),
+              const Divider(height: 1),
               Expanded(
                 child: snap.connectionState != ConnectionState.done
                     ? const Center(child: CircularProgressIndicator())
@@ -406,27 +437,100 @@ class _FeedScreenState extends State<FeedScreen> {
                     : snap.data!.isEmpty
                     ? const EmptyView(
                         icon: Icons.chat_bubble_outline_rounded,
-                        title: 'No replies yet',
+                        title: 'No comments yet',
                         message: 'Be the first to add a helpful response.',
                       )
                     : ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
                         itemCount: snap.data!.length,
-                        separatorBuilder: (_, __) => const Divider(),
+                        separatorBuilder: (_, _) => const SizedBox(height: 8),
                         itemBuilder: (_, i) {
                           final r = snap.data![i];
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: UserAvatar(name: r.author, radius: 19),
-                            title: Text(
-                              r.author,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
+                          return Container(
+                            padding: const EdgeInsets.fromLTRB(12, 11, 7, 11),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.surfaceContainerLow,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: Theme.of(context).dividerColor.withValues(alpha: .55),
                               ),
                             ),
-                            subtitle: Text(
-                              '${r.content}\n${r.createdAt}',
-                              style: const TextStyle(height: 1.4),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                UserAvatar(name: r.author, radius: 19),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              r.author,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ),
+                                          Text(
+                                            r.createdAt,
+                                            style: const TextStyle(
+                                              fontSize: 10.5,
+                                              color: AppColors.muted,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 5),
+                                      Text(
+                                        r.content,
+                                        style: TextStyle(
+                                          height: 1.42,
+                                          color: Theme.of(context).colorScheme.onSurface,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (r.mine)
+                                  PopupMenuButton<String>(
+                                    tooltip: 'Comment options',
+                                    onSelected: (value) {
+                                      if (value == 'edit') {
+                                        _editComment(post, r, sheet);
+                                      } else if (value == 'delete') {
+                                        _deleteComment(post, r, sheet);
+                                      }
+                                    },
+                                    itemBuilder: (_) => const [
+                                      PopupMenuItem(
+                                        value: 'edit',
+                                        child: ListTile(
+                                          contentPadding: EdgeInsets.zero,
+                                          leading: Icon(Icons.edit_outlined),
+                                          title: Text('Edit comment'),
+                                        ),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 'delete',
+                                        child: ListTile(
+                                          contentPadding: EdgeInsets.zero,
+                                          leading: Icon(
+                                            Icons.delete_outline_rounded,
+                                            color: AppColors.danger,
+                                          ),
+                                          title: Text(
+                                            'Delete comment',
+                                            style: TextStyle(color: AppColors.danger),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                              ],
                             ),
                           );
                         },
@@ -434,7 +538,13 @@ class _FeedScreenState extends State<FeedScreen> {
               ),
               SafeArea(
                 top: false,
-                child: Padding(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    border: Border(
+                      top: BorderSide(color: Theme.of(context).dividerColor),
+                    ),
+                  ),
                   padding: EdgeInsets.fromLTRB(
                     14,
                     10,
@@ -446,14 +556,19 @@ class _FeedScreenState extends State<FeedScreen> {
                       Expanded(
                         child: TextField(
                           controller: c,
+                          minLines: 1,
+                          maxLines: 5,
+                          textCapitalization: TextCapitalization.sentences,
                           decoration: const InputDecoration(
-                            hintText: 'Write a helpful reply…',
+                            hintText: 'Write a comment…',
                             isDense: true,
+                            prefixIcon: Icon(Icons.chat_bubble_outline_rounded),
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       IconButton.filled(
+                        tooltip: 'Post comment',
                         onPressed: () async {
                           if (c.text.trim().isEmpty) return;
                           try {
@@ -464,8 +579,9 @@ class _FeedScreenState extends State<FeedScreen> {
                             if (mounted) setState(() {});
                             _comments(post);
                           } catch (e) {
-                            if (sheet.mounted)
+                            if (sheet.mounted) {
                               showMessage(sheet, apiMessage(e));
+                            }
                           }
                         },
                         icon: const Icon(Icons.send_rounded),
@@ -480,5 +596,125 @@ class _FeedScreenState extends State<FeedScreen> {
       ),
     );
     c.dispose();
+  }
+
+  Future<void> _editComment(
+    FeedPost post,
+    FeedComment comment,
+    BuildContext sheetContext,
+  ) async {
+    if (sheetContext.mounted) Navigator.pop(sheetContext);
+    final controller = TextEditingController(text: comment.content);
+    final updated = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheet) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          6,
+          20,
+          MediaQuery.viewInsetsOf(sheet).bottom + 20,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Edit comment',
+              style: Theme.of(sheet).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              minLines: 4,
+              maxLines: 9,
+              maxLength: 5000,
+              decoration: const InputDecoration(
+                hintText: 'Update your comment',
+              ),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isNotEmpty) Navigator.pop(sheet, value);
+              },
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('Save changes'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (updated == null || updated == comment.content || !mounted) {
+      if (mounted) _comments(post);
+      return;
+    }
+    try {
+      await AppScope.of(context).api.editComment(comment.id, updated);
+      if (!mounted) return;
+      showMessage(context, 'Comment updated.');
+      _comments(post);
+    } catch (e) {
+      if (mounted) {
+        showMessage(context, apiMessage(e));
+        _comments(post);
+      }
+    }
+  }
+
+  Future<void> _deleteComment(
+    FeedPost post,
+    FeedComment comment,
+    BuildContext sheetContext,
+  ) async {
+    if (sheetContext.mounted) Navigator.pop(sheetContext);
+    final yes = await showDialog<bool>(
+          context: context,
+          builder: (dialog) => AlertDialog(
+            icon: const Icon(
+              Icons.delete_outline_rounded,
+              color: AppColors.danger,
+            ),
+            title: const Text('Delete comment?'),
+            content: const Text(
+              'This removes your comment from the post. This action cannot be undone.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialog, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+                onPressed: () => Navigator.pop(dialog, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!yes || !mounted) {
+      if (mounted) _comments(post);
+      return;
+    }
+    try {
+      await AppScope.of(context).api.deleteComment(comment.id);
+      if (post.comments > 0) post.comments--;
+      if (!mounted) return;
+      setState(() {});
+      showMessage(context, 'Comment deleted.');
+      _comments(post);
+    } catch (e) {
+      if (mounted) {
+        showMessage(context, apiMessage(e));
+        _comments(post);
+      }
+    }
   }
 }

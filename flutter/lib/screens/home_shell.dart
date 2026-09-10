@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_state.dart';
 import '../core/models.dart';
+import '../core/native_bridge.dart';
 import '../core/theme.dart';
 import '../widgets/common.dart';
 import 'call_screen.dart';
@@ -21,8 +23,11 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int index = 0;
   final keys = List.generate(4, (_) => GlobalKey<NavigatorState>());
-  Timer? callWatch;
+  Timer? callWatch, notificationWatch;
   int activeIncomingId = 0;
+  int unreadChats = 0, unreadActivity = 0;
+  int lastNotifiedMessage = 0, lastNotifiedActivity = 0;
+  bool notificationBusy = false;
 
   @override
   void initState() {
@@ -31,13 +36,94 @@ class _HomeShellState extends State<HomeShell> {
       const Duration(seconds: 4),
       (_) => _watchIncomingCall(),
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _watchIncomingCall());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _watchIncomingCall();
+      _setupNotificationWatch();
+    });
   }
 
   @override
   void dispose() {
     callWatch?.cancel();
+    notificationWatch?.cancel();
     super.dispose();
+  }
+
+  Future<void> _setupNotificationWatch() async {
+    await NativeBridge.requestNotificationPermission();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      lastNotifiedMessage = prefs.getInt('notification_last_message') ?? 0;
+      lastNotifiedActivity = prefs.getInt('notification_last_activity') ?? 0;
+    } catch (_) {}
+    await _watchNotifications(seedOnly: true);
+    notificationWatch?.cancel();
+    notificationWatch = Timer.periodic(
+      const Duration(seconds: 6),
+      (_) => _watchNotifications(),
+    );
+  }
+
+  Future<void> _watchNotifications({bool seedOnly = false}) async {
+    if (!mounted || notificationBusy) return;
+    notificationBusy = true;
+    try {
+      final data = await AppScope.of(context).api.notificationPeek();
+      final chatUnread = _int(data['chat_unread']);
+      final activityUnread = _int(data['notification_unread']);
+      if (mounted && (chatUnread != unreadChats || activityUnread != unreadActivity)) {
+        setState(() {
+          unreadChats = chatUnread;
+          unreadActivity = activityUnread;
+        });
+      }
+
+      final rawChat = data['latest_chat'];
+      if (rawChat is Map) {
+        final chat = rawChat.cast<String, dynamic>();
+        final id = _int(chat['id']);
+        if (!seedOnly && id > lastNotifiedMessage && index != 2) {
+          await NativeBridge.showNotification(
+            id: 200000 + id,
+            title: '${chat['from'] ?? 'New message'}',
+            body: '${chat['text'] ?? 'Sent you a message'}',
+            payload: 'chat:${chat['conversation'] ?? 0}',
+          );
+        }
+        if (id > lastNotifiedMessage) {
+          lastNotifiedMessage = id;
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt('notification_last_message', id);
+          } catch (_) {}
+        }
+      }
+
+      final rawActivity = data['latest_notification'];
+      if (rawActivity is Map) {
+        final activity = rawActivity.cast<String, dynamic>();
+        final id = _int(activity['id']);
+        if (!seedOnly && id > lastNotifiedActivity) {
+          await NativeBridge.showNotification(
+            id: 400000 + id,
+            title: 'TaleemPK',
+            body: '${activity['message'] ?? 'You have a new notification'}',
+            payload: 'notification:$id',
+          );
+        }
+        if (id > lastNotifiedActivity) {
+          lastNotifiedActivity = id;
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setInt('notification_last_activity', id);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {
+      // A notification poll must never disturb the active app.
+    } finally {
+      notificationBusy = false;
+    }
   }
 
   Future<void> _watchIncomingCall() async {
@@ -143,9 +229,17 @@ class _HomeShellState extends State<HomeShell> {
           selectedIndex: index,
           onDestinationSelected: (value) => setState(() => index = value),
           destinations: [
-            const NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home_rounded),
+            NavigationDestination(
+              icon: Badge(
+                isLabelVisible: unreadActivity > 0,
+                label: Text(unreadActivity > 99 ? '99+' : '$unreadActivity'),
+                child: const Icon(Icons.home_outlined),
+              ),
+              selectedIcon: Badge(
+                isLabelVisible: unreadActivity > 0,
+                label: Text(unreadActivity > 99 ? '99+' : '$unreadActivity'),
+                child: const Icon(Icons.home_rounded),
+              ),
               label: 'Home',
             ),
             const NavigationDestination(
@@ -154,8 +248,16 @@ class _HomeShellState extends State<HomeShell> {
               label: 'Feed',
             ),
             NavigationDestination(
-              icon: const Icon(Icons.chat_bubble_outline_rounded),
-              selectedIcon: const Icon(Icons.chat_bubble_rounded),
+              icon: Badge(
+                isLabelVisible: unreadChats > 0,
+                label: Text(unreadChats > 99 ? '99+' : '$unreadChats'),
+                child: const Icon(Icons.chat_bubble_outline_rounded),
+              ),
+              selectedIcon: Badge(
+                isLabelVisible: unreadChats > 0,
+                label: Text(unreadChats > 99 ? '99+' : '$unreadChats'),
+                child: const Icon(Icons.chat_bubble_rounded),
+              ),
               label: 'Chat',
             ),
             NavigationDestination(
