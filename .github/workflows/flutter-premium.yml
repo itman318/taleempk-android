@@ -6,7 +6,6 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_chat_realtime_v24.py'
       - 'tools/patch_chat_runtime_v25.py'
       - '.github/workflows/flutter-premium.yml'
   push:
@@ -14,7 +13,6 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_chat_realtime_v24.py'
       - 'tools/patch_chat_runtime_v25.py'
       - '.github/workflows/flutter-premium.yml'
 
@@ -30,12 +28,10 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Apply chat runtime patches
+      - name: Apply v2.5 chat runtime audit patch
         working-directory: .
-        run: |
-          python tools/patch_chat_realtime_v24.py
-          python tools/patch_chat_runtime_v25.py
-      - name: Commit chat runtime fixes
+        run: python tools/patch_chat_runtime_v25.py
+      - name: Commit v2.5 chat runtime fixes
         if: github.event_name == 'push' && github.ref == 'refs/heads/flutter-premium-v2'
         working-directory: .
         run: |
