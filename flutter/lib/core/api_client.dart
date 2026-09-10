@@ -188,8 +188,11 @@ class ApiClient {
     return '${data['message'] ?? 'Support request created.'}';
   }
 
-  Future<List<Conversation>> conversations() async {
-    final data = await _request({'action': 'conversations'});
+  Future<List<Conversation>> conversations({bool archived = false}) async {
+    final data = await _request({
+      'action': 'conversations',
+      if (archived) 'archived': '1',
+    });
     return _list(data['conversations'])
         .map((e) => Conversation.fromJson(_map(e)))
         .toList();
@@ -198,11 +201,13 @@ class ApiClient {
   Future<List<ChatMessage>> messages(
     int conversationId, {
     int afterId = 0,
+    int beforeId = 0,
   }) async {
     final data = await _request({
       'action': 'messages',
       'conversation_id': '$conversationId',
       'after_id': '$afterId',
+      'before_id': '$beforeId',
     });
     return _list(data['messages'])
         .map((e) => ChatMessage.fromJson(_map(e)))
@@ -287,6 +292,102 @@ class ApiClient {
       throw const ApiException('Could not download the secure attachment.');
     }
   }
+
+  Future<bool> toggleConversationArchive(int conversationId) async {
+    final data = await _request({
+      'action': 'manage_chat',
+      'id': '$conversationId',
+      'do': 'toggle_archive',
+    });
+    return data['archived'] == true;
+  }
+
+  Future<List<Map<String, dynamic>>> pinnedMessages(int conversationId) async {
+    final data = await _request({
+      'action': 'pinned_messages',
+      'conversation_id': '$conversationId',
+    });
+    return _list(data['pinned']).map(_map).toList();
+  }
+
+  Future<void> markVoicePlayed(int messageId) => _request({
+    'action': 'mark_voice_played',
+    'message_id': '$messageId',
+  });
+
+  Future<List<Map<String, dynamic>>> starredMessages() async {
+    final data = await _request({'action': 'star', 'do': 'list'});
+    return _list(data['results']).map(_map).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> searchMessages(String query) async {
+    final data = await _request({
+      'action': 'search_chat',
+      'q': query.trim(),
+    });
+    return _list(data['results']).map(_map).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> searchPeople(String query) async {
+    final data = await _request({
+      'action': 'people_search',
+      'q': query.trim(),
+    });
+    return _list(data['people']).map(_map).toList();
+  }
+
+  Future<Map<String, dynamic>> groupMembers(int conversationId) => _request({
+    'action': 'group_members',
+    'conversation_id': '$conversationId',
+  });
+
+  Future<Map<String, dynamic>> groupAction(
+    String action, {
+    int conversationId = 0,
+    String title = '',
+    List<int> members = const [],
+    int userId = 0,
+  }) => _request({
+    'action': 'chat_group',
+    'do': action,
+    if (conversationId > 0) 'id': '$conversationId',
+    if (title.isNotEmpty) 'title': title,
+    if (members.isNotEmpty) 'members[]': members.join(','),
+    if (userId > 0) 'user': '$userId',
+  });
+
+  Future<Map<String, dynamic>> createPoll(
+    int conversationId,
+    String question,
+    List<String> options, {
+    bool multi = false,
+  }) {
+    final fields = <String, String>{
+      'action': 'chat_vote',
+      'do': 'create',
+      'conversation_id': '$conversationId',
+      'question': question,
+      'multi': multi ? '1' : '0',
+    };
+    for (var i = 0; i < options.length; i++) {
+      fields['options[$i]'] = options[i];
+    }
+    return _request(fields);
+  }
+
+  Future<Map<String, dynamic>> votePoll(int pollId, int optionId) => _request({
+    'action': 'chat_vote',
+    'do': 'vote',
+    'poll_id': '$pollId',
+    'option_id': '$optionId',
+  });
+
+  Future<Map<String, dynamic>> setPollClosed(int pollId, bool closed) =>
+      _request({
+        'action': 'chat_vote',
+        'do': closed ? 'close' : 'reopen',
+        'poll_id': '$pollId',
+      });
 
   Future<bool> toggleConversationMute(int conversationId) async {
     final data = await _request({
@@ -439,6 +540,7 @@ class ApiClient {
       throw const ApiException('Sign in to continue.', status: 401);
     }
     final requestFields = <String, String>{...fields};
+    final packedMembers = requestFields.remove('members[]');
     if (authenticated && _token != null) {
       requestFields['access_token'] = _token!;
     }
@@ -450,12 +552,15 @@ class ApiClient {
                   headers: authHeaders,
                 )
                 .timeout(const Duration(seconds: 18))
-          : await _http
+          : packedMembers == null
+          ? await _http
                 .post(
                   Uri.parse(endpoint),
                   headers: authHeaders,
                   body: requestFields,
                 )
+                .timeout(const Duration(seconds: 24))
+          : await _postWithRepeatedMembers(requestFields, packedMembers)
                 .timeout(const Duration(seconds: 24));
       return await _decode(
         response.statusCode,
@@ -473,6 +578,24 @@ class ApiClient {
     } on http.ClientException {
       throw const ApiException('Could not connect securely to TaleemPK.');
     }
+  }
+
+  Future<http.Response> _postWithRepeatedMembers(
+    Map<String, String> fields,
+    String packed,
+  ) async {
+    final request = http.Request('POST', Uri.parse(endpoint));
+    request.headers.addAll(authHeaders);
+    final parts = <String>[
+      for (final e in fields.entries)
+        '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}',
+      for (final id in packed.split(',').where((e) => e.isNotEmpty))
+        'members%5B%5D=${Uri.encodeQueryComponent(id)}',
+    ];
+    request.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    request.body = parts.join('&');
+    final streamed = await _http.send(request);
+    return http.Response.fromStream(streamed);
   }
 
   Future<Map<String, dynamic>> _multipart(
