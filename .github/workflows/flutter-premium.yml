@@ -6,18 +6,16 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_*'
       - '.github/workflows/flutter-premium.yml'
   push:
     branches: [main, flutter-premium-v2]
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_*'
       - '.github/workflows/flutter-premium.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -28,22 +26,6 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Apply deep chat runtime patches
-        working-directory: .
-        run: |
-          python tools/patch_chat_runtime_v24.py
-          python tools/patch_voice_receipts_v24.py
-      - name: Commit deep chat runtime patches
-        if: github.event_name == 'push' && github.ref == 'refs/heads/flutter-premium-v2'
-        working-directory: .
-        run: |
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "Fix chat typing voice presence and player parity"
-            git push
-          fi
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
