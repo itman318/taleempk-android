@@ -186,9 +186,11 @@ class Conversation {
     this.blockedByOther = false,
     this.callsEnabled = false,
     this.videoCallsEnabled = false,
+    this.archived = false,
+    this.groupRole = '',
   });
   final int id, unread, otherId;
-  final String title, lastMessage, lastActivity, statusText, otherUsername;
+  final String title, lastMessage, lastActivity, statusText, otherUsername, groupRole;
   final String? avatar;
   final bool isGroup,
       online,
@@ -196,7 +198,8 @@ class Conversation {
       selfBlocked,
       blockedByOther,
       callsEnabled,
-      videoCallsEnabled;
+      videoCallsEnabled,
+      archived;
 
   bool get blocked => selfBlocked || blockedByOther;
 
@@ -217,6 +220,8 @@ class Conversation {
     blockedByOther: _bool(j['blocked_by_other']),
     callsEnabled: _bool(j['calls_enabled']),
     videoCallsEnabled: _bool(j['video_calls_enabled']),
+    archived: _bool(j['archived']),
+    groupRole: '${j['group_role'] ?? ''}',
   );
 }
 
@@ -251,6 +256,51 @@ class ReplyPreview {
   );
 }
 
+class ChatPollOption {
+  const ChatPollOption({
+    required this.id,
+    required this.label,
+    required this.votes,
+    required this.mine,
+  });
+  final int id, votes;
+  final String label;
+  final bool mine;
+  factory ChatPollOption.fromJson(Map<String, dynamic> j) => ChatPollOption(
+    id: _int(j['id']),
+    label: '${j['label'] ?? ''}',
+    votes: _int(j['votes']),
+    mine: _bool(j['mine']),
+  );
+}
+
+class ChatPoll {
+  const ChatPoll({
+    required this.id,
+    required this.question,
+    required this.multi,
+    required this.closed,
+    required this.mine,
+    required this.voters,
+    required this.options,
+  });
+  final int id, voters;
+  final String question;
+  final bool multi, closed, mine;
+  final List<ChatPollOption> options;
+  factory ChatPoll.fromJson(Map<String, dynamic> j) => ChatPoll(
+    id: _int(j['id']),
+    question: '${j['question'] ?? ''}',
+    multi: _bool(j['multi']),
+    closed: _bool(j['closed']),
+    mine: _bool(j['mine']),
+    voters: _int(j['voters']),
+    options: _list(j['options'])
+        .map((e) => ChatPollOption.fromJson(_map(e)))
+        .toList(),
+  );
+}
+
 class ChatMessage {
   ChatMessage({
     required this.id,
@@ -273,14 +323,20 @@ class ChatMessage {
     required this.canEdit,
     this.reply,
     required this.reactions,
+    this.voiceWave = '',
+    this.playedByMe = false,
+    this.playedByOther = false,
+    this.poll,
   });
   final int id, senderId, voiceSeconds;
-  final String sender, content, time, dateLabel;
+  final String sender, content, time, dateLabel, voiceWave;
   final String? attachmentUrl, attachmentName, attachmentType;
   final bool mine, deleted, edited, forwarded, starred, pinned, canEdit;
+  final bool playedByMe, playedByOther;
   bool read;
   final ReplyPreview? reply;
   final List<ChatReaction> reactions;
+  final ChatPoll? poll;
   factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(
     id: _int(j['id']),
     senderId: _int(j['sender_id']),
@@ -304,6 +360,10 @@ class ChatMessage {
     reactions: _list(j['reactions'])
         .map((e) => ChatReaction.fromJson(_map(e)))
         .toList(),
+    voiceWave: '${j['voice_wave'] ?? ''}',
+    playedByMe: _bool(j['played_by_me']),
+    playedByOther: _bool(j['played_by_other']),
+    poll: j['poll'] is Map ? ChatPoll.fromJson(_map(j['poll'])) : null,
   );
 }
 
