@@ -29,7 +29,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final messages = <ChatMessage>[];
   final textController = TextEditingController(), scroll = ScrollController();
   final recorder = AudioRecorder();
-  Timer? poll, recordTimer, presenceDebounce;
+  Timer? poll, recordTimer, waveTimer, presenceDebounce;
   ChatPresence? presence;
   ReplyPreview? reply;
   bool loading = true,
@@ -49,6 +49,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? error, recordPath;
   String searchQuery = '';
   final selectedIds = <int>{};
+  final voiceLevels = <double>[];
   List<Map<String, dynamic>> pinnedMessages = const [];
 
   @override
@@ -67,6 +68,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     poll?.cancel();
     recordTimer?.cancel();
+    waveTimer?.cancel();
     presenceDebounce?.cancel();
     recorder.dispose();
     textController.dispose();
@@ -1323,10 +1325,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       path: recordPath!,
     );
     recordSeconds = 0;
+    voiceLevels.clear();
     recording = true;
     recordingPaused = false;
     setState(() {});
     AppScope.of(context).api.presence(widget.conversation.id, 'voice');
+    waveTimer?.cancel();
+    waveTimer = Timer.periodic(const Duration(milliseconds: 120), (_) async {
+      if (!mounted || recordingPaused || !recording) return;
+      try {
+        final amp = await recorder.getAmplitude();
+        final db = amp.current;
+        final normalized = ((db + 60) / 60).clamp(0.05, 1.0).toDouble();
+        if (voiceLevels.length < 1600) voiceLevels.add(normalized);
+      } catch (_) {}
+    });
     recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       if (recordingPaused) return;
@@ -1357,6 +1370,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _finishRecording() async {
     recordTimer?.cancel();
+    waveTimer?.cancel();
     final path = await recorder.stop();
     setState(() {
       recording = false;
@@ -1374,6 +1388,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         path,
         field: 'voice',
         voiceSeconds: recordSeconds,
+        voiceWave: _encodedVoiceWave(),
         replyTo: reply?.id,
         onProgress: (value) {
           if (mounted) setState(() => uploadProgress = value);
@@ -1398,12 +1413,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _cancelRecording() async {
     recordTimer?.cancel();
+    waveTimer?.cancel();
     await recorder.cancel();
     if (mounted)
       setState(() {
         recording = false;
         recordingPaused = false;
         recordSeconds = 0;
+        voiceLevels.clear();
       });
     AppScope.of(context).api.presence(widget.conversation.id, '');
   }
@@ -2535,6 +2552,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       : Icons.description_rounded;
   bool _isImage(String? type) =>
       ['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(type?.toLowerCase());
+  String _encodedVoiceWave() {
+    if (voiceLevels.isEmpty) return '';
+    const bars = 48;
+    final out = StringBuffer();
+    for (var i = 0; i < bars; i++) {
+      final start = (i * voiceLevels.length / bars).floor();
+      final end = (((i + 1) * voiceLevels.length / bars).ceil())
+          .clamp(start + 1, voiceLevels.length);
+      var peak = 0.0;
+      for (var j = start; j < end; j++) {
+        if (voiceLevels[j] > peak) peak = voiceLevels[j];
+      }
+      out.write((peak * 15).round().clamp(1, 15).toRadixString(16));
+    }
+    return out.toString();
+  }
+
   String _duration(int seconds) =>
       '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
 }
