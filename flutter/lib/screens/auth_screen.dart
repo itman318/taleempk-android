@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/api_client.dart';
 import '../core/app_state.dart';
@@ -337,63 +338,153 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _showTwoFactor(String challenge) async {
     final code = TextEditingController();
+    var verifying = false;
+    String? inlineError;
+
+    Future<void> submit(StateSetter setLocal, BuildContext sheetContext) async {
+      final value = code.text.trim();
+      if (value.length != 6) {
+        setLocal(() => inlineError = 'Enter the complete 6-digit security code.');
+        return;
+      }
+      FocusManager.instance.primaryFocus?.unfocus();
+      setLocal(() {
+        verifying = true;
+        inlineError = null;
+      });
+      try {
+        await AppScope.of(context).finishTwoFactor(challenge, value);
+        if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+      } on ApiException catch (e) {
+        if (sheetContext.mounted) {
+          setLocal(() {
+            verifying = false;
+            inlineError = e.message;
+          });
+        }
+      } catch (_) {
+        if (sheetContext.mounted) {
+          setLocal(() {
+            verifying = false;
+            inlineError = 'Verification could not be completed. Check your connection and try again.';
+          });
+        }
+      }
+    }
+
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetContext) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          24,
-          28,
-          24,
-          MediaQuery.viewInsetsOf(sheetContext).bottom + 28,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Icon(
-              Icons.verified_user_rounded,
-              size: 48,
-              color: AppColors.blue,
-            ),
-            const SizedBox(height: 14),
-            Text(
-              'Verify it’s you',
-              style: Theme.of(context).textTheme.headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Enter the security code sent to your email.',
-              style: TextStyle(color: AppColors.muted),
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: code,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: '6-digit code',
-                prefixIcon: Icon(Icons.password_rounded),
+      isDismissible: true,
+      enableDrag: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setLocal) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            24,
+            10,
+            24,
+            MediaQuery.viewInsetsOf(sheetContext).bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.center,
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: AppColors.blue.withValues(alpha: .10),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.verified_user_rounded, size: 34, color: AppColors.blue),
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            FilledButton(
-              onPressed: () async {
-                try {
-                  await AppScope.of(context)
-                      .finishTwoFactor(challenge, code.text);
-                  if (sheetContext.mounted) Navigator.pop(sheetContext);
-                } on ApiException catch (e) {
-                  if (sheetContext.mounted)
-                    ScaffoldMessenger.of(sheetContext)
-                        .showSnackBar(SnackBar(content: Text(e.message)));
-                }
-              },
-              child: const Text('Verify and continue'),
-            ),
-          ],
+              const SizedBox(height: 16),
+              Text(
+                'Verify it’s you',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 7),
+              const Text(
+                'Enter the 6-digit security code sent to your email. The code expires in 10 minutes.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.muted, height: 1.4),
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: code,
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.done,
+                inputFormatters: const [FilteringTextInputFormatter.digitsOnly],
+                autofillHints: const [AutofillHints.oneTimeCode],
+                enableSuggestions: false,
+                autocorrect: false,
+                maxLength: 6,
+                autofocus: true,
+                onChanged: (_) => setLocal(() => inlineError = null),
+                onSubmitted: (_) {
+                  if (!verifying && code.text.trim().length == 6) {
+                    submit(setLocal, sheetContext);
+                  }
+                },
+                decoration: InputDecoration(
+                  labelText: '6-digit code',
+                  hintText: '000000',
+                  prefixIcon: const Icon(Icons.password_rounded),
+                  errorText: inlineError,
+                  suffixIcon: IconButton(
+                    tooltip: 'Paste code',
+                    onPressed: verifying
+                        ? null
+                        : () async {
+                            final data = await Clipboard.getData('text/plain');
+                            final digits = (data?.text ?? '').replaceAll(RegExp(r'\D'), '');
+                            if (digits.length >= 6) {
+                              code.text = digits.substring(0, 6);
+                              code.selection = TextSelection.collapsed(offset: code.text.length);
+                              if (sheetContext.mounted) setLocal(() => inlineError = null);
+                            }
+                          },
+                    icon: const Icon(Icons.content_paste_rounded),
+                  ),
+                ),
+              ),
+              if (verifying) ...[
+                const SizedBox(height: 4),
+                const LinearProgressIndicator(minHeight: 2),
+                const SizedBox(height: 8),
+                const Text(
+                  'Verifying securely…',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11.5, color: AppColors.muted),
+                ),
+              ],
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: verifying || code.text.trim().length != 6
+                    ? null
+                    : () => submit(setLocal, sheetContext),
+                icon: verifying
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.shield_rounded),
+                label: Text(verifying ? 'Verifying…' : 'Verify and continue'),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'For your security, only the newest email code should be used.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 10.5, color: AppColors.muted),
+              ),
+            ],
+          ),
         ),
       ),
     );

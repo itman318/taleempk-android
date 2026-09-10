@@ -24,24 +24,47 @@ import 'call_screen.dart';
 Uint8List _processOutgoingPhoto(Map<String, dynamic> args) {
   final bytes = args['bytes'] as Uint8List;
   final turns = (args['turns'] as int?) ?? 0;
-  final square = args['square'] == true;
+  final crop = '${args['crop'] ?? 'original'}';
+  final flip = args['flip'] == true;
   var image = img.decodeImage(bytes);
-  if (image == null) return bytes;
+  if (image == null) {
+    throw StateError('This image format cannot be edited on this device.');
+  }
+
   final normalizedTurns = ((turns % 4) + 4) % 4;
   if (normalizedTurns != 0) {
     image = img.copyRotate(image, angle: 90 * normalizedTurns);
   }
-  if (square) {
-    final side = image.width < image.height ? image.width : image.height;
-    image = img.copyCrop(
-      image,
-      x: (image.width - side) ~/ 2,
-      y: (image.height - side) ~/ 2,
-      width: side,
-      height: side,
-    );
+  if (flip) image = img.flipHorizontal(image);
+
+  double? targetRatio;
+  if (crop == 'square') targetRatio = 1;
+  if (crop == 'portrait') targetRatio = 4 / 5;
+  if (crop == 'landscape') targetRatio = 16 / 9;
+  if (targetRatio != null) {
+    final current = image.width / image.height;
+    if (current > targetRatio) {
+      final width = (image.height * targetRatio).round().clamp(1, image.width).toInt();
+      image = img.copyCrop(
+        image,
+        x: (image.width - width) ~/ 2,
+        y: 0,
+        width: width,
+        height: image.height,
+      );
+    } else if (current < targetRatio) {
+      final height = (image.width / targetRatio).round().clamp(1, image.height).toInt();
+      image = img.copyCrop(
+        image,
+        x: 0,
+        y: (image.height - height) ~/ 2,
+        width: image.width,
+        height: height,
+      );
+    }
   }
-  return Uint8List.fromList(img.encodeJpg(image, quality: 92));
+
+  return Uint8List.fromList(img.encodeJpg(image, quality: 93));
 }
 
 class ChatScreen extends StatefulWidget {
@@ -75,7 +98,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   int recordSeconds = 0, pollTicks = 0;
   double? uploadProgress;
   String? error, recordPath, voicePreviewPath;
-  String searchQuery = '';
+  String searchQuery = '', emojiCategory = 'Recent';
   final selectedIds = <int>{};
   final voiceLevels = <double>[];
   List<String> recentEmojis = <String>[];
@@ -374,8 +397,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFF07111D)
-        : const Color(0xFFEEF3F8),
+        ? const Color(0xFF07101B)
+        : const Color(0xFFF3F6FA),
     appBar: AppBar(
       toolbarHeight: 68,
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -632,14 +655,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           color: m.voiceSeconds > 0
               ? (m.mine
                     ? (m.playedByOther
-                          ? const Color(0xFF0D675A)
-                          : const Color(0xFF193A64))
+                          ? const Color(0xFF0C5D58)
+                          : const Color(0xFF183B63))
                     : (m.playedByMe
                           ? (Theme.of(context).brightness == Brightness.dark
                                 ? const Color(0xFF103C35)
-                                : const Color(0xFFD8F3EB))
+                                : const Color(0xFFDCF6EF))
                           : (Theme.of(context).brightness == Brightness.dark
-                                ? const Color(0xFF132236)
+                                ? const Color(0xFF142236)
                                 : const Color(0xFFFFFFFF))))
               : (m.mine
                     ? null
@@ -1458,110 +1481,159 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Widget _emojiPanel() {
-    const emoji = <String>[
-      '😀','😃','😄','😁','😆','😅','😂','🤣','🥲','☺️','😊','😇','🙂','🙃','😉','😌',
-      '😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🥸','🤩','🥳',
-      '😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬',
-      '🤯','😳','🥵','🥶','😱','😨','😰','😥','😓','🤗','🤔','🫡','🤭','🫢','🫣','🤫','🤥','😶','🫥',
-      '😐','🫤','😑','😬','🙄','😯','😦','😧','😮','😲','🥱','😴','🤤','😪','😵','😵‍💫','🤐','🥴',
-      '🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😈','👿','👹','👺','🤡','💩','👻','💀','☠️','👽','👾','🤖',
-      '👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️',
-      '🖖','👋','🤝','👏','🙌','🫶','👐','🤲','🙏','✍️','💅','🤳','💪','🦾','🦵','🦶','👂','👃','🧠','🫀',
-      '🫁','🦷','🦴','👀','👁️','👅','👄','🫦','👶','🧒','👦','👧','🧑','👱','👨','🧔','👩','🧓','👴','👵',
-      '❤️','🩷','🧡','💛','💚','💙','🩵','💜','🤎','🖤','🩶','🤍','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓',
-      '💗','💖','💘','💝','💟','💋','💌','💢','💥','💫','💦','💨','🕳️','💬','👁️‍🗨️','🗨️','🗯️','💭','💤',
-      '🔥','✨','⭐','🌟','⚡','☀️','🌤️','⛅','🌥️','☁️','🌧️','⛈️','🌩️','🌨️','❄️','☃️','🌈','☔','💧','🌊',
-      '🎉','🎊','🎈','🎁','🎀','🏆','🥇','🥈','🥉','⚽','🏏','🏀','🏐','🎾','🏸','🎯','🎮','🎲','♟️','🎵','🎶',
-      '📚','📖','📕','📗','📘','📙','📓','📔','📒','📝','✏️','🖊️','🖋️','📌','📍','📎','📐','📏','🎓','💡','🔬',
-      '💻','⌨️','🖥️','📱','☎️','📷','🎥','🎙️','🔋','🔌','💾','💿','📀','⌚','⏰','🔔','🔕','✅','❌','⚠️',
-      '❓','❗','‼️','⁉️','💯','🔒','🔓','🔐','🔑','🛡️','🚀','✈️','🚗','🏠','🏢','🏫','🏥','🕌','🌍','🌎','🌏',
-      '🍎','🍏','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍒','🥭','🍍','🥝','🍅','🥑','🥕','🌽','🍞','🥐','🍕','🍔',
-      '🍟','🍗','🍚','🍜','🍰','🎂','🍫','🍪','☕','🫖','🥤','🧃','💐','🌹','🌷','🌸','🌺','🌻','🌼','🍀','🌿',
-      '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🦅','🦆','🦋',
-      '🇵🇰','🇦🇪','🇦🇺','🇬🇧','🇺🇸','🇨🇦','🇸🇦','🇹🇷','🇶🇦','🇯🇵','🇰🇷','🇨🇳','🇩🇪','🇫🇷','🇮🇹','🇪🇸'
-    ];
+    final groups = <String, List<String>>{
+      'Recent': recentEmojis,
+      'Smileys': const [
+        '😀','😃','😄','😁','😆','😅','😂','🤣','🥲','☺️','😊','😇','🙂','🙃','😉','😌',
+        '😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🥸','🤩','🥳',
+        '😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬',
+        '🤯','😳','🥵','🥶','😱','😨','😰','😥','😓','🤗','🤔','🫡','🤭','🫢','🫣','🤫','🤥','😶','🫥',
+        '😐','🫤','😑','😬','🙄','😯','😦','😧','😮','😲','🥱','😴','🤤','😪','😵','😵‍💫','🤐','🥴',
+        '🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😈','👿','👹','👺','🤡','💩','👻','💀','☠️','👽','👾','🤖'
+      ],
+      'People': const [
+        '👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️',
+        '🖖','👋','🤝','👏','🙌','🫶','👐','🤲','🙏','✍️','💅','🤳','💪','🦾','🦵','🦶','👂','👃','🧠','🫀',
+        '🫁','🦷','🦴','👀','👁️','👅','👄','🫦','👶','🧒','👦','👧','🧑','👱','👨','🧔','👩','🧓','👴','👵'
+      ],
+      'Hearts': const [
+        '❤️','🩷','🧡','💛','💚','💙','🩵','💜','🤎','🖤','🩶','🤍','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓',
+        '💗','💖','💘','💝','💟','💋','💌','💢','💥','💫','💦','💨','💬','🗨️','🗯️','💭','💤','✨','⭐','🌟','⚡'
+      ],
+      'Activities': const [
+        '🎉','🎊','🎈','🎁','🎀','🏆','🥇','🥈','🥉','⚽','🏏','🏀','🏐','🎾','🏸','🎯','🎮','🎲','♟️','🎵','🎶',
+        '🚀','✈️','🚗','🏠','🏢','🏫','🏥','🕌','🌍','🌎','🌏','📷','🎥','🎙️','📱','💻','⌚','⏰','🔔','✅','❌'
+      ],
+      'Study': const [
+        '📚','📖','📕','📗','📘','📙','📓','📔','📒','📝','✏️','🖊️','🖋️','📌','📍','📎','📐','📏','🎓','💡','🔬',
+        '🧪','🧬','🔭','🧮','📊','📈','📉','🗂️','📂','🗒️','✅','❓','❗','💯','🔒','🔓','🔐','🔑','🛡️'
+      ],
+      'Nature': const [
+        '🔥','☀️','🌤️','⛅','🌥️','☁️','🌧️','⛈️','🌩️','🌨️','❄️','☃️','🌈','☔','💧','🌊','💐','🌹','🌷','🌸',
+        '🌺','🌻','🌼','🍀','🌿','🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🦋'
+      ],
+      'Food': const [
+        '🍎','🍏','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍒','🥭','🍍','🥝','🍅','🥑','🥕','🌽','🍞','🥐','🍕','🍔',
+        '🍟','🍗','🍚','🍜','🍰','🎂','🍫','🍪','☕','🫖','🥤','🧃','🍯','🥛','🍿','🍩','🍨','🍦','🥗','🥪'
+      ],
+      'Flags': const [
+        '🇵🇰','🇦🇪','🇦🇺','🇬🇧','🇺🇸','🇨🇦','🇸🇦','🇹🇷','🇶🇦','🇯🇵','🇰🇷','🇨🇳','🇩🇪','🇫🇷','🇮🇹','🇪🇸',
+        '🇮🇳','🇧🇩','🇱🇰','🇳🇿','🇲🇾','🇸🇬','🇮🇩','🇿🇦','🇳🇴','🇸🇪','🇨🇭','🇳🇱','🇧🇪','🇧🇷','🇦🇷','🇲🇽'
+      ],
+    };
+    final activeCategory = emojiCategory == 'Recent' && recentEmojis.isEmpty
+        ? 'Smileys'
+        : emojiCategory;
+    final items = groups[activeCategory] ?? groups['Smileys']!;
+    final dark = Theme.of(context).brightness == Brightness.dark;
 
-    Widget emojiButton(String e, {double size = 25}) => Material(
+    Widget emojiButton(String e) => Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         onTap: () => _insertEmoji(e),
-        child: Center(child: Text(e, style: TextStyle(fontSize: size))),
+        child: Center(child: Text(e, style: const TextStyle(fontSize: 27))),
       ),
     );
 
     return Container(
-      height: 292,
-      color: Theme.of(context).colorScheme.surface,
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      height: 318,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          top: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: .65)),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 8),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (recentEmojis.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 4, 5),
-              child: Row(
-                children: [
-                  const Icon(Icons.history_rounded, size: 16, color: AppColors.muted),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Recent',
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w800,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(
-              height: 45,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: recentEmojis.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 2),
-                itemBuilder: (_, i) => SizedBox(
-                  width: 42,
-                  child: emojiButton(recentEmojis[i], size: 24),
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.blue.withValues(alpha: .10),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(
+                  activeCategory == 'Recent' ? Icons.history_rounded : Icons.emoji_emotions_rounded,
+                  size: 19,
+                  color: AppColors.blue,
                 ),
               ),
-            ),
-            const Divider(height: 10),
-          ],
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 5),
-            child: Row(
-              children: [
-                const Icon(Icons.emoji_emotions_outlined, size: 16, color: AppColors.muted),
-                const SizedBox(width: 6),
-                Text(
-                  'Emojis',
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  activeCategory == 'Recent' ? 'Recently used' : activeCategory,
                   style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
-                const Spacer(),
-                Text(
-                  '${emoji.length}',
-                  style: const TextStyle(fontSize: 10.5, color: AppColors.muted),
+              ),
+              if (activeCategory == 'Recent' && recentEmojis.isNotEmpty)
+                TextButton(
+                  onPressed: () async {
+                    setState(() => recentEmojis = <String>[]);
+                    try {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.remove('chat_recent_emojis');
+                    } catch (_) {}
+                  },
+                  child: const Text('Clear'),
                 ),
-              ],
+            ],
+          ),
+          const SizedBox(height: 7),
+          SizedBox(
+            height: 38,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: groups.keys.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 6),
+              itemBuilder: (_, i) {
+                final name = groups.keys.elementAt(i);
+                final selected = name == activeCategory;
+                return ChoiceChip(
+                  selected: selected,
+                  showCheckmark: false,
+                  visualDensity: VisualDensity.compact,
+                  label: Text(name),
+                  onSelected: (_) => setState(() => emojiCategory = name),
+                );
+              },
             ),
           ),
+          const SizedBox(height: 7),
           Expanded(
-            child: GridView.builder(
-              padding: EdgeInsets.zero,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 8,
-                mainAxisSpacing: 2,
-                crossAxisSpacing: 2,
-              ),
-              itemCount: emoji.length,
-              itemBuilder: (_, i) => emojiButton(emoji[i]),
-            ),
+            child: items.isEmpty
+                ? Center(
+                    child: Text(
+                      'Use an emoji and it will appear here.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                : Container(
+                    decoration: BoxDecoration(
+                      color: dark ? const Color(0xFF101A2A) : const Color(0xFFF7F9FC),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    padding: const EdgeInsets.all(7),
+                    child: GridView.builder(
+                      padding: EdgeInsets.zero,
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 8,
+                        mainAxisSpacing: 2,
+                        crossAxisSpacing: 2,
+                      ),
+                      itemCount: items.length,
+                      itemBuilder: (_, i) => emojiButton(items[i]),
+                    ),
+                  ),
           ),
         ],
       ),
@@ -2060,65 +2132,89 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<String?> _editPhoto(String sourcePath) async {
     if (!mounted) return null;
     var turns = 0;
-    var square = false;
+    var flip = false;
+    var crop = 'original';
+
+    double ratioFor(String mode) {
+      if (mode == 'square') return 1;
+      if (mode == 'portrait') return 4 / 5;
+      if (mode == 'landscape') return 16 / 9;
+      return 4 / 5;
+    }
+
     final apply = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: const Color(0xFF0B1422),
+      backgroundColor: const Color(0xFF08111D),
       builder: (sheet) => StatefulBuilder(
         builder: (context, setLocal) => SizedBox(
-          height: MediaQuery.sizeOf(context).height * .82,
+          height: MediaQuery.sizeOf(context).height * .90,
           child: Column(
             children: [
-              const SizedBox(height: 8),
-              Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
                 child: Row(
                   children: [
+                    IconButton(
+                      onPressed: () => Navigator.pop(sheet, false),
+                      icon: const Icon(Icons.close_rounded, color: Colors.white),
+                    ),
                     const Expanded(
-                      child: Text(
-                        'Edit photo',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Edit photo',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          Text(
+                            'Crop, rotate or flip before sending',
+                            style: TextStyle(color: Colors.white60, fontSize: 11),
+                          ),
+                        ],
                       ),
                     ),
                     TextButton(
                       onPressed: () => setLocal(() {
                         turns = 0;
-                        square = false;
+                        flip = false;
+                        crop = 'original';
                       }),
                       child: const Text('Reset'),
                     ),
                   ],
                 ),
               ),
+              const Divider(height: 1, color: Color(0x334B5870)),
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.all(14),
                   child: Center(
-                    child: AspectRatio(
-                      aspectRatio: square ? 1 : 4 / 5,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: ColoredBox(
-                          color: Colors.black,
-                          child: RotatedBox(
-                            quarterTurns: turns,
-                            child: Image.file(
-                              File(sourcePath),
-                              fit: square ? BoxFit.cover : BoxFit.contain,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      constraints: const BoxConstraints(maxWidth: 520, maxHeight: 560),
+                      child: AspectRatio(
+                        aspectRatio: ratioFor(crop),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: ColoredBox(
+                            color: Colors.black,
+                            child: Transform.flip(
+                              flipX: flip,
+                              child: RotatedBox(
+                                quarterTurns: turns,
+                                child: Image.file(
+                                  File(sourcePath),
+                                  fit: crop == 'original' ? BoxFit.contain : BoxFit.cover,
+                                  filterQuality: FilterQuality.high,
+                                  gaplessPlayback: true,
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -2127,40 +2223,64 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    FilledButton.tonalIcon(
-                      onPressed: () => setLocal(() => turns = (turns + 3) % 4),
-                      icon: const Icon(Icons.rotate_left_rounded),
-                      label: const Text('Rotate'),
-                    ),
-                    FilledButton.tonalIcon(
-                      onPressed: () => setLocal(() => square = !square),
-                      icon: Icon(square ? Icons.crop_free_rounded : Icons.crop_square_rounded),
-                      label: Text(square ? 'Original' : 'Square crop'),
-                    ),
-                  ],
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF0D1828),
+                  border: Border(top: BorderSide(color: Color(0x334B5870))),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                child: Row(
+                child: Column(
                   children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(sheet, false),
-                        child: const Text('Cancel'),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final entry in const <String, String>{
+                            'original': 'Original',
+                            'square': 'Square',
+                            'portrait': '4:5',
+                            'landscape': '16:9',
+                          }.entries) ...[
+                            ChoiceChip(
+                              selected: crop == entry.key,
+                              showCheckmark: false,
+                              label: Text(entry.value),
+                              onSelected: (_) => setLocal(() => crop = entry.key),
+                            ),
+                            const SizedBox(width: 7),
+                          ],
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(sheet, true),
-                        child: const Text('Apply'),
-                      ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton.filledTonal(
+                          tooltip: 'Rotate left',
+                          onPressed: () => setLocal(() => turns = (turns + 3) % 4),
+                          icon: const Icon(Icons.rotate_left_rounded),
+                        ),
+                        const SizedBox(width: 10),
+                        IconButton.filledTonal(
+                          tooltip: 'Rotate right',
+                          onPressed: () => setLocal(() => turns = (turns + 1) % 4),
+                          icon: const Icon(Icons.rotate_right_rounded),
+                        ),
+                        const SizedBox(width: 10),
+                        IconButton.filledTonal(
+                          tooltip: 'Flip horizontal',
+                          onPressed: () => setLocal(() => flip = !flip),
+                          icon: Icon(flip ? Icons.flip_rounded : Icons.flip_outlined),
+                        ),
+                        const Spacer(),
+                        FilledButton.icon(
+                          onPressed: () => Navigator.pop(sheet, true),
+                          icon: const Icon(Icons.check_rounded),
+                          label: const Text('Apply'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -2170,21 +2290,29 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+
     if (apply != true) return null;
-    if (turns == 0 && !square) return sourcePath;
+    if (turns == 0 && !flip && crop == 'original') return sourcePath;
     try {
       final bytes = await File(sourcePath).readAsBytes();
       final edited = await compute(_processOutgoingPhoto, <String, dynamic>{
         'bytes': bytes,
         'turns': turns,
-        'square': square,
+        'flip': flip,
+        'crop': crop,
       });
       final dir = await getTemporaryDirectory();
       final output = '${dir.path}/taleempk_photo_${DateTime.now().microsecondsSinceEpoch}.jpg';
-      await File(output).writeAsBytes(edited, flush: true);
+      final file = File(output);
+      await file.writeAsBytes(edited, flush: true);
+      if (!await file.exists() || await file.length() < 256) {
+        throw StateError('Edited photo output is empty.');
+      }
       return output;
     } catch (e) {
-      if (mounted) showMessage(context, 'Photo could not be edited. The original is still selected.');
+      if (mounted) {
+        showMessage(context, 'Photo edit failed. The original photo is still selected.');
+      }
       return null;
     }
   }
@@ -3468,11 +3596,50 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       useSafeArea: true,
       showDragHandle: true,
       builder: (sheet) => FractionallySizedBox(
-        heightFactor: .86,
+        heightFactor: .76,
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+              padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: AppColors.blue.withValues(alpha: .10),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.chat_bubble_outline_rounded, color: AppColors.blue, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Message actions', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+                        Text(
+                          m.content.trim().isNotEmpty
+                              ? m.content.trim()
+                              : (m.voiceSeconds > 0 ? 'Voice message' : (m.attachmentName ?? 'Attachment')),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11, color: AppColors.muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.pop(sheet),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: ['👍', '❤️', '😂', '😮', '😢', '🔥']
@@ -4249,19 +4416,19 @@ class _VoiceBubbleState extends State<VoiceBubble> {
       final dark = Theme.of(context).brightness == Brightness.dark;
       final playColor = widget.message.mine
           ? Colors.white
-          : (heard ? const Color(0xFF22A487) : const Color(0xFF118B78));
+          : (heard ? const Color(0xFF0E8B76) : const Color(0xFF118B78));
       final playIcon = widget.message.mine
-          ? const Color(0xFF13284B)
+          ? (heard ? const Color(0xFF0C5D58) : const Color(0xFF17345B))
           : Colors.white;
-      final active = heard
-          ? const Color(0xFF118B78)
-          : (widget.message.mine
-                ? const Color(0xFFBBD94C)
-                : const Color(0xFF56B9AA));
+      final active = widget.message.mine
+          ? (heard ? const Color(0xFFC9FFF3) : const Color(0xFFD8EC72))
+          : (heard ? const Color(0xFF0E806D) : const Color(0xFF4FAF9F));
       final inactive = widget.message.mine
-          ? const Color(0x667D9250)
+          ? (heard ? const Color(0x668BE5D2) : const Color(0x668AA05D))
           : (dark ? const Color(0xFF526274) : const Color(0xFFBBDDD8));
-      final meta = widget.message.mine ? Colors.white70 : AppColors.muted;
+      final meta = widget.message.mine
+          ? (heard ? const Color(0xFFD8F8F1) : Colors.white70)
+          : AppColors.muted;
 
       Widget rateChip() => InkWell(
         borderRadius: BorderRadius.circular(18),
@@ -4269,8 +4436,8 @@ class _VoiceBubbleState extends State<VoiceBubble> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
-            color: heard && !widget.message.mine
-                ? const Color(0x24118B78)
+            color: heard
+                ? (widget.message.mine ? Colors.white12 : const Color(0x24118B78))
                 : Colors.transparent,
             border: Border.all(color: active.withValues(alpha: .62)),
             borderRadius: BorderRadius.circular(18),
@@ -4418,7 +4585,7 @@ class _VoiceBubbleState extends State<VoiceBubble> {
                   if (widget.message.mine && heard) ...[
                     const SizedBox(width: 5),
                     Text(
-                      'played',
+                      'Played',
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w800,

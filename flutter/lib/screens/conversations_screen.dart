@@ -87,11 +87,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         )
         .toList();
     return Scaffold(
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF08111D)
+          : const Color(0xFFF6F8FC),
       appBar: PremiumAppBar(
         title: archivedMode ? 'Archived chats' : 'Messages',
         subtitle: archivedMode
             ? 'Conversations kept out of your main inbox'
-            : 'Fast, private conversations',
+            : 'Private messages, groups and study conversations',
         actions: [
           if (!archivedMode)
             IconButton(
@@ -150,10 +153,25 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             padding: const EdgeInsets.fromLTRB(16, 3, 16, 12),
             child: TextField(
               onChanged: (v) => setState(() => query = v),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: 'Search conversations',
-                prefixIcon: Icon(Icons.search_rounded),
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        onPressed: () => setState(() => query = ''),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
                 isDense: true,
+                filled: true,
+                fillColor: Theme.of(context).brightness == Brightness.dark
+                    ? const Color(0xFF111C2C)
+                    : Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
           ),
@@ -177,8 +195,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                     child: ListView.separated(
                       padding: const EdgeInsets.fromLTRB(10, 2, 10, 22),
                       itemCount: items.length,
-                      separatorBuilder: (_, __) =>
-                          const Divider(indent: 78, height: 1),
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
                       itemBuilder: (_, i) => _row(items[i]),
                     ),
                   ),
@@ -188,102 +205,158 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     );
   }
 
-  Widget _row(Conversation c) => ListTile(
-    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-    leading: UserAvatar(
-      url: c.avatar,
-      name: c.title,
-      radius: 27,
-      online: c.online,
-    ),
-    title: Row(
-      children: [
-        Expanded(
-          child: Text(
-            c.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontWeight: c.unread > 0 ? FontWeight.w900 : FontWeight.w700,
+  Widget _row(Conversation c) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 2),
+    child: Material(
+      color: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF101A2A)
+          : Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => ChatScreen(conversation: c)),
+          );
+          if (mounted) _load();
+        },
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: c.unread > 0
+                  ? AppColors.blue.withValues(alpha: .28)
+                  : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: .55),
             ),
+            boxShadow: Theme.of(context).brightness == Brightness.dark
+                ? null
+                : const [
+                    BoxShadow(
+                      color: Color(0x0C08142F),
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
           ),
-        ),
-        Text(
-          c.lastActivity,
-          style: TextStyle(
-            fontSize: 11.5,
-            color: c.unread > 0 ? AppColors.blue : AppColors.muted,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    ),
-    subtitle: Padding(
-      padding: const EdgeInsets.only(top: 5),
-      child: Row(
-        children: [
-          if (c.muted)
-            const Padding(
-              padding: EdgeInsets.only(right: 5),
-              child: Icon(
-                Icons.volume_off_rounded,
-                size: 15,
-                color: AppColors.muted,
+          child: Row(
+            children: [
+              UserAvatar(
+                url: c.avatar,
+                name: c.title,
+                radius: 27,
+                online: c.online,
               ),
-            ),
-          Expanded(
-            child: Text(
-              c.lastMessage.isEmpty ? c.statusText : c.lastMessage,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: c.unread > 0
-                    ? Theme.of(context).colorScheme.onSurface
-                    : Theme.of(context).colorScheme.onSurfaceVariant,
-                fontWeight: c.unread > 0 ? FontWeight.w600 : FontWeight.w400,
-              ),
-            ),
-          ),
-          if (c.unread > 0)
-            Container(
-              margin: const EdgeInsets.only(left: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              decoration: const BoxDecoration(
-                color: AppColors.blue,
-                shape: BoxShape.circle,
-              ),
-              child: Text(
-                c.unread > 99 ? '99+' : '${c.unread}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        if (c.isGroup) ...[
+                          const Icon(Icons.groups_rounded, size: 16, color: AppColors.violet),
+                          const SizedBox(width: 5),
+                        ],
+                        Expanded(
+                          child: Text(
+                            c.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15.5,
+                              fontWeight: c.unread > 0 ? FontWeight.w900 : FontWeight.w800,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          c.lastActivity,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: c.unread > 0 ? FontWeight.w800 : FontWeight.w600,
+                            color: c.unread > 0 ? AppColors.blue : AppColors.muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        if (c.muted) ...[
+                          const Icon(Icons.volume_off_rounded, size: 14, color: AppColors.muted),
+                          const SizedBox(width: 5),
+                        ],
+                        Expanded(
+                          child: Text(
+                            c.lastMessage.isEmpty ? c.statusText : c.lastMessage,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.2,
+                              color: c.unread > 0
+                                  ? Theme.of(context).colorScheme.onSurface
+                                  : Theme.of(context).colorScheme.onSurfaceVariant,
+                              fontWeight: c.unread > 0 ? FontWeight.w700 : FontWeight.w400,
+                            ),
+                          ),
+                        ),
+                        if (c.unread > 0) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                            alignment: Alignment.center,
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: AppColors.blue,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              c.unread > 99 ? '99+' : '${c.unread}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
                 ),
               ),
-            ),
-        ],
+              PopupMenuButton<String>(
+                tooltip: 'Conversation options',
+                padding: EdgeInsets.zero,
+                onSelected: (value) => _conversationAction(c, value),
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: 'mute',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(c.muted ? Icons.volume_up_rounded : Icons.volume_off_rounded),
+                      title: Text(c.muted ? 'Unmute notifications' : 'Mute notifications'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'archive',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(archivedMode ? Icons.unarchive_rounded : Icons.archive_rounded),
+                      title: Text(archivedMode ? 'Unarchive' : 'Archive'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     ),
-    trailing: PopupMenuButton<String>(
-      onSelected: (value) => _conversationAction(c, value),
-      itemBuilder: (_) => [
-        PopupMenuItem(
-          value: 'mute',
-          child: Text(c.muted ? 'Unmute notifications' : 'Mute notifications'),
-        ),
-        PopupMenuItem(
-          value: 'archive',
-          child: Text(archivedMode ? 'Unarchive' : 'Archive'),
-        ),
-      ],
-    ),
-    onTap: () async {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => ChatScreen(conversation: c)),
-      );
-      _load();
-    },
   );
 
   Future<void> _conversationAction(Conversation chat, String action) async {
