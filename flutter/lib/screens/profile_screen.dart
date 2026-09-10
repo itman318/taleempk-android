@@ -72,17 +72,6 @@ class ProfileScreen extends StatelessWidget {
               'Tickets, appeals and assistance',
               () => _open(context, 'support'),
             ),
-            _tile(
-              Icons.info_outline_rounded,
-              'About TaleemPK',
-              'Version 2.3.0 · Made for Pakistan',
-              () => showAboutDialog(
-                context: context,
-                applicationName: 'TaleemPK',
-                applicationVersion: '2.3.0',
-                applicationLegalese: 'A premium learning community by MS Digital Software House.',
-              ),
-            ),
           ]),
           const SizedBox(height: 18),
           OutlinedButton.icon(

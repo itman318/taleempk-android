@@ -202,12 +202,14 @@ class ApiClient {
     int conversationId, {
     int afterId = 0,
     int beforeId = 0,
+    int limit = 80,
   }) async {
     final data = await _request({
       'action': 'messages',
       'conversation_id': '$conversationId',
       'after_id': '$afterId',
       'before_id': '$beforeId',
+      'limit': '${limit.clamp(20, 100)}',
     });
     return _list(data['messages'])
         .map((e) => ChatMessage.fromJson(_map(e)))

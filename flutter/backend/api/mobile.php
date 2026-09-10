@@ -678,6 +678,7 @@ if ($action === 'messages') {
     $cid = (int) ($_POST['conversation_id'] ?? 0);
     $afterId = max(0, (int)($_POST['after_id'] ?? 0));
     $beforeId = max(0, (int)($_POST['before_id'] ?? 0));
+    $limit = max(20, min(100, (int)($_POST['limit'] ?? 80)));
     if ($afterId > 0) $beforeId = 0;
     $member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
     if (!$member) { mobile_error('That conversation is not yours.', 403); }
@@ -694,7 +695,7 @@ if ($action === 'messages') {
             AND (?=0 OR m.id>?)
             AND (?=0 OR m.id<?)
             AND NOT EXISTS(SELECT 1 FROM message_hides h WHERE h.message_id=m.id AND h.user_id=?)
-          ORDER BY m.id DESC LIMIT 150', [$uid,$uid,$cid,$afterId,$afterId,$beforeId,$beforeId,$uid]
+          ORDER BY m.id DESC LIMIT '.$limit, [$uid,$uid,$cid,$afterId,$afterId,$beforeId,$beforeId,$uid]
     );
     $newest = $rows ? (int) $rows[0]['id'] : 0;
     if ($newest) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/app_state.dart';
@@ -17,11 +19,22 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   List<Conversation> all = const [];
   String query = '';
   String? error;
-  bool loading = true, archivedMode = false;
+  bool loading = true, archivedMode = false, silentRefreshing = false;
+  Timer? refreshTimer;
   @override
   void initState() {
     super.initState();
     _load();
+    refreshTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _refreshSilently(),
+    );
+  }
+
+  @override
+  void dispose() {
+    refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -37,6 +50,23 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       error = apiMessage(e);
     }
     if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> _refreshSilently() async {
+    if (!mounted || loading || silentRefreshing) return;
+    silentRefreshing = true;
+    try {
+      final fresh = await AppScope.of(context).api.conversations(
+        archived: archivedMode,
+      );
+      if (mounted && fresh.toString() != all.toString()) {
+        setState(() => all = fresh);
+      }
+    } catch (_) {
+      // Keep the inbox responsive when one background refresh misses.
+    } finally {
+      silentRefreshing = false;
+    }
   }
 
   @override

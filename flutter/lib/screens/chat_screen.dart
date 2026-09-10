@@ -30,7 +30,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final textController = TextEditingController(), scroll = ScrollController();
   final recorder = AudioRecorder();
   final voicePreviewPlayer = AudioPlayer();
-  Timer? poll, recordTimer, waveTimer, presenceDebounce, typingHeartbeat;
+  Timer? poll, recordTimer, waveTimer, presenceDebounce, typingHeartbeat, voiceHeartbeat;
   ChatPresence? presence;
   ReplyPreview? reply;
   bool loading = true,
@@ -44,7 +44,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       selfBlocked = false,
       muted = false,
       loadingOlder = false,
-      historyDone = false;
+      historyDone = false,
+      foreground = true;
   int recordSeconds = 0, pollTicks = 0;
   double? uploadProgress;
   String? error, recordPath, voicePreviewPath;
@@ -61,7 +62,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     selfBlocked = widget.conversation.selfBlocked;
     muted = widget.conversation.muted;
     scroll.addListener(_historyListener);
-    _load();
+    _load(jumpToBottom: true);
   }
 
   @override
@@ -72,6 +73,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     waveTimer?.cancel();
     presenceDebounce?.cancel();
     typingHeartbeat?.cancel();
+    voiceHeartbeat?.cancel();
     recorder.dispose();
     voicePreviewPlayer.dispose();
     final preview = voicePreviewPath;
@@ -87,12 +89,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _poll();
+    foreground = state == AppLifecycleState.resumed;
+    if (foreground) {
+      if (recording && !recordingPaused) _startVoicePresenceHeartbeat();
+      _schedulePoll(immediate: true);
       return;
     }
+    poll?.cancel();
     typingHeartbeat?.cancel();
     typingHeartbeat = null;
+    voiceHeartbeat?.cancel();
+    voiceHeartbeat = null;
     typingSent = false;
     AppScope.of(context).api
         .presence(widget.conversation.id, clear: true)
@@ -104,19 +111,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ));
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool jumpToBottom = false}) async {
     try {
-      final fresh = await AppScope.of(context).api
-          .messages(widget.conversation.id);
+      final api = AppScope.of(context).api;
+      final result = await Future.wait<Object>([
+        api.messages(widget.conversation.id, limit: 80),
+        api.pinnedMessages(widget.conversation.id),
+      ]);
+      final fresh = result[0] as List<ChatMessage>;
       messages
         ..clear()
         ..addAll(fresh);
-      pinnedMessages =
-          await AppScope.of(context).api.pinnedMessages(widget.conversation.id);
-      historyDone = fresh.length < 150;
+      pinnedMessages = result[1] as List<Map<String, dynamic>>;
+      historyDone = fresh.length < 80;
       error = null;
       _schedulePoll();
-      _toBottom();
+      if (jumpToBottom) _toBottom();
     } catch (e) {
       error = apiMessage(e);
     }
@@ -138,6 +148,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final older = await AppScope.of(context).api.messages(
         widget.conversation.id,
         beforeId: before,
+        limit: 80,
       );
       if (older.isEmpty) {
         historyDone = true;
@@ -146,7 +157,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             .where((m) => messages.every((old) => old.id != m.id))
             .toList();
         messages.insertAll(0, unique);
-        if (older.length < 150) historyDone = true;
+        if (older.length < 80) historyDone = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!scroll.hasClients) return;
           final gained = scroll.position.maxScrollExtent - oldExtent;
@@ -164,40 +175,63 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _schedulePoll() {
+  void _schedulePoll({bool immediate = false}) {
     poll?.cancel();
-    if (mounted) poll = Timer(const Duration(milliseconds: 2100), _poll);
+    if (!mounted || !foreground) return;
+    poll = Timer(
+      Duration(milliseconds: immediate ? 80 : 950),
+      _poll,
+    );
   }
 
   Future<void> _poll() async {
-    if (!mounted || polling) return;
+    if (!mounted || !foreground || polling) return;
     polling = true;
+    final shouldStickToBottom = !scroll.hasClients ||
+        scroll.position.maxScrollExtent - scroll.position.pixels < 220;
     try {
       pollTicks++;
       final fullSync = pollTicks % 4 == 0;
       final after = messages.isEmpty ? 0 : messages.last.id;
-      final fresh = await AppScope.of(context).api.messages(
-        widget.conversation.id,
-        afterId: fullSync ? 0 : after,
-      );
-      final p = await AppScope.of(context).api
-          .presence(widget.conversation.id);
+      final api = AppScope.of(context).api;
+      final result = await Future.wait<Object>([
+        api.messages(
+          widget.conversation.id,
+          afterId: fullSync ? 0 : after,
+          limit: fullSync ? 60 : 30,
+        ),
+        api.presence(widget.conversation.id),
+      ]);
+      final fresh = result[0] as List<ChatMessage>;
+      final p = result[1] as ChatPresence;
+      var changed = false;
+      var addedNew = false;
+
       final played = p.playedIds.toSet();
       for (final message in messages) {
-        if (message.mine && message.id <= p.readThrough) message.read = true;
+        if (message.mine && message.id <= p.readThrough && !message.read) {
+          message.read = true;
+          changed = true;
+        }
         if (message.mine &&
             message.voiceSeconds > 0 &&
-            played.contains(message.id)) {
+            played.contains(message.id) &&
+            !message.playedByOther) {
           message.playedByOther = true;
+          changed = true;
         }
       }
 
-      var addedNew = false;
       if (fullSync) {
-        /* The incremental poll is perfect for new messages but cannot see an
-           old bubble that was edited, deleted, reacted to, pinned, or whose
-           poll results changed. Reconcile the recent window periodically
-           without discarding older history the user already loaded. */
+        if (fresh.isNotEmpty) {
+          final recentFloor = fresh.first.id;
+          final serverIds = fresh.map((m) => m.id).toSet();
+          final removed = messages.length;
+          messages.removeWhere(
+            (m) => m.id >= recentFloor && !serverIds.contains(m.id),
+          );
+          if (messages.length != removed) changed = true;
+        }
         for (final candidate in fresh) {
           final index = messages.indexWhere((m) => m.id == candidate.id);
           if (index >= 0) {
@@ -207,14 +241,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               candidate.playedByOther = true;
             }
             messages[index] = candidate;
+            changed = true;
           } else {
             messages.add(candidate);
             addedNew = true;
+            changed = true;
           }
         }
         messages.sort((a, b) => a.id.compareTo(b.id));
-        pinnedMessages = await AppScope.of(context).api
-            .pinnedMessages(widget.conversation.id);
+        final pins = await api.pinnedMessages(widget.conversation.id);
+        if (pins.toString() != pinnedMessages.toString()) {
+          pinnedMessages = pins;
+          changed = true;
+        }
       } else if (fresh.isNotEmpty) {
         final unseen = fresh
             .where((m) => messages.every((old) => old.id != m.id))
@@ -222,13 +261,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (unseen.isNotEmpty) {
           messages.addAll(unseen);
           addedNew = true;
+          changed = true;
         }
       }
 
-      if (addedNew) _toBottom();
-      if (mounted) setState(() => presence = p);
+      final presenceChanged = presence?.active != p.active ||
+          presence?.kind != p.kind ||
+          presence?.name != p.name;
+      presence = p;
+      if (mounted && (changed || presenceChanged)) setState(() {});
+      if (addedNew && shouldStickToBottom) _toBottom();
     } catch (_) {
-      // A transient poll failure must not erase already loaded messages.
+      // Keep the currently rendered thread during a transient network miss.
     } finally {
       polling = false;
     }
@@ -1451,10 +1495,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       stream: voicePreviewPlayer.positionStream,
       builder: (context, snap) {
         final position = snap.data ?? Duration.zero;
-        final total = voicePreviewPlayer.duration ?? Duration(seconds: recordSeconds);
-        final totalMs = total.inMilliseconds > 0 ? total.inMilliseconds : 1;
-        final progress =
+        final decodedMs = voicePreviewPlayer.duration?.inMilliseconds ?? 0;
+        final recordedMs = recordSeconds * 1000;
+        final totalMs = decodedMs > recordedMs ? decodedMs : (recordedMs > 0 ? recordedMs : 1);
+        var progress =
             (position.inMilliseconds / totalMs).clamp(0.0, 1.0).toDouble();
+        if (voicePreviewPlayer.processingState != ProcessingState.completed &&
+            progress >= .995) {
+          progress = .985;
+        }
         return Row(
           children: [
             IconButton.filledTonal(
@@ -1586,7 +1635,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       await AppScope.of(context).api
           .sendText(widget.conversation.id, text, replyTo: currentReply?.id);
-      await _load();
+      await _load(jumpToBottom: true);
     } catch (e) {
       textController.text = text;
       if (mounted) showMessage(context, apiMessage(e));
@@ -1676,7 +1725,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         },
       );
       reply = null;
-      await _load();
+      await _load(jumpToBottom: true);
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));
     }
@@ -1686,6 +1735,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         uploadProgress = null;
       });
     }
+  }
+
+  void _startVoicePresenceHeartbeat() {
+    voiceHeartbeat?.cancel();
+    if (!mounted || !foreground || !recording || recordingPaused) return;
+    void beat() {
+      if (!mounted || !foreground || !recording || recordingPaused) return;
+      AppScope.of(context).api
+          .presence(widget.conversation.id, kind: 'voice')
+          .catchError((_) => const ChatPresence(
+                active: false,
+                kind: '',
+                name: '',
+                readThrough: 0,
+              ));
+    }
+    beat();
+    voiceHeartbeat = Timer.periodic(
+      const Duration(milliseconds: 1500),
+      (_) => beat(),
+    );
+  }
+
+  void _stopVoicePresenceHeartbeat({bool clear = true}) {
+    voiceHeartbeat?.cancel();
+    voiceHeartbeat = null;
+    if (!clear || !mounted) return;
+    AppScope.of(context).api
+        .presence(widget.conversation.id, clear: true)
+        .catchError((_) => const ChatPresence(
+              active: false,
+              kind: '',
+              name: '',
+              readThrough: 0,
+            ));
   }
 
   Future<void> _toggleRecording() async {
@@ -1718,7 +1802,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     recording = true;
     recordingPaused = false;
     setState(() {});
-    AppScope.of(context).api.presence(widget.conversation.id, kind: 'voice');
+    typingHeartbeat?.cancel();
+    typingHeartbeat = null;
+    presenceDebounce?.cancel();
+    typingSent = false;
+    _startVoicePresenceHeartbeat();
     waveTimer?.cancel();
     waveTimer = Timer.periodic(const Duration(milliseconds: 120), (_) async {
       if (!mounted || recordingPaused || !recording) return;
@@ -1733,9 +1821,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       if (recordingPaused) return;
       setState(() => recordSeconds++);
-      if (recordSeconds % 3 == 0) {
-        AppScope.of(context).api.presence(widget.conversation.id, kind: 'voice');
-      }
       if (recordSeconds >= 120) _stopRecordingForPreview();
     });
   }
@@ -1745,11 +1830,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (recordingPaused) {
         await recorder.resume();
         recordingPaused = false;
-        AppScope.of(context).api.presence(widget.conversation.id, kind: 'voice');
+        _startVoicePresenceHeartbeat();
       } else {
         await recorder.pause();
         recordingPaused = true;
-        AppScope.of(context).api.presence(widget.conversation.id, clear: true);
+        _stopVoicePresenceHeartbeat();
       }
       if (mounted) setState(() {});
     } catch (e) {
@@ -1762,14 +1847,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     recordTimer?.cancel();
     waveTimer?.cancel();
     final path = await recorder.stop();
-    AppScope.of(context).api
-        .presence(widget.conversation.id, clear: true)
-        .catchError((_) => const ChatPresence(
-              active: false,
-              kind: '',
-              name: '',
-              readThrough: 0,
-            ));
+    _stopVoicePresenceHeartbeat();
     if (!mounted) return;
     setState(() {
       recording = false;
@@ -1858,7 +1936,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
       reply = null;
       await _discardVoicePreview();
-      await _load();
+      await _load(jumpToBottom: true);
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));
     } finally {
@@ -1882,7 +1960,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         recordSeconds = 0;
         voiceLevels.clear();
       });
-    AppScope.of(context).api.presence(widget.conversation.id, clear: true);
+    _stopVoicePresenceHeartbeat();
   }
 
   Widget _blockedBanner() => Container(
@@ -2824,14 +2902,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _messageActions(ChatMessage m) async {
     await showModalBottomSheet<void>(
       context: context,
-      builder: (sheet) => SafeArea(
-        child: Wrap(
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheet) => FractionallySizedBox(
+        heightFactor: .86,
+        child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 6, 14, 8),
+              padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: ['👍','❤️','😂','😮','😢','🔥']
+                children: ['👍', '❤️', '😂', '😮', '😢', '🔥']
                     .map(
                       (emoji) => InkWell(
                         borderRadius: BorderRadius.circular(30),
@@ -2841,10 +2923,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         },
                         child: Padding(
                           padding: const EdgeInsets.all(7),
-                          child: Text(
-                            emoji,
-                            style: const TextStyle(fontSize: 28),
-                          ),
+                          child: Text(emoji, style: const TextStyle(fontSize: 28)),
                         ),
                       ),
                     )
@@ -2852,122 +2931,131 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
             ),
             const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.reply_rounded),
-              title: const Text('Reply'),
-              onTap: () {
-                Navigator.pop(sheet);
-                setState(
-                  () => reply = ReplyPreview(
-                    id: m.id,
-                    sender: m.sender,
-                    text: m.content.isNotEmpty ? m.content : 'Attachment',
+            Expanded(
+              child: ListView(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.reply_rounded),
+                    title: const Text('Reply'),
+                    onTap: () {
+                      Navigator.pop(sheet);
+                      setState(
+                        () => reply = ReplyPreview(
+                          id: m.id,
+                          sender: m.sender,
+                          text: m.content.isNotEmpty
+                              ? m.content
+                              : (m.voiceSeconds > 0 ? 'Voice message' : 'Attachment'),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
-            if (m.content.isNotEmpty && !m.deleted)
-              ListTile(
-                leading: const Icon(Icons.copy_rounded),
-                title: const Text('Copy'),
-                onTap: () async {
-                  Navigator.pop(sheet);
-                  await Clipboard.setData(ClipboardData(text: m.content));
-                  if (mounted) showMessage(context, 'Message copied.');
-                },
+                  if (m.content.isNotEmpty && !m.deleted && !m.encrypted)
+                    ListTile(
+                      leading: const Icon(Icons.copy_rounded),
+                      title: const Text('Copy'),
+                      onTap: () async {
+                        Navigator.pop(sheet);
+                        await Clipboard.setData(ClipboardData(text: m.content));
+                        if (mounted) showMessage(context, 'Message copied.');
+                      },
+                    ),
+                  ListTile(
+                    leading: const Icon(Icons.flag_outlined, color: AppColors.danger),
+                    title: const Text(
+                      'Report message',
+                      style: TextStyle(color: AppColors.danger),
+                    ),
+                    onTap: () {
+                      Navigator.pop(sheet);
+                      _reportMessage(m);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.forward_rounded),
+                    title: const Text('Forward'),
+                    onTap: () {
+                      Navigator.pop(sheet);
+                      _forward(m);
+                    },
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      m.starred ? Icons.star_rounded : Icons.star_outline_rounded,
+                    ),
+                    title: Text(m.starred ? 'Unstar' : 'Star'),
+                    onTap: () async {
+                      Navigator.pop(sheet);
+                      await AppScope.of(context).api.toggleStar(m.id);
+                      _load();
+                    },
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      m.pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+                    ),
+                    title: Text(m.pinned ? 'Unpin' : 'Pin'),
+                    onTap: () async {
+                      Navigator.pop(sheet);
+                      try {
+                        await AppScope.of(context).api.togglePin(m.id);
+                        await _load();
+                      } catch (e) {
+                        if (mounted) showMessage(context, apiMessage(e));
+                      }
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.check_box_outlined),
+                    title: const Text('Select messages'),
+                    onTap: () {
+                      Navigator.pop(sheet);
+                      setState(() => selectedIds.add(m.id));
+                    },
+                  ),
+                  if (m.edited)
+                    ListTile(
+                      leading: const Icon(Icons.history_rounded),
+                      title: const Text('Edit history'),
+                      onTap: () {
+                        Navigator.pop(sheet);
+                        _showEditHistory(m);
+                      },
+                    ),
+                  if (m.mine &&
+                      !m.deleted &&
+                      m.content.isNotEmpty &&
+                      !m.encrypted)
+                    ListTile(
+                      enabled: m.canEdit,
+                      leading: const Icon(Icons.edit_outlined),
+                      title: const Text('Edit'),
+                      subtitle: m.canEdit
+                          ? null
+                          : const Text('Editing time has expired'),
+                      onTap: m.canEdit
+                          ? () {
+                              Navigator.pop(sheet);
+                              _edit(m);
+                            }
+                          : null,
+                    ),
+                  ListTile(
+                    leading: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: AppColors.danger,
+                    ),
+                    title: Text(
+                      m.mine ? 'Delete' : 'Delete for me',
+                      style: const TextStyle(color: AppColors.danger),
+                    ),
+                    onTap: () {
+                      Navigator.pop(sheet);
+                      _delete(m);
+                    },
+                  ),
+                ],
               ),
-            ListTile(
-              leading: const Icon(Icons.flag_outlined, color: AppColors.danger),
-              title: const Text(
-                'Report message',
-                style: TextStyle(color: AppColors.danger),
-              ),
-              onTap: () {
-                Navigator.pop(sheet);
-                _reportMessage(m);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.forward_rounded),
-              title: const Text('Forward'),
-              onTap: () {
-                Navigator.pop(sheet);
-                _forward(m);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.add_reaction_outlined),
-              title: const Text('React'),
-              onTap: () {
-                Navigator.pop(sheet);
-                _quickReaction(m);
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                m.starred ? Icons.star_rounded : Icons.star_outline_rounded,
-              ),
-              title: Text(m.starred ? 'Unstar' : 'Star'),
-              onTap: () async {
-                Navigator.pop(sheet);
-                await AppScope.of(context).api.toggleStar(m.id);
-                _load();
-              },
-            ),
-            ListTile(
-              leading: Icon(
-                m.pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
-              ),
-              title: Text(m.pinned ? 'Unpin' : 'Pin'),
-              onTap: () async {
-                Navigator.pop(sheet);
-                try {
-                  await AppScope.of(context).api.togglePin(m.id);
-                  await _load();
-                } catch (e) {
-                  if (mounted) showMessage(context, apiMessage(e));
-                }
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.check_box_outlined),
-              title: const Text('Select messages'),
-              onTap: () {
-                Navigator.pop(sheet);
-                setState(() => selectedIds.add(m.id));
-              },
-            ),
-            if (m.edited)
-              ListTile(
-                leading: const Icon(Icons.history_rounded),
-                title: const Text('Edit history'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _showEditHistory(m);
-                },
-              ),
-            if (m.canEdit)
-              ListTile(
-                leading: const Icon(Icons.edit_outlined),
-                title: const Text('Edit'),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _edit(m);
-                },
-              ),
-            ListTile(
-              leading: const Icon(
-                Icons.delete_outline_rounded,
-                color: AppColors.danger,
-              ),
-              title: Text(
-                m.mine ? 'Delete' : 'Delete for me',
-                style: const TextStyle(color: AppColors.danger),
-              ),
-              onTap: () {
-                Navigator.pop(sheet);
-                _delete(m);
-              },
             ),
           ],
         ),
@@ -3305,25 +3393,28 @@ class VoiceBubble extends StatefulWidget {
 class _VoiceBubbleState extends State<VoiceBubble> {
   static double rememberedSpeed = 1.0;
   final player = AudioPlayer();
+  StreamSubscription<Duration?>? durationSub;
   bool ready = false, listened = false, loading = false;
   String? localPath;
+  Duration? decodedDuration;
   late double speed = rememberedSpeed;
 
   @override
   void initState() {
     super.initState();
     listened = widget.message.playedByMe;
+    durationSub = player.durationStream.listen((value) {
+      if (value != null && value.inMilliseconds > 0 && mounted) {
+        decodedDuration = value;
+        setState(() {});
+      }
+    });
   }
 
   @override
   void dispose() {
+    durationSub?.cancel();
     player.dispose();
-    final path = localPath;
-    if (path != null) {
-      try {
-        File(path).deleteSync();
-      } catch (_) {}
-    }
     super.dispose();
   }
 
@@ -3332,13 +3423,17 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     loading = true;
     if (mounted) setState(() {});
     try {
-      final bytes = await widget.api.attachmentBytes(
-        widget.message.attachmentUrl!,
-      );
       final dir = await getTemporaryDirectory();
       localPath = '${dir.path}/taleempk_voice_${widget.message.id}.m4a';
-      await File(localPath!).writeAsBytes(bytes, flush: true);
+      final file = File(localPath!);
+      if (!await file.exists() || await file.length() == 0) {
+        final bytes = await widget.api.attachmentBytes(
+          widget.message.attachmentUrl!,
+        );
+        await file.writeAsBytes(bytes, flush: true);
+      }
       await player.setFilePath(localPath!);
+      decodedDuration = player.duration;
       await player.setSpeed(speed);
       ready = true;
     } finally {
@@ -3380,14 +3475,26 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     if (mounted) setState(() {});
   }
 
+  int _totalMs(Duration position) {
+    final stored = widget.message.voiceSeconds * 1000;
+    final decoded = decodedDuration?.inMilliseconds ??
+        player.duration?.inMilliseconds ??
+        0;
+    var total = decoded > stored ? decoded : stored;
+    if (total <= 0) total = 1;
+    if (position.inMilliseconds >= total &&
+        player.processingState != ProcessingState.completed) {
+      total = position.inMilliseconds + 350;
+    }
+    return total;
+  }
+
   Future<void> _seek(double fraction) async {
     await _prepare();
     if (!ready) return;
-    final total = player.duration ?? Duration(seconds: widget.message.voiceSeconds);
+    final total = _totalMs(player.position);
     await player.seek(
-      Duration(
-        milliseconds: (total.inMilliseconds * fraction.clamp(0.0, 1.0)).round(),
-      ),
+      Duration(milliseconds: (total * fraction.clamp(0.0, 1.0)).round()),
     );
   }
 
@@ -3396,13 +3503,15 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     stream: player.positionStream,
     builder: (_, snap) {
       final position = snap.data ?? Duration.zero;
-      final knownTotal =
-          player.duration ?? Duration(seconds: widget.message.voiceSeconds);
-      final totalMs = knownTotal.inMilliseconds > 0
-          ? knownTotal.inMilliseconds
-          : 1;
-      final progress =
+      final totalMs = _totalMs(position);
+      var progress =
           (position.inMilliseconds / totalMs).clamp(0.0, 1.0).toDouble();
+      if (player.processingState == ProcessingState.completed) {
+        progress = 1.0;
+      } else if (progress >= .995) {
+        progress = .985;
+      }
+      final totalSeconds = (totalMs / 1000).round();
       final heard = widget.message.mine
           ? widget.message.playedByOther
           : listened;
@@ -3422,6 +3531,26 @@ class _VoiceBubbleState extends State<VoiceBubble> {
           ? const Color(0x667D9250)
           : (dark ? const Color(0xFF526274) : const Color(0xFFBBDDD8));
       final meta = widget.message.mine ? Colors.white70 : AppColors.muted;
+
+      Widget rateChip() => InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: _cycleSpeed,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            border: Border.all(color: active.withValues(alpha: .62)),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Text(
+            '${speed.toStringAsFixed(speed == 1.0 ? 0 : 1)}×',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+              color: active,
+            ),
+          ),
+        ),
+      );
 
       return ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 250, maxWidth: 310),
@@ -3508,40 +3637,15 @@ class _VoiceBubbleState extends State<VoiceBubble> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                InkWell(
-                  borderRadius: BorderRadius.circular(22),
-                  onTap: _cycleSpeed,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: active.withValues(alpha: .65),
-                      ),
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: Text(
-                      '${speed.toStringAsFixed(speed == 1.0 ? 0 : 1)}×',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        color: active,
-                      ),
-                    ),
-                  ),
-                ),
               ],
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 4),
             Padding(
               padding: const EdgeInsets.only(left: 58),
               child: Row(
                 children: [
                   Text(
-                    _voiceDuration(widget.message.voiceSeconds),
+                    _voiceDuration(totalSeconds),
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w900,
@@ -3568,6 +3672,8 @@ class _VoiceBubbleState extends State<VoiceBubble> {
                       color: meta,
                     ),
                   ),
+                  const SizedBox(width: 6),
+                  rateChip(),
                   if (widget.message.mine && heard) ...[
                     const SizedBox(width: 5),
                     Text(
