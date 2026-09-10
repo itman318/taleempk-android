@@ -45,7 +45,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       muted = false,
       loadingOlder = false,
       historyDone = false;
-  int recordSeconds = 0;
+  int recordSeconds = 0, pollTicks = 0;
   double? uploadProgress;
   String? error, recordPath, voicePreviewPath;
   String searchQuery = '';
@@ -173,9 +173,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (!mounted || polling) return;
     polling = true;
     try {
+      pollTicks++;
+      final fullSync = pollTicks % 4 == 0;
       final after = messages.isEmpty ? 0 : messages.last.id;
-      final fresh = await AppScope.of(context).api
-          .messages(widget.conversation.id, afterId: after);
+      final fresh = await AppScope.of(context).api.messages(
+        widget.conversation.id,
+        afterId: fullSync ? 0 : after,
+      );
       final p = await AppScope.of(context).api
           .presence(widget.conversation.id);
       final played = p.playedIds.toSet();
@@ -187,12 +191,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           message.playedByOther = true;
         }
       }
-      if (fresh.isNotEmpty) {
-        messages.addAll(
-          fresh.where((m) => messages.every((old) => old.id != m.id)),
-        );
-        _toBottom();
+
+      var addedNew = false;
+      if (fullSync) {
+        /* The incremental poll is perfect for new messages but cannot see an
+           old bubble that was edited, deleted, reacted to, pinned, or whose
+           poll results changed. Reconcile the recent window periodically
+           without discarding older history the user already loaded. */
+        for (final candidate in fresh) {
+          final index = messages.indexWhere((m) => m.id == candidate.id);
+          if (index >= 0) {
+            final old = messages[index];
+            if (old.mine && old.read) candidate.read = true;
+            if (old.mine && old.playedByOther) {
+              candidate.playedByOther = true;
+            }
+            messages[index] = candidate;
+          } else {
+            messages.add(candidate);
+            addedNew = true;
+          }
+        }
+        messages.sort((a, b) => a.id.compareTo(b.id));
+        pinnedMessages = await AppScope.of(context).api
+            .pinnedMessages(widget.conversation.id);
+      } else if (fresh.isNotEmpty) {
+        final unseen = fresh
+            .where((m) => messages.every((old) => old.id != m.id))
+            .toList();
+        if (unseen.isNotEmpty) {
+          messages.addAll(unseen);
+          addedNew = true;
+        }
       }
+
+      if (addedNew) _toBottom();
       if (mounted) setState(() => presence = p);
     } catch (_) {
       // A transient poll failure must not erase already loaded messages.
@@ -1491,7 +1524,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      _duration(position.inSeconds > 0 ? position.inSeconds : recordSeconds),
+                      _duration(position.inSeconds),
                       style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
@@ -1594,17 +1627,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 if (path != null) _upload(path);
               },
             ),
-            ListTile(
-              leading: const Icon(
-                Icons.poll_outlined,
-                color: AppColors.violet,
+            if (widget.conversation.isGroup)
+              ListTile(
+                leading: const Icon(
+                  Icons.poll_outlined,
+                  color: AppColors.violet,
+                ),
+                title: const Text('Create poll'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  _createPoll();
+                },
               ),
-              title: const Text('Create poll'),
-              onTap: () {
-                Navigator.pop(sheet);
-                _createPoll();
-              },
-            ),
             ListTile(
               leading: const Icon(
                 Icons.camera_alt_outlined,
