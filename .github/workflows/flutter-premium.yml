@@ -6,16 +6,18 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
+      - 'tools/patch_chat_v26.py'
       - '.github/workflows/flutter-premium.yml'
   push:
     branches: [main, flutter-premium-v2]
     paths:
       - 'flutter/**'
       - 'backend/**'
+      - 'tools/patch_chat_v26.py'
       - '.github/workflows/flutter-premium.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -26,6 +28,20 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
+      - name: Apply v2.6 deep chat audit
+        working-directory: .
+        run: python tools/patch_chat_v26.py
+      - name: Commit v2.6 chat fixes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/flutter-premium-v2'
+        working-directory: .
+        run: |
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Fix voice playback block layout and emoji history"
+            git push
+          fi
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
