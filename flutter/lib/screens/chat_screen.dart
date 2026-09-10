@@ -210,7 +210,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       title: searching
           ? TextField(
               autofocus: true,
+              textInputAction: TextInputAction.search,
               onChanged: (value) => setState(() => searchQuery = value),
+              onSubmitted: _serverFindInConversation,
               decoration: const InputDecoration(
                 hintText: 'Search this conversation',
                 border: InputBorder.none,
@@ -2075,6 +2077,63 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _serverFindInConversation(String query) async {
+    final q = query.trim();
+    if (q.length < 2) return;
+    try {
+      final results = await AppScope.of(context).api.searchMessages(q);
+      final scoped = results
+          .where((r) => _asInt(r['conversation_id']) == widget.conversation.id)
+          .toList();
+      if (!mounted) return;
+      if (scoped.isEmpty) {
+        showMessage(context, 'No matching messages in this conversation.');
+        return;
+      }
+      final selected = await showModalBottomSheet<Map<String, dynamic>>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheet) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheet).height * .62,
+            ),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: scoped.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (_, i) {
+                final item = scoped[i];
+                return ListTile(
+                  leading: const Icon(Icons.search_rounded),
+                  title: Text(
+                    '${item['sender'] ?? ''}',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    '${item['text'] ?? ''}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: Text(
+                    '${item['time'] ?? ''}',
+                    style: const TextStyle(fontSize: 10, color: AppColors.muted),
+                  ),
+                  onTap: () => Navigator.pop(sheet, item),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      if (selected != null) {
+        await _jumpToMessage(_asInt(selected['id']));
+      }
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
   Future<void> _jumpToDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -2109,8 +2168,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           duration: const Duration(milliseconds: 320),
           curve: Curves.easeOut,
         );
-      } else if (mounted) {
-        showMessage(context, 'Date found. Loading that part of chat is next.');
+      } else {
+        await _jumpToMessage(anchor);
       }
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));
