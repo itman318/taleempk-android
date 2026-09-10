@@ -26,6 +26,8 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
+      - name: Normalize module route source
+        run: python ../tools/patch_v29_prep.py
       - name: Apply TaleemPK v2.9 parity fixes
         run: python ../tools/patch_v29.py
       - name: Commit TaleemPK v2.9 fixes
