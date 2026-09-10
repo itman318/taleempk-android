@@ -16,6 +16,7 @@ class ConversationsScreen extends StatefulWidget {
 }
 
 class _ConversationsScreenState extends State<ConversationsScreen> {
+  final searchController = TextEditingController();
   List<Conversation> all = const [];
   String query = '';
   String? error;
@@ -34,6 +35,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   @override
   void dispose() {
     refreshTimer?.cancel();
+    searchController.dispose();
     super.dispose();
   }
 
@@ -152,6 +154,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 3, 16, 12),
             child: TextField(
+              controller: searchController,
               onChanged: (v) => setState(() => query = v),
               decoration: InputDecoration(
                 hintText: 'Search conversations',
@@ -160,7 +163,10 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                     ? null
                     : IconButton(
                         tooltip: 'Clear search',
-                        onPressed: () => setState(() => query = ''),
+                        onPressed: () {
+                          searchController.clear();
+                          setState(() => query = '');
+                        },
                         icon: const Icon(Icons.close_rounded),
                       ),
                 isDense: true,

@@ -419,7 +419,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 controller: code,
                 keyboardType: TextInputType.number,
                 textInputAction: TextInputAction.done,
-                inputFormatters: const [FilteringTextInputFormatter.digitsOnly],
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 autofillHints: const [AutofillHints.oneTimeCode],
                 enableSuggestions: false,
                 autocorrect: false,
