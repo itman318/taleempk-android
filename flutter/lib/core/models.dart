@@ -352,8 +352,8 @@ class ChatMessage {
   final String sender, content, time, dateLabel, voiceWave;
   final String? attachmentUrl, attachmentName, attachmentType;
   final bool mine, deleted, edited, forwarded, starred, pinned, canEdit;
-  final bool playedByMe, encrypted;
-  bool playedByOther;
+  final bool encrypted;
+  bool playedByMe, playedByOther;
   bool read;
   final ReplyPreview? reply;
   final List<ChatReaction> reactions;

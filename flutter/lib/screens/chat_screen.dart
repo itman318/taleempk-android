@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/app_state.dart';
@@ -52,6 +53,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String searchQuery = '';
   final selectedIds = <int>{};
   final voiceLevels = <double>[];
+  List<String> recentEmojis = <String>[];
   List<Map<String, dynamic>> pinnedMessages = const [];
 
   @override
@@ -62,6 +64,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     selfBlocked = widget.conversation.selfBlocked;
     muted = widget.conversation.muted;
     scroll.addListener(_historyListener);
+    _loadRecentEmojis();
     _load(jumpToBottom: true);
   }
 
@@ -239,6 +242,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             if (old.mine && old.read) candidate.read = true;
             if (old.mine && old.playedByOther) {
               candidate.playedByOther = true;
+            }
+            if (!old.mine && old.playedByMe) {
+              candidate.playedByMe = true;
             }
             messages[index] = candidate;
             changed = true;
@@ -525,8 +531,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final m = visible[index],
             showDate = index == 0 ||
                 visible[index - 1].dateLabel != m.dateLabel;
-        return Column(
-          children: [
+        return KeyedSubtree(
+          key: ValueKey<int>(m.id),
+          child: Column(
+            children: [
             if (showDate)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -550,7 +558,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ),
             _bubble(m),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -564,7 +573,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ? _toggleSelected(m.id)
           : _messageActions(m),
       onHorizontalDragEnd: (d) {
-        if (d.primaryVelocity!.abs() > 280)
+        final velocity = d.primaryVelocity ?? 0;
+        if (velocity.abs() > 280)
           setState(
             () => reply = ReplyPreview(
               id: m.id,
@@ -577,7 +587,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ),
           );
       },
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
         constraints: BoxConstraints(
           maxWidth: MediaQuery.sizeOf(context).width *
               (m.voiceSeconds > 0 ? .86 : .79),
@@ -593,9 +605,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           color: m.voiceSeconds > 0
               ? (m.mine
                     ? const Color(0xFF172B4D)
-                    : (Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF152133)
-                          : Colors.white))
+                    : (m.playedByMe
+                          ? (Theme.of(context).brightness == Brightness.dark
+                                ? const Color(0xFF10342F)
+                                : const Color(0xFFDDF5EE))
+                          : (Theme.of(context).brightness == Brightness.dark
+                                ? const Color(0xFF152133)
+                                : Colors.white)))
               : (m.mine
                     ? null
                     : (Theme.of(context).brightness == Brightness.dark
@@ -641,7 +657,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             else if (m.poll != null && !m.deleted)
               _pollBubble(m)
             else if (m.voiceSeconds > 0 && !m.deleted)
-              VoiceBubble(message: m, api: AppScope.of(context).api)
+              VoiceBubble(
+                key: ValueKey<String>('voice-${m.id}'),
+                message: m,
+                api: AppScope.of(context).api,
+                beforePlay: () async {
+                  if (voicePreviewPlayer.playing) {
+                    await voicePreviewPlayer.pause();
+                  }
+                },
+                onListened: () {
+                  if (!m.playedByMe && mounted) {
+                    setState(() => m.playedByMe = true);
+                  }
+                },
+              )
             else if (m.attachmentUrl != null && !m.deleted)
               _attachment(m)
             else
@@ -1342,42 +1372,158 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ),
   );
 
+  Future<void> _loadRecentEmojis() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getStringList('chat_recent_emojis') ?? const <String>[];
+      if (!mounted) return;
+      setState(() {
+        recentEmojis = saved.where((e) => e.trim().isNotEmpty).take(24).toList();
+      });
+    } catch (_) {
+      // Emoji history is a convenience feature; chat remains usable without it.
+    }
+  }
+
+  Future<void> _insertEmoji(String emoji) async {
+    final value = textController.value;
+    final text = value.text;
+    var start = value.selection.start;
+    var end = value.selection.end;
+    if (start < 0 || end < 0 || start > text.length || end > text.length) {
+      start = text.length;
+      end = text.length;
+    }
+    if (start > end) {
+      final tmp = start;
+      start = end;
+      end = tmp;
+    }
+    final next = text.replaceRange(start, end, emoji);
+    final caret = start + emoji.length;
+    textController.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: caret),
+    );
+
+    final updated = <String>[
+      emoji,
+      ...recentEmojis.where((e) => e != emoji),
+    ].take(24).toList();
+    if (mounted) setState(() => recentEmojis = updated);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('chat_recent_emojis', updated);
+    } catch (_) {}
+  }
+
   Widget _emojiPanel() {
-    const emoji = [
-      '😀','😃','😄','😁','😆','😅','😂','🤣','😊','😇','🙂','🙃','😉','😌',
-      '😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓',
-      '😎','🥳','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩',
-      '🥺','😢','😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😱','😨','😰',
-      '😥','😓','🤗','🤔','🫡','🤭','🫢','🤫','🤥','😶','😐','😑','😬','🙄',
-      '😯','😦','😧','😮','😲','🥱','😴','🤤','😪','😵','🤐','🤢','🤮','🤧',
-      '😷','🤒','🤕','👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙',
-      '👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤝','👏','🙌','🫶',
-      '🙏','✍️','💪','🧠','👀','👁️','❤️','🩷','🧡','💛','💚','💙','🩵','💜',
-      '🖤','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓','💗','💖','💘',
-      '💝','💟','🔥','✨','⭐','🌟','💫','💥','💯','✅','❌','⚠️','❓','❗',
-      '🎉','🎊','🏆','🥇','📚','📖','✏️','📝','🎓','💡','🚀','🇵🇰'
+    const emoji = <String>[
+      '😀','😃','😄','😁','😆','😅','😂','🤣','🥲','☺️','😊','😇','🙂','🙃','😉','😌',
+      '😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🥸','🤩','🥳',
+      '😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬',
+      '🤯','😳','🥵','🥶','😱','😨','😰','😥','😓','🤗','🤔','🫡','🤭','🫢','🫣','🤫','🤥','😶','🫥',
+      '😐','🫤','😑','😬','🙄','😯','😦','😧','😮','😲','🥱','😴','🤤','😪','😵','😵‍💫','🤐','🥴',
+      '🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😈','👿','👹','👺','🤡','💩','👻','💀','☠️','👽','👾','🤖',
+      '👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️',
+      '🖖','👋','🤝','👏','🙌','🫶','👐','🤲','🙏','✍️','💅','🤳','💪','🦾','🦵','🦶','👂','👃','🧠','🫀',
+      '🫁','🦷','🦴','👀','👁️','👅','👄','🫦','👶','🧒','👦','👧','🧑','👱','👨','🧔','👩','🧓','👴','👵',
+      '❤️','🩷','🧡','💛','💚','💙','🩵','💜','🤎','🖤','🩶','🤍','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓',
+      '💗','💖','💘','💝','💟','💋','💌','💢','💥','💫','💦','💨','🕳️','💬','👁️‍🗨️','🗨️','🗯️','💭','💤',
+      '🔥','✨','⭐','🌟','⚡','☀️','🌤️','⛅','🌥️','☁️','🌧️','⛈️','🌩️','🌨️','❄️','☃️','🌈','☔','💧','🌊',
+      '🎉','🎊','🎈','🎁','🎀','🏆','🥇','🥈','🥉','⚽','🏏','🏀','🏐','🎾','🏸','🎯','🎮','🎲','♟️','🎵','🎶',
+      '📚','📖','📕','📗','📘','📙','📓','📔','📒','📝','✏️','🖊️','🖋️','📌','📍','📎','📐','📏','🎓','💡','🔬',
+      '💻','⌨️','🖥️','📱','☎️','📷','🎥','🎙️','🔋','🔌','💾','💿','📀','⌚','⏰','🔔','🔕','✅','❌','⚠️',
+      '❓','❗','‼️','⁉️','💯','🔒','🔓','🔐','🔑','🛡️','🚀','✈️','🚗','🏠','🏢','🏫','🏥','🕌','🌍','🌎','🌏',
+      '🍎','🍏','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍒','🥭','🍍','🥝','🍅','🥑','🥕','🌽','🍞','🥐','🍕','🍔',
+      '🍟','🍗','🍚','🍜','🍰','🎂','🍫','🍪','☕','🫖','🥤','🧃','💐','🌹','🌷','🌸','🌺','🌻','🌼','🍀','🌿',
+      '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🦅','🦆','🦋',
+      '🇵🇰','🇦🇪','🇦🇺','🇬🇧','🇺🇸','🇨🇦','🇸🇦','🇹🇷','🇶🇦','🇯🇵','🇰🇷','🇨🇳','🇩🇪','🇫🇷','🇮🇹','🇪🇸'
     ];
+
+    Widget emojiButton(String e, {double size = 25}) => Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _insertEmoji(e),
+        child: Center(child: Text(e, style: TextStyle(fontSize: size))),
+      ),
+    );
+
     return Container(
-      height: 210,
+      height: 292,
       color: Theme.of(context).colorScheme.surface,
-      padding: const EdgeInsets.all(12),
-      child: GridView.count(
-        crossAxisCount: 8,
-        children: emoji
-            .map(
-              (e) => InkWell(
-                onTap: () {
-                  textController.text += e;
-                  textController.selection = TextSelection.collapsed(
-                    offset: textController.text.length,
-                  );
-                },
-                child: Center(
-                  child: Text(e, style: const TextStyle(fontSize: 25)),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (recentEmojis.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 5),
+              child: Row(
+                children: [
+                  const Icon(Icons.history_rounded, size: 16, color: AppColors.muted),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Recent',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 45,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: recentEmojis.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 2),
+                itemBuilder: (_, i) => SizedBox(
+                  width: 42,
+                  child: emojiButton(recentEmojis[i], size: 24),
                 ),
               ),
-            )
-            .toList(),
+            ),
+            const Divider(height: 10),
+          ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 5),
+            child: Row(
+              children: [
+                const Icon(Icons.emoji_emotions_outlined, size: 16, color: AppColors.muted),
+                const SizedBox(width: 6),
+                Text(
+                  'Emojis',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${emoji.length}',
+                  style: const TextStyle(fontSize: 10.5, color: AppColors.muted),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: GridView.builder(
+              padding: EdgeInsets.zero,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 8,
+                mainAxisSpacing: 2,
+                crossAxisSpacing: 2,
+              ),
+              itemCount: emoji.length,
+              itemBuilder: (_, i) => emojiButton(emoji[i]),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1965,44 +2111,87 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Widget _blockedBanner() => Container(
     margin: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-    padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+    padding: const EdgeInsets.fromLTRB(16, 13, 14, 13),
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.surface,
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(20),
       border: Border.all(color: Theme.of(context).dividerColor),
     ),
-    child: Row(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.lock_outline_rounded, color: AppColors.muted),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                selfBlocked
-                    ? 'You blocked ${widget.conversation.title}'
-                    : 'Messaging is unavailable',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: AppColors.muted.withValues(alpha: .10),
+                shape: BoxShape.circle,
               ),
-              const SizedBox(height: 2),
-              Text(
-                selfBlocked
-                    ? 'You can’t send or receive new messages from this person.'
-                    : 'This person has blocked this conversation.',
-                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+              child: const Icon(
+                Icons.lock_outline_rounded,
+                size: 20,
+                color: AppColors.muted,
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    selfBlocked
+                        ? 'You blocked ${widget.conversation.title}'
+                        : 'Messaging is unavailable',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    selfBlocked
+                        ? 'You can’t send or receive new messages from this person.'
+                        : 'This person has blocked this conversation.',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.32,
+                      color: AppColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        if (selfBlocked)
-          FilledButton(
-            onPressed: _toggleBlock,
-            child: const Text('Unblock'),
+        if (selfBlocked) ...[
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: SizedBox(
+              width: 112,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 42),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                onPressed: _toggleBlock,
+                child: const Text('Unblock'),
+              ),
+            ),
           ),
+        ],
       ],
     ),
   );
@@ -3357,9 +3546,17 @@ class _SecureChatImageState extends State<SecureChatImage> {
 }
 
 class VoiceBubble extends StatefulWidget {
-  const VoiceBubble({super.key, required this.message, required this.api});
+  const VoiceBubble({
+    super.key,
+    required this.message,
+    required this.api,
+    this.onListened,
+    this.beforePlay,
+  });
   final ChatMessage message;
   final ApiClient api;
+  final VoidCallback? onListened;
+  final Future<void> Function()? beforePlay;
 
   @override
   State<VoiceBubble> createState() => _VoiceBubbleState();
@@ -3367,9 +3564,12 @@ class VoiceBubble extends StatefulWidget {
 
 class _VoiceBubbleState extends State<VoiceBubble> {
   static double rememberedSpeed = 1.0;
+  static _VoiceBubbleState? activeVoice;
+
   final player = AudioPlayer();
   StreamSubscription<Duration?>? durationSub;
-  bool ready = false, listened = false, loading = false;
+  StreamSubscription<PlayerState>? stateSub;
+  bool ready = false, listened = false, loading = false, preparing = false;
   String? localPath;
   Duration? decodedDuration;
   late double speed = rememberedSpeed;
@@ -3384,35 +3584,96 @@ class _VoiceBubbleState extends State<VoiceBubble> {
         setState(() {});
       }
     });
+    stateSub = player.playerStateStream.listen((state) {
+      if (state.processingState == ProcessingState.completed) {
+        if (activeVoice == this) activeVoice = null;
+        if (mounted) setState(() {});
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant VoiceBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.message.id != widget.message.id) {
+      unawaited(_resetForMessage());
+    } else if (widget.message.playedByMe) {
+      listened = true;
+    }
+  }
+
+  Future<void> _resetForMessage() async {
+    if (activeVoice == this) activeVoice = null;
+    await player.stop();
+    ready = false;
+    loading = false;
+    preparing = false;
+    decodedDuration = null;
+    localPath = null;
+    listened = widget.message.playedByMe;
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    if (activeVoice == this) activeVoice = null;
     durationSub?.cancel();
+    stateSub?.cancel();
     player.dispose();
     super.dispose();
   }
 
+  Future<void> _downloadFresh(File file) async {
+    final bytes = await widget.api.attachmentBytes(widget.message.attachmentUrl!);
+    await file.writeAsBytes(bytes, flush: true);
+  }
+
   Future<void> _prepare() async {
-    if (ready || loading) return;
+    if (ready || preparing) return;
+    preparing = true;
     loading = true;
     if (mounted) setState(() {});
     try {
       final dir = await getTemporaryDirectory();
       localPath = '${dir.path}/taleempk_voice_${widget.message.id}.m4a';
       final file = File(localPath!);
-      if (!await file.exists() || await file.length() == 0) {
-        final bytes = await widget.api.attachmentBytes(
-          widget.message.attachmentUrl!,
-        );
-        await file.writeAsBytes(bytes, flush: true);
+      if (!await file.exists() || await file.length() < 256) {
+        await _downloadFresh(file);
       }
-      await player.setFilePath(localPath!);
+      try {
+        await player.setFilePath(localPath!);
+      } catch (_) {
+        // A partial/corrupt cached voice note must never be reused.
+        try {
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+        await _downloadFresh(file);
+        await player.setFilePath(localPath!);
+      }
+      await player.setLoopMode(LoopMode.off);
       decodedDuration = player.duration;
       await player.setSpeed(speed);
       ready = true;
     } finally {
+      preparing = false;
       loading = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _pauseForAnotherVoice() async {
+    if (player.playing) await player.pause();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _playToEnd() async {
+    try {
+      await player.play();
+    } catch (_) {
+      // The visible toggle path reports preparation errors. Playback interruptions
+      // are treated like a normal pause so the user can tap play again.
+    } finally {
+      if (activeVoice == this && !player.playing) activeVoice = null;
       if (mounted) setState(() {});
     }
   }
@@ -3421,20 +3682,34 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     try {
       await _prepare();
       if (!ready) return;
+
+      if (player.playing) {
+        await player.pause();
+        if (activeVoice == this) activeVoice = null;
+        if (mounted) setState(() {});
+        return;
+      }
+
+      final previous = activeVoice;
+      if (previous != null && previous != this) {
+        await previous._pauseForAnotherVoice();
+      }
+      activeVoice = this;
+      if (widget.beforePlay != null) await widget.beforePlay!();
+
       if (!listened && !widget.message.mine) {
         listened = true;
-        widget.api.markVoicePlayed(widget.message.id).catchError((_) {});
+        widget.message.playedByMe = true;
+        widget.onListened?.call();
+        unawaited(widget.api.markVoicePlayed(widget.message.id).catchError((_) {}));
       }
       if (player.processingState == ProcessingState.completed) {
         await player.seek(Duration.zero);
       }
-      if (player.playing) {
-        await player.pause();
-      } else {
-        await player.play();
-      }
+      unawaited(_playToEnd());
       if (mounted) setState(() {});
     } catch (e) {
+      if (activeVoice == this) activeVoice = null;
       if (mounted) showMessage(context, apiMessage(e));
     }
   }
@@ -3487,13 +3762,14 @@ class _VoiceBubbleState extends State<VoiceBubble> {
         progress = .985;
       }
       final totalSeconds = (totalMs / 1000).round();
+      final currentSeconds = position.inSeconds.clamp(0, totalSeconds);
       final heard = widget.message.mine
           ? widget.message.playedByOther
-          : listened;
+          : (listened || widget.message.playedByMe);
       final dark = Theme.of(context).brightness == Brightness.dark;
       final playColor = widget.message.mine
           ? Colors.white
-          : const Color(0xFF118B78);
+          : (heard ? const Color(0xFF22A487) : const Color(0xFF118B78));
       final playIcon = widget.message.mine
           ? const Color(0xFF13284B)
           : Colors.white;
@@ -3513,6 +3789,9 @@ class _VoiceBubbleState extends State<VoiceBubble> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
+            color: heard && !widget.message.mine
+                ? const Color(0x24118B78)
+                : Colors.transparent,
             border: Border.all(color: active.withValues(alpha: .62)),
             borderRadius: BorderRadius.circular(18),
           ),
@@ -3620,7 +3899,9 @@ class _VoiceBubbleState extends State<VoiceBubble> {
               child: Row(
                 children: [
                   Text(
-                    _voiceDuration(totalSeconds),
+                    currentSeconds > 0 && player.processingState != ProcessingState.completed
+                        ? '${_voiceDuration(currentSeconds)} / ${_voiceDuration(totalSeconds)}'
+                        : _voiceDuration(totalSeconds),
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w900,
