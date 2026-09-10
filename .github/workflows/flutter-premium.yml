@@ -7,6 +7,7 @@ on:
       - 'flutter/**'
       - 'backend/**'
       - 'tools/patch_chat_realtime_v24.py'
+      - 'tools/patch_chat_runtime_v25.py'
       - '.github/workflows/flutter-premium.yml'
   push:
     branches: [main, flutter-premium-v2]
@@ -14,6 +15,7 @@ on:
       - 'flutter/**'
       - 'backend/**'
       - 'tools/patch_chat_realtime_v24.py'
+      - 'tools/patch_chat_runtime_v25.py'
       - '.github/workflows/flutter-premium.yml'
 
 permissions:
@@ -28,10 +30,12 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Apply realtime chat reconciliation patch
+      - name: Apply chat runtime patches
         working-directory: .
-        run: python tools/patch_chat_realtime_v24.py
-      - name: Commit realtime chat patch
+        run: |
+          python tools/patch_chat_realtime_v24.py
+          python tools/patch_chat_runtime_v25.py
+      - name: Commit chat runtime fixes
         if: github.event_name == 'push' && github.ref == 'refs/heads/flutter-premium-v2'
         working-directory: .
         run: |
@@ -39,7 +43,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -A
-            git commit -m "Sync edits deletes reactions polls and pins in realtime"
+            git commit -m "Fix voice indicators playback actions realtime and performance"
             git push
           fi
       - uses: subosito/flutter-action@v2
