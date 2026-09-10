@@ -6,18 +6,16 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_chat_v27.py'
       - '.github/workflows/flutter-premium.yml'
   push:
     branches: [main, flutter-premium-v2]
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_chat_v27.py'
       - '.github/workflows/flutter-premium.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -28,20 +26,6 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Apply v2.7 deep chat media audit
-        working-directory: .
-        run: python tools/patch_chat_v27.py
-      - name: Commit v2.7 chat fixes
-        if: github.event_name == 'push' && github.ref == 'refs/heads/flutter-premium-v2'
-        working-directory: .
-        run: |
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "Fix voice autoplay, played palette and photo composer"
-            git push
-          fi
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
