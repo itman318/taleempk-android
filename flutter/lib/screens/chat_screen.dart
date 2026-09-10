@@ -41,12 +41,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       typingSent = false,
       searching = false,
       selfBlocked = false,
-      muted = false;
+      muted = false,
+      loadingOlder = false,
+      historyDone = false;
   int recordSeconds = 0;
   double? uploadProgress;
   String? error, recordPath;
   String searchQuery = '';
   final selectedIds = <int>{};
+  List<Map<String, dynamic>> pinnedMessages = const [];
 
   @override
   void initState() {
@@ -55,6 +58,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     textController.addListener(_typing);
     selfBlocked = widget.conversation.selfBlocked;
     muted = widget.conversation.muted;
+    scroll.addListener(_historyListener);
     _load();
   }
 
@@ -82,6 +86,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       messages
         ..clear()
         ..addAll(fresh);
+      pinnedMessages =
+          await AppScope.of(context).api.pinnedMessages(widget.conversation.id);
+      historyDone = fresh.length < 150;
       error = null;
       _schedulePoll();
       _toBottom();
@@ -89,6 +96,47 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       error = apiMessage(e);
     }
     if (mounted) setState(() => loading = false);
+  }
+
+  void _historyListener() {
+    if (!scroll.hasClients || loading || loadingOlder || historyDone) return;
+    if (scroll.position.pixels < 180) _loadOlder();
+  }
+
+  Future<void> _loadOlder() async {
+    if (messages.isEmpty || loadingOlder || historyDone) return;
+    loadingOlder = true;
+    if (mounted) setState(() {});
+    final before = messages.first.id;
+    final oldExtent = scroll.hasClients ? scroll.position.maxScrollExtent : 0.0;
+    try {
+      final older = await AppScope.of(context).api.messages(
+        widget.conversation.id,
+        beforeId: before,
+      );
+      if (older.isEmpty) {
+        historyDone = true;
+      } else {
+        final unique = older
+            .where((m) => messages.every((old) => old.id != m.id))
+            .toList();
+        messages.insertAll(0, unique);
+        if (older.length < 150) historyDone = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!scroll.hasClients) return;
+          final gained = scroll.position.maxScrollExtent - oldExtent;
+          scroll.jumpTo((scroll.position.pixels + gained).clamp(
+            scroll.position.minScrollExtent,
+            scroll.position.maxScrollExtent,
+          ));
+        });
+      }
+    } catch (_) {
+      // Older history is optional; keep the current thread usable.
+    } finally {
+      loadingOlder = false;
+      if (mounted) setState(() {});
+    }
   }
 
   void _schedulePoll() {
@@ -243,6 +291,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       top: false,
       child: Column(
         children: [
+          if (pinnedMessages.isNotEmpty) _pinnedBar(),
           Expanded(
             child: loading
                 ? const Center(child: CircularProgressIndicator())
@@ -292,11 +341,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     return ListView.builder(
       controller: scroll,
-      padding: const EdgeInsets.fromLTRB(12, 16, 12, 14),
-      itemCount: visible.length,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 14),
+      itemCount: visible.length + (loadingOlder ? 1 : 0),
       itemBuilder: (_, i) {
-        final m = visible[i],
-            showDate = i == 0 || visible[i - 1].dateLabel != m.dateLabel;
+        if (loadingOlder && i == 0) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+        final index = loadingOlder ? i - 1 : i;
+        final m = visible[index],
+            showDate = index == 0 ||
+                visible[index - 1].dateLabel != m.dateLabel;
         return Column(
           children: [
             if (showDate)
@@ -408,7 +471,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             if (m.forwarded)
               _metaLine(Icons.forward_rounded, 'Forwarded', m.mine),
             if (m.reply != null) _quoted(m.reply!, m.mine),
-            if (m.voiceSeconds > 0 && !m.deleted)
+            if (m.poll != null && !m.deleted)
+              _pollBubble(m)
+            else if (m.voiceSeconds > 0 && !m.deleted)
               VoiceBubble(message: m, api: AppScope.of(context).api)
             else if (m.attachmentUrl != null && !m.deleted)
               _attachment(m)
@@ -634,6 +699,279 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (mounted && saved != null) showMessage(context, 'Attachment saved.');
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Widget _pinnedBar() => Container(
+    margin: const EdgeInsets.fromLTRB(10, 8, 10, 2),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: Theme.of(context).dividerColor),
+    ),
+    child: SizedBox(
+      height: 54,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        itemCount: pinnedMessages.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final p = pinnedMessages[i];
+          return InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _jumpToMessage(_asInt(p['id'])),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 230),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.blue.withValues(alpha: .08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.push_pin_rounded, size: 15, color: AppColors.blue),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      '${p['sender']}: ${p['text']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
+
+  Future<void> _jumpToMessage(int id) async {
+    if (id <= 0) return;
+    for (var attempt = 0; attempt < 6; attempt++) {
+      final index = messages.indexWhere((m) => m.id == id);
+      if (index >= 0) {
+        if (!scroll.hasClients) return;
+        final target = (index * 82.0).clamp(
+          scroll.position.minScrollExtent,
+          scroll.position.maxScrollExtent,
+        );
+        await scroll.animateTo(
+          target,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOut,
+        );
+        return;
+      }
+      if (historyDone) break;
+      await _loadOlder();
+    }
+    if (mounted) showMessage(context, 'That pinned message is not in the loaded history.');
+  }
+
+  Widget _pollBubble(ChatMessage message) {
+    final poll = message.poll!;
+    final totalVotes = poll.options.fold<int>(0, (sum, o) => sum + o.votes);
+    final colors = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 230, maxWidth: 285),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            poll.question,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: message.mine ? Colors.white : colors.onSurface,
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (final option in poll.options) ...[
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: poll.closed ? null : () => _votePoll(poll.id, option.id),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                decoration: BoxDecoration(
+                  color: option.mine
+                      ? (message.mine ? Colors.white18 : AppColors.blue.withValues(alpha: .12))
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: option.mine
+                        ? (message.mine ? Colors.white70 : AppColors.blue)
+                        : (message.mine ? Colors.white24 : colors.outlineVariant),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      option.mine
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      size: 18,
+                      color: option.mine
+                          ? (message.mine ? Colors.white : AppColors.blue)
+                          : (message.mine ? Colors.white70 : AppColors.muted),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        option.label,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: message.mine ? Colors.white : colors.onSurface,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      totalVotes == 0
+                          ? '0%'
+                          : '${((option.votes / totalVotes) * 100).round()}%',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: message.mine ? Colors.white70 : AppColors.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
+          Row(
+            children: [
+              Text(
+                '${poll.voters} voter${poll.voters == 1 ? '' : 's'}${poll.closed ? ' · closed' : ''}',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: message.mine ? Colors.white70 : AppColors.muted,
+                ),
+              ),
+              const Spacer(),
+              if (poll.mine)
+                InkWell(
+                  onTap: () => _togglePollClosed(poll.id, !poll.closed),
+                  child: Text(
+                    poll.closed ? 'Reopen' : 'Close poll',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      color: message.mine ? Colors.white : AppColors.blue,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _votePoll(int pollId, int optionId) async {
+    try {
+      await AppScope.of(context).api.votePoll(pollId, optionId);
+      await _load();
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _togglePollClosed(int pollId, bool closed) async {
+    try {
+      await AppScope.of(context).api.setPollClosed(pollId, closed);
+      await _load();
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _createPoll() async {
+    final question = TextEditingController();
+    final options = List.generate(4, (_) => TextEditingController());
+    var multi = false;
+    final send = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheet) => StatefulBuilder(
+        builder: (context, setLocal) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            4,
+            20,
+            MediaQuery.viewInsetsOf(context).bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Create poll',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: question,
+                  maxLength: 240,
+                  decoration: const InputDecoration(labelText: 'Question'),
+                ),
+                for (var i = 0; i < options.length; i++) ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: options[i],
+                    maxLength: 120,
+                    decoration: InputDecoration(labelText: 'Option ${i + 1}'),
+                  ),
+                ],
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: multi,
+                  onChanged: (v) => setLocal(() => multi = v),
+                  title: const Text('Allow multiple answers'),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(sheet, true),
+                  icon: const Icon(Icons.send_rounded),
+                  label: const Text('Send poll'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (send == true && mounted) {
+      final values = options
+          .map((e) => e.text.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (question.text.trim().length < 2 || values.length < 2) {
+        showMessage(context, 'Add a question and at least two options.');
+      } else {
+        try {
+          await AppScope.of(context).api.createPoll(
+            widget.conversation.id,
+            question.text.trim(),
+            values,
+            multi: multi,
+          );
+          await _load();
+        } catch (e) {
+          if (mounted) showMessage(context, apiMessage(e));
+        }
+      }
+    }
+    question.dispose();
+    for (final controller in options) {
+      controller.dispose();
     }
   }
 
@@ -895,6 +1233,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 final file = await FilePicker.pickFile();
                 final path = file?.path;
                 if (path != null) _upload(path);
+              },
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.poll_outlined,
+                color: AppColors.violet,
+              ),
+              title: const Text('Create poll'),
+              onTap: () {
+                Navigator.pop(sheet);
+                _createPoll();
               },
             ),
             ListTile(
