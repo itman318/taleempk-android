@@ -330,6 +330,8 @@ $nativeSharedHandlers = [
     'manage_chat'    => 'chat_manage.php',
     'search_chat'    => 'chat_search.php',
     'chat_date'      => 'chat_date.php',
+    'chat_group'     => 'chat_group.php',
+    'chat_vote'      => 'chat_vote.php',
     'block_user'     => 'block.php',
     'report_user'    => 'report.php',
     'call'           => 'call.php',
@@ -553,8 +555,9 @@ if ($action === 'create_ticket') {
 
 if ($action === 'conversations') {
     require_feature('feature_chat');
+    $archived = !empty($_POST['archived']) ? 1 : 0;
     $rows = fetch_all(
-        "SELECT c.id,c.type,c.title,c.avatar,c.last_message,c.last_activity,cm.unread_count,cm.is_muted,
+        "SELECT c.id,c.type,c.title,c.avatar,c.last_message,c.last_activity,cm.unread_count,cm.is_muted,cm.is_archived,cm.role,
                 (SELECT u2.name FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
                   WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_name,
                 (SELECT u2.avatar FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
@@ -568,8 +571,8 @@ if ($action === 'conversations') {
                 (SELECT u2.username FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
                   WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_username
            FROM conversation_members cm JOIN conversations c ON c.id=cm.conversation_id
-          WHERE cm.user_id=? AND cm.is_archived=0 ORDER BY c.last_activity DESC LIMIT 100",
-        [$uid,$uid,$uid,$uid,$uid,$uid,$uid]
+          WHERE cm.user_id=? AND cm.is_archived=? ORDER BY c.last_activity DESC LIMIT 100",
+        [$uid,$uid,$uid,$uid,$uid,$uid,$uid,$archived]
     );
     $items = array_map(static function(array $c) use ($uid): array {
         $group = $c['type']==='group';
@@ -595,6 +598,7 @@ if ($action === 'conversations') {
             'avatar'=>$avatar ? upload_url($avatar) : null, 'last_message'=>(string)($c['last_message'] ?? ''),
             'last_activity'=>time_ago($c['last_activity']), 'unread'=>(int)$c['unread_count'], 'is_group'=>$group,
             'online'=>$online, 'status_text'=>$status, 'muted'=>(int)$c['is_muted']===1,
+            'archived'=>(int)$c['is_archived']===1, 'group_role'=>(string)($c['role'] ?? ''),
             'other_id'=>$otherId, 'other_username'=>(string)($c['other_username'] ?? ''),
             'self_blocked'=>$selfBlocked, 'blocked_by_other'=>$blockedByOther,
             'calls_enabled'=>$callsEnabled, 'video_calls_enabled'=>$videoCallsEnabled,
@@ -648,19 +652,24 @@ if ($action === 'messages') {
     require_feature('feature_chat');
     $cid = (int) ($_POST['conversation_id'] ?? 0);
     $afterId = max(0, (int)($_POST['after_id'] ?? 0));
+    $beforeId = max(0, (int)($_POST['before_id'] ?? 0));
+    if ($afterId > 0) $beforeId = 0;
     $member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
     if (!$member) { mobile_error('That conversation is not yours.', 403); }
     $rows = fetch_all(
         'SELECT m.*,u.name sender,ru.name reply_sender,rm.content reply_content,
                 rm.status reply_status,rm.voice_seconds reply_voice_seconds,rm.attachment_name reply_attachment_name,
-                EXISTS(SELECT 1 FROM message_stars s WHERE s.message_id=m.id AND s.user_id=?) starred
+                EXISTS(SELECT 1 FROM message_stars s WHERE s.message_id=m.id AND s.user_id=?) starred,
+                EXISTS(SELECT 1 FROM message_plays mp WHERE mp.message_id=m.id AND mp.user_id=?) played_by_me,
+                EXISTS(SELECT 1 FROM message_plays mp2 WHERE mp2.message_id=m.id AND mp2.user_id<>m.sender_id) played_by_other
            FROM messages m JOIN users u ON u.id=m.sender_id
            LEFT JOIN messages rm ON rm.id=m.reply_to_id
            LEFT JOIN users ru ON ru.id=rm.sender_id
           WHERE m.conversation_id=?
             AND (?=0 OR m.id>?)
+            AND (?=0 OR m.id<?)
             AND NOT EXISTS(SELECT 1 FROM message_hides h WHERE h.message_id=m.id AND h.user_id=?)
-          ORDER BY m.id DESC LIMIT 150', [$uid,$cid,$afterId,$afterId,$uid]
+          ORDER BY m.id DESC LIMIT 150', [$uid,$uid,$cid,$afterId,$afterId,$beforeId,$beforeId,$uid]
     );
     $newest = $rows ? (int) $rows[0]['id'] : 0;
     if ($newest) {
@@ -683,7 +692,46 @@ if ($action === 'messages') {
             ];
         }
     }
-    $items = array_reverse(array_map(static function(array $m) use ($uid, $otherReadThrough, $reactionMap): array {
+    $pollMap = [];
+    if ($messageIds && table_exists('chat_polls')) {
+        $ph = implode(',', array_fill(0, count($messageIds), '?'));
+        $pollRows = fetch_all("SELECT id,message_id,question,multi,closed_at,created_by
+                                 FROM chat_polls WHERE message_id IN ($ph)", $messageIds);
+        if ($pollRows) {
+            $pollIds = array_map(static fn(array $p): int => (int)$p['id'], $pollRows);
+            $pp = implode(',', array_fill(0, count($pollIds), '?'));
+            $opts = fetch_all("SELECT id,poll_id,label FROM chat_poll_options
+                                WHERE poll_id IN ($pp) ORDER BY position,id", $pollIds);
+            $counts = fetch_all("SELECT poll_id,option_id,COUNT(*) n FROM chat_poll_votes
+                                  WHERE poll_id IN ($pp) GROUP BY poll_id,option_id", $pollIds);
+            $mineVotes = fetch_all("SELECT poll_id,option_id FROM chat_poll_votes
+                                     WHERE poll_id IN ($pp) AND user_id=?", array_merge($pollIds, [$uid]));
+            $voters = fetch_all("SELECT poll_id,COUNT(DISTINCT user_id) n FROM chat_poll_votes
+                                  WHERE poll_id IN ($pp) GROUP BY poll_id", $pollIds);
+            $optBy=[]; $countBy=[]; $mineBy=[]; $voterBy=[];
+            foreach ($opts as $o) $optBy[(int)$o['poll_id']][]=$o;
+            foreach ($counts as $r) $countBy[(int)$r['poll_id']][(int)$r['option_id']] = (int)$r['n'];
+            foreach ($mineVotes as $r) $mineBy[(int)$r['poll_id']][] = (int)$r['option_id'];
+            foreach ($voters as $r) $voterBy[(int)$r['poll_id']] = (int)$r['n'];
+            foreach ($pollRows as $p) {
+                $pid=(int)$p['id']; $options=[];
+                foreach ($optBy[$pid] ?? [] as $o) {
+                    $oid=(int)$o['id'];
+                    $options[]=[
+                        'id'=>$oid,'label'=>(string)$o['label'],
+                        'votes'=>$countBy[$pid][$oid] ?? 0,
+                        'mine'=>in_array($oid,$mineBy[$pid] ?? [],true),
+                    ];
+                }
+                $pollMap[(int)$p['message_id']] = [
+                    'id'=>$pid,'question'=>(string)$p['question'],'multi'=>(int)$p['multi']===1,
+                    'closed'=>!empty($p['closed_at']),'mine'=>(int)$p['created_by']===$uid,
+                    'voters'=>$voterBy[$pid] ?? 0,'options'=>$options,
+                ];
+            }
+        }
+    }
+    $items = array_reverse(array_map(static function(array $m) use ($uid, $otherReadThrough, $reactionMap, $pollMap): array {
         $mine = (int)$m['sender_id']===$uid;
         $read = $mine && $otherReadThrough >= (int) $m['id'];
         $deleted = $m['status']==='deleted';
@@ -710,6 +758,10 @@ if ($action === 'messages') {
             'pinned'=>(int)($m['is_pinned'] ?? 0)===1,
             'can_edit'=>$mine && !$deleted && within_edit_window((string)$m['created_at']),
             'voice_seconds'=>$deleted ? 0 : (int)($m['voice_seconds'] ?? 0),
+            'voice_wave'=>$deleted ? '' : (string)($m['voice_wave'] ?? ''),
+            'played_by_me'=>(bool)($m['played_by_me'] ?? false),
+            'played_by_other'=>(bool)($m['played_by_other'] ?? false),
+            'poll'=>$deleted ? null : ($pollMap[(int)$m['id']] ?? null),
             'attachment_url'=>!$deleted && !empty($m['attachment']) ? url('api/mobile.php?action=file&id='.(int)$m['id']) : null,
             'attachment_name'=>$deleted ? null : ($m['attachment_name'] ?? null),
             'attachment_type'=>$deleted ? null : ($m['attachment_type'] ?? null), 'read'=>$read,
@@ -717,6 +769,69 @@ if ($action === 'messages') {
         ];
     }, $rows));
     mobile_out(['messages'=>$items]);
+}
+
+if ($action === 'mark_voice_played') {
+    $mid = max(0, (int)($_POST['message_id'] ?? 0));
+    $m = fetch_one("SELECT m.id,m.sender_id,m.voice_seconds
+                      FROM messages m
+                      JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=?
+                     WHERE m.id=? AND m.status='sent' LIMIT 1", [$uid,$mid]);
+    if (!$m || (int)$m['voice_seconds']<=0 || (int)$m['sender_id']===$uid) {
+        mobile_error('That voice message is not available.', 404);
+    }
+    if (table_exists('message_plays') && (int)($u['show_receipts'] ?? 1)===1) {
+        q('INSERT IGNORE INTO message_plays (message_id,user_id) VALUES (?,?)', [$mid,$uid]);
+    }
+    mobile_out(['played'=>true]);
+}
+
+if ($action === 'pinned_messages') {
+    $cid=max(0,(int)($_POST['conversation_id'] ?? 0));
+    if (!fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?',[$cid,$uid])) {
+        mobile_error('That conversation is not yours.',403);
+    }
+    $pins=fetch_all("SELECT m.id,m.content,m.voice_seconds,m.attachment_name,u.name sender
+                       FROM messages m JOIN users u ON u.id=m.sender_id
+                      WHERE m.conversation_id=? AND m.is_pinned=1 AND m.status='sent'
+                      ORDER BY m.id DESC LIMIT 5",[$cid]);
+    $out=array_map(static function(array $m): array {
+        $text=trim((string)$m['content']);
+        if ($text==='') $text=(int)$m['voice_seconds']>0 ? 'Voice message'
+            : (!empty($m['attachment_name']) ? (string)$m['attachment_name'] : 'Attachment');
+        return ['id'=>(int)$m['id'],'sender'=>(string)$m['sender'],'text'=>mb_substr($text,0,120)];
+    },$pins);
+    mobile_out(['pinned'=>$out]);
+}
+
+if ($action === 'people_search') {
+    $q=trim((string)($_POST['q'] ?? ''));
+    if (mb_strlen($q)<2) mobile_out(['people'=>[]]);
+    $like='%'.$q.'%';
+    $rows=fetch_all("SELECT id,name,username,avatar FROM users
+                      WHERE id<>? AND status='active' AND deleted_at IS NULL
+                        AND (name LIKE ? OR username LIKE ?)
+                      ORDER BY is_verified DESC,last_seen DESC LIMIT 25",[$uid,$like,$like]);
+    $out=array_map(static fn(array $r): array => [
+        'id'=>(int)$r['id'],'name'=>(string)$r['name'],'username'=>(string)$r['username'],
+        'avatar'=>!empty($r['avatar'])?upload_url((string)$r['avatar']):null,
+    ],$rows);
+    mobile_out(['people'=>$out]);
+}
+
+if ($action === 'group_members') {
+    $cid=max(0,(int)($_POST['conversation_id'] ?? 0));
+    $me=fetch_one("SELECT cm.role FROM conversation_members cm JOIN conversations c ON c.id=cm.conversation_id
+                    WHERE cm.conversation_id=? AND cm.user_id=? AND c.type='group' LIMIT 1",[$cid,$uid]);
+    if (!$me) mobile_error('That group is not available.',404);
+    $rows=fetch_all("SELECT u.id,u.name,u.username,u.avatar,cm.role
+                      FROM conversation_members cm JOIN users u ON u.id=cm.user_id
+                     WHERE cm.conversation_id=? ORDER BY cm.role='admin' DESC,cm.id",[$cid]);
+    $out=array_map(static fn(array $r): array => [
+        'id'=>(int)$r['id'],'name'=>(string)$r['name'],'username'=>(string)$r['username'],
+        'avatar'=>!empty($r['avatar'])?upload_url((string)$r['avatar']):null,'role'=>(string)$r['role'],
+    ],$rows);
+    mobile_out(['role'=>(string)$me['role'],'members'=>$out]);
 }
 
 if ($action === 'file') {
