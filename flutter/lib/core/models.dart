@@ -301,6 +301,24 @@ class ChatPoll {
   );
 }
 
+class ChatLinkPreview {
+  const ChatLinkPreview({
+    required this.url,
+    required this.title,
+    required this.description,
+    this.image,
+  });
+  final String url, title, description;
+  final String? image;
+
+  factory ChatLinkPreview.fromJson(Map<String, dynamic> j) => ChatLinkPreview(
+    url: '${j['url'] ?? ''}',
+    title: '${j['title'] ?? ''}',
+    description: '${j['description'] ?? j['desc'] ?? ''}',
+    image: _nullable(j['image']),
+  );
+}
+
 class ChatMessage {
   ChatMessage({
     required this.id,
@@ -327,16 +345,19 @@ class ChatMessage {
     this.playedByMe = false,
     this.playedByOther = false,
     this.poll,
+    this.encrypted = false,
+    this.linkPreview,
   });
   final int id, senderId, voiceSeconds;
   final String sender, content, time, dateLabel, voiceWave;
   final String? attachmentUrl, attachmentName, attachmentType;
   final bool mine, deleted, edited, forwarded, starred, pinned, canEdit;
-  final bool playedByMe, playedByOther;
+  final bool playedByMe, playedByOther, encrypted;
   bool read;
   final ReplyPreview? reply;
   final List<ChatReaction> reactions;
   final ChatPoll? poll;
+  final ChatLinkPreview? linkPreview;
   factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(
     id: _int(j['id']),
     senderId: _int(j['sender_id']),
@@ -364,6 +385,10 @@ class ChatMessage {
     playedByMe: _bool(j['played_by_me']),
     playedByOther: _bool(j['played_by_other']),
     poll: j['poll'] is Map ? ChatPoll.fromJson(_map(j['poll'])) : null,
+    encrypted: _bool(j['encrypted']),
+    linkPreview: j['link_preview'] is Map
+        ? ChatLinkPreview.fromJson(_map(j['link_preview']))
+        : null,
   );
 }
 
