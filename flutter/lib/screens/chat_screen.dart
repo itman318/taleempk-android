@@ -1482,6 +1482,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   _openProfile();
                 },
               ),
+            if (widget.conversation.isGroup)
+              ListTile(
+                leading: const Icon(Icons.group_outlined),
+                title: const Text('Group members & settings'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  _groupManagement();
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.calendar_month_outlined),
               title: const Text('Jump to date'),
@@ -1513,6 +1522,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   _toggleBlock();
                 },
               ),
+            ListTile(
+              leading: Icon(
+                widget.conversation.archived
+                    ? Icons.unarchive_outlined
+                    : Icons.archive_outlined,
+              ),
+              title: Text(
+                widget.conversation.archived ? 'Unarchive chat' : 'Archive chat',
+              ),
+              onTap: () {
+                Navigator.pop(sheet);
+                _toggleArchive();
+              },
+            ),
             ListTile(
               leading: Icon(
                 muted
@@ -1547,6 +1570,310 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  Future<void> _toggleArchive() async {
+    try {
+      final archived = await AppScope.of(context).api
+          .toggleConversationArchive(widget.conversation.id);
+      if (!mounted) return;
+      showMessage(context, archived ? 'Chat archived.' : 'Chat restored.');
+      Navigator.pop(context);
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _groupManagement() async {
+    try {
+      var data = await AppScope.of(context).api.groupMembers(widget.conversation.id);
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (sheet) => StatefulBuilder(
+          builder: (context, setLocal) {
+            final role = '${data['role'] ?? ''}';
+            final members = (data['members'] is List)
+                ? (data['members'] as List)
+                    .whereType<Map>()
+                    .map((e) => e.cast<String, dynamic>())
+                    .toList()
+                : <Map<String, dynamic>>[];
+            return SizedBox(
+              height: MediaQuery.sizeOf(context).height * .78,
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.groups_rounded, color: AppColors.blue),
+                    title: Text(
+                      widget.conversation.title,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                    ),
+                    subtitle: Text('${members.length} members · ${role.isEmpty ? 'member' : role}'),
+                    trailing: role == 'admin'
+                        ? IconButton(
+                            tooltip: 'Rename group',
+                            onPressed: () async {
+                              final value = await _renameGroup();
+                              if (value != null && sheet.mounted) {
+                                setLocal(() {});
+                              }
+                            },
+                            icon: const Icon(Icons.edit_outlined),
+                          )
+                        : null,
+                  ),
+                  if (role == 'admin')
+                    ListTile(
+                      leading: const Icon(Icons.person_add_alt_1_rounded),
+                      title: const Text('Add member'),
+                      onTap: () async {
+                        await _addGroupMember();
+                        data = await AppScope.of(context).api
+                            .groupMembers(widget.conversation.id);
+                        if (sheet.mounted) setLocal(() {});
+                      },
+                    ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: members.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1, indent: 70),
+                      itemBuilder: (_, i) {
+                        final member = members[i];
+                        final id = _asInt(member['id']);
+                        final memberRole = '${member['role'] ?? ''}';
+                        return ListTile(
+                          leading: UserAvatar(
+                            url: member['avatar']?.toString(),
+                            name: '${member['name'] ?? ''}',
+                            radius: 20,
+                          ),
+                          title: Text('${member['name'] ?? ''}'),
+                          subtitle: Text(
+                            '@${member['username'] ?? ''}${memberRole == 'admin' ? ' · admin' : ''}',
+                          ),
+                          trailing: role == 'admin' &&
+                                  id != AppScope.of(context).user?.id
+                              ? IconButton(
+                                  tooltip: 'Remove member',
+                                  onPressed: () async {
+                                    final yes = await showDialog<bool>(
+                                          context: context,
+                                          builder: (d) => AlertDialog(
+                                            title: const Text('Remove member?'),
+                                            content: Text(
+                                              'Remove ${member['name']} from this group?',
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () => Navigator.pop(d, false),
+                                                child: const Text('Cancel'),
+                                              ),
+                                              FilledButton(
+                                                onPressed: () => Navigator.pop(d, true),
+                                                child: const Text('Remove'),
+                                              ),
+                                            ],
+                                          ),
+                                        ) ??
+                                        false;
+                                    if (!yes) return;
+                                    await AppScope.of(context).api.groupAction(
+                                      'remove',
+                                      conversationId: widget.conversation.id,
+                                      userId: id,
+                                    );
+                                    data = await AppScope.of(context).api
+                                        .groupMembers(widget.conversation.id);
+                                    if (sheet.mounted) setLocal(() {});
+                                  },
+                                  icon: const Icon(
+                                    Icons.person_remove_outlined,
+                                    color: AppColors.danger,
+                                  ),
+                                )
+                              : null,
+                        );
+                      },
+                    ),
+                  ),
+                  SafeArea(
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          final yes = await showDialog<bool>(
+                                context: context,
+                                builder: (d) => AlertDialog(
+                                  title: const Text('Leave group?'),
+                                  content: const Text(
+                                    'You will stop receiving messages from this group.',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(d, false),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    FilledButton(
+                                      onPressed: () => Navigator.pop(d, true),
+                                      child: const Text('Leave'),
+                                    ),
+                                  ],
+                                ),
+                              ) ??
+                              false;
+                          if (!yes) return;
+                          await AppScope.of(context).api.groupAction(
+                            'leave',
+                            conversationId: widget.conversation.id,
+                          );
+                          if (sheet.mounted) Navigator.pop(sheet);
+                          if (mounted) Navigator.pop(context);
+                        },
+                        icon: const Icon(Icons.logout_rounded, color: AppColors.danger),
+                        label: const Text(
+                          'Leave group',
+                          style: TextStyle(color: AppColors.danger),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<String?> _renameGroup() async {
+    final controller = TextEditingController(text: widget.conversation.title);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('Rename group'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 120,
+          decoration: const InputDecoration(labelText: 'Group name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(d),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(d, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null || value.length < 2 || !mounted) return null;
+    try {
+      await AppScope.of(context).api.groupAction(
+        'rename',
+        conversationId: widget.conversation.id,
+        title: value,
+      );
+      showMessage(context, 'Group renamed.');
+      return value;
+    } catch (e) {
+      showMessage(context, apiMessage(e));
+      return null;
+    }
+  }
+
+  Future<void> _addGroupMember() async {
+    final controller = TextEditingController();
+    List<Map<String, dynamic>> results = const [];
+    int selected = 0;
+    final add = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheet) => StatefulBuilder(
+        builder: (context, setLocal) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * .62,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                child: TextField(
+                  controller: controller,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: 'Search people',
+                    prefixIcon: const Icon(Icons.person_search_rounded),
+                    suffixIcon: IconButton(
+                      onPressed: () async {
+                        if (controller.text.trim().length < 2) return;
+                        results = await AppScope.of(context).api
+                            .searchPeople(controller.text.trim());
+                        if (sheet.mounted) setLocal(() {});
+                      },
+                      icon: const Icon(Icons.search_rounded),
+                    ),
+                  ),
+                  onSubmitted: (_) async {
+                    if (controller.text.trim().length < 2) return;
+                    results = await AppScope.of(context).api
+                        .searchPeople(controller.text.trim());
+                    if (sheet.mounted) setLocal(() {});
+                  },
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: results.length,
+                  itemBuilder: (_, i) {
+                    final p = results[i];
+                    final id = _asInt(p['id']);
+                    return RadioListTile<int>(
+                      value: id,
+                      groupValue: selected,
+                      onChanged: (v) => setLocal(() => selected = v ?? 0),
+                      title: Text('${p['name'] ?? ''}'),
+                      subtitle: Text('@${p['username'] ?? ''}'),
+                    );
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: FilledButton(
+                  onPressed: selected > 0
+                      ? () => Navigator.pop(sheet, true)
+                      : null,
+                  child: const Text('Add member'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    controller.dispose();
+    if (add != true || selected <= 0 || !mounted) return;
+    try {
+      await AppScope.of(context).api.groupAction(
+        'add',
+        conversationId: widget.conversation.id,
+        userId: selected,
+      );
+      showMessage(context, 'Member added.');
+    } catch (e) {
+      showMessage(context, apiMessage(e));
+    }
   }
 
   Future<void> _openProfile() async {
