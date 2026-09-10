@@ -1932,6 +1932,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
       return;
     }
+    await VoiceBubble.pauseActivePlayback();
+    await voicePreviewPlayer.stop();
     final dir = await getTemporaryDirectory();
     recordPath =
         '${dir.path}/taleempk_${DateTime.now().millisecondsSinceEpoch}.m4a';
@@ -2021,6 +2023,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (voicePreviewPlayer.playing) {
         await voicePreviewPlayer.pause();
       } else {
+        await VoiceBubble.pauseActivePlayback();
         await voicePreviewPlayer.play();
       }
     } catch (e) {
@@ -2051,8 +2054,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         voicePreviewPath = null;
         recordPath = null;
         recordSeconds = 0;
-        recordPath = null;
-        voicePreviewPath = null;
         voiceLevels.clear();
       });
     }
@@ -3558,6 +3559,13 @@ class VoiceBubble extends StatefulWidget {
   final VoidCallback? onListened;
   final Future<void> Function()? beforePlay;
 
+  static Future<void> pauseActivePlayback() async {
+    final active = _VoiceBubbleState.activeVoice;
+    if (active != null) {
+      await active._pauseForAnotherVoice();
+    }
+  }
+
   @override
   State<VoiceBubble> createState() => _VoiceBubbleState();
 }
@@ -3663,6 +3671,7 @@ class _VoiceBubbleState extends State<VoiceBubble> {
 
   Future<void> _pauseForAnotherVoice() async {
     if (player.playing) await player.pause();
+    if (activeVoice == this) activeVoice = null;
     if (mounted) setState(() {});
   }
 
@@ -3689,6 +3698,8 @@ class _VoiceBubbleState extends State<VoiceBubble> {
         if (mounted) setState(() {});
         return;
       }
+
+      if (activeVoice == this) return;
 
       final previous = activeVoice;
       if (previous != null && previous != this) {
