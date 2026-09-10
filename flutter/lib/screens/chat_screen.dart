@@ -2136,6 +2136,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           icon: const Icon(Icons.copy_rounded),
         ),
         IconButton(
+          tooltip: 'Forward selected',
+          onPressed: _forwardSelected,
+          icon: const Icon(Icons.forward_rounded),
+        ),
+        IconButton(
           tooltip: 'Delete selected',
           onPressed: _deleteSelected,
           icon: const Icon(Icons.delete_outline_rounded, color: AppColors.danger),
@@ -2155,6 +2160,57 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     await Clipboard.setData(ClipboardData(text: text));
     if (mounted) showMessage(context, 'Selected messages copied.');
+  }
+
+  Future<void> _forwardSelected() async {
+    final chosen = messages.where((m) => selectedIds.contains(m.id)).toList();
+    if (chosen.isEmpty) return;
+    try {
+      final chats = await AppScope.of(context).api.conversations();
+      if (!mounted) return;
+      final target = await showModalBottomSheet<Conversation>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (sheet) => SizedBox(
+          height: MediaQuery.sizeOf(sheet).height * .65,
+          child: ListView(
+            children: [
+              const ListTile(
+                leading: Icon(Icons.forward_rounded, color: AppColors.blue),
+                title: Text(
+                  'Forward selected messages',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              ...chats
+                  .where((chat) => chat.id != widget.conversation.id)
+                  .map(
+                    (chat) => ListTile(
+                      leading: UserAvatar(
+                        url: chat.avatar,
+                        name: chat.title,
+                        radius: 20,
+                      ),
+                      title: Text(chat.title),
+                      subtitle: Text(chat.statusText),
+                      onTap: () => Navigator.pop(sheet, chat),
+                    ),
+                  ),
+            ],
+          ),
+        ),
+      );
+      if (target == null || !mounted) return;
+      for (final message in chosen) {
+        await AppScope.of(context).api.forwardMessage(message.id, target.id);
+      }
+      selectedIds.clear();
+      setState(() {});
+      showMessage(context, '${chosen.length} message${chosen.length == 1 ? '' : 's'} forwarded.');
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
   }
 
   Future<void> _deleteSelected() async {
@@ -2364,6 +2420,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 setState(() => selectedIds.add(m.id));
               },
             ),
+            if (m.edited)
+              ListTile(
+                leading: const Icon(Icons.history_rounded),
+                title: const Text('Edit history'),
+                onTap: () {
+                  Navigator.pop(sheet);
+                  _showEditHistory(m);
+                },
+              ),
             if (m.canEdit)
               ListTile(
                 leading: const Icon(Icons.edit_outlined),
@@ -2482,6 +2547,57 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  Future<void> _showEditHistory(ChatMessage m) async {
+    try {
+      final history = await AppScope.of(context).api.editHistory(m.id);
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheet) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheet).height * .65,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(
+                  leading: Icon(Icons.history_rounded, color: AppColors.blue),
+                  title: Text(
+                    'Edit history',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+                Flexible(
+                  child: history.isEmpty
+                      ? const Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text('No earlier version is available.'),
+                        )
+                      : ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: history.length,
+                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          itemBuilder: (_, i) {
+                            final h = history[i];
+                            return ListTile(
+                              title: Text('${h['content'] ?? ''}'),
+                              subtitle: Text('${h['edited_at'] ?? ''}'),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
   }
 
   Future<void> _edit(ChatMessage m) async {
