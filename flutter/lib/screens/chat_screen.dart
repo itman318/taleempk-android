@@ -803,7 +803,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
                 decoration: BoxDecoration(
                   color: option.mine
-                      ? (message.mine ? Colors.white18 : AppColors.blue.withValues(alpha: .12))
+                      ? (message.mine ? Colors.white.withValues(alpha: .18) : AppColors.blue.withValues(alpha: .12))
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
