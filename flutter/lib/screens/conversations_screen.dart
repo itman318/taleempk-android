@@ -59,7 +59,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       final fresh = await AppScope.of(context).api.conversations(
         archived: archivedMode,
       );
-      if (mounted && fresh.toString() != all.toString()) {
+      if (mounted && _conversationSignature(fresh) != _conversationSignature(all)) {
         setState(() => all = fresh);
       }
     } catch (_) {
@@ -68,6 +68,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       silentRefreshing = false;
     }
   }
+
+  String _conversationSignature(List<Conversation> items) => items
+      .map(
+        (c) => '${c.id}|${c.unread}|${c.lastMessage}|${c.lastActivity}|'
+            '${c.online}|${c.statusText}|${c.muted}|${c.archived}|'
+            '${c.selfBlocked}|${c.blockedByOther}',
+      )
+      .join('\n');
 
   @override
   Widget build(BuildContext context) {

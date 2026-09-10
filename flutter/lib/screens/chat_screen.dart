@@ -3128,31 +3128,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _quickReaction(ChatMessage m) async {
-    const values = ['❤️', '👍', '😂', '😮', '😢', '🔥'];
-    await showDialog<void>(
-      context: context,
-      builder: (d) => AlertDialog(
-        contentPadding: const EdgeInsets.all(12),
-        content: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: values
-              .map(
-                (e) => IconButton(
-                  onPressed: () async {
-                    Navigator.pop(d);
-                    await AppScope.of(context).api.react(m.id, e);
-                    _load();
-                  },
-                  icon: Text(e, style: const TextStyle(fontSize: 25)),
-                ),
-              )
-              .toList(),
-        ),
-      ),
-    );
-  }
-
   Future<void> _showEditHistory(ChatMessage m) async {
     try {
       final history = await AppScope.of(context).api.editHistory(m.id);
