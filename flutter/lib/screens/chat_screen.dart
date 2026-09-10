@@ -29,7 +29,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final messages = <ChatMessage>[];
   final textController = TextEditingController(), scroll = ScrollController();
   final recorder = AudioRecorder();
-  Timer? poll, recordTimer, waveTimer, presenceDebounce;
+  Timer? poll, recordTimer, waveTimer, presenceDebounce, typingHeartbeat;
   ChatPresence? presence;
   ReplyPreview? reply;
   bool loading = true,
@@ -70,6 +70,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     recordTimer?.cancel();
     waveTimer?.cancel();
     presenceDebounce?.cancel();
+    typingHeartbeat?.cancel();
     recorder.dispose();
     textController.dispose();
     scroll.dispose();
@@ -78,7 +79,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _poll();
+    if (state == AppLifecycleState.resumed) {
+      _poll();
+      return;
+    }
+    typingHeartbeat?.cancel();
+    typingHeartbeat = null;
+    typingSent = false;
+    AppScope.of(context).api
+        .presence(widget.conversation.id, clear: true)
+        .catchError((_) => const ChatPresence(
+              active: false,
+              kind: '',
+              name: '',
+              readThrough: 0,
+            ));
   }
 
   Future<void> _load() async {
@@ -154,9 +169,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final fresh = await AppScope.of(context).api
           .messages(widget.conversation.id, afterId: after);
       final p = await AppScope.of(context).api
-          .presence(widget.conversation.id, '');
+          .presence(widget.conversation.id);
+      final played = p.playedIds.toSet();
       for (final message in messages) {
         if (message.mine && message.id <= p.readThrough) message.read = true;
+        if (message.mine &&
+            message.voiceSeconds > 0 &&
+            played.contains(message.id)) {
+          message.playedByOther = true;
+        }
       }
       if (fresh.isNotEmpty) {
         messages.addAll(
@@ -176,23 +197,60 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void _typing() {
     if (mounted) setState(() {});
     presenceDebounce?.cancel();
-    if (textController.text.trim().isNotEmpty && !typingSent) {
+    final hasText = textController.text.trim().isNotEmpty;
+
+    if (!hasText) {
+      typingHeartbeat?.cancel();
+      typingHeartbeat = null;
+      typingSent = false;
+      AppScope.of(context).api
+          .presence(widget.conversation.id, clear: true)
+          .catchError((_) => const ChatPresence(
+                active: false,
+                kind: '',
+                name: '',
+                readThrough: 0,
+              ));
+      return;
+    }
+
+    if (!typingSent) {
       typingSent = true;
       AppScope.of(context).api
-          .presence(widget.conversation.id, 'text')
-          .catchError(
-            (_) => const ChatPresence(
-              active: false,
-              kind: '',
-              name: '',
-              readThrough: 0,
-            ),
-          );
+          .presence(widget.conversation.id, kind: 'text')
+          .catchError((_) => const ChatPresence(
+                active: false,
+                kind: '',
+                name: '',
+                readThrough: 0,
+              ));
     }
+
+    typingHeartbeat ??= Timer.periodic(const Duration(milliseconds: 2500), (_) {
+      if (!mounted || recording || textController.text.trim().isEmpty) return;
+      AppScope.of(context).api
+          .presence(widget.conversation.id, kind: 'text')
+          .catchError((_) => const ChatPresence(
+                active: false,
+                kind: '',
+                name: '',
+                readThrough: 0,
+              ));
+    });
+
     presenceDebounce = Timer(const Duration(seconds: 2), () {
+      typingHeartbeat?.cancel();
+      typingHeartbeat = null;
       typingSent = false;
       if (mounted) {
-        AppScope.of(context).api.presence(widget.conversation.id, '');
+        AppScope.of(context).api
+            .presence(widget.conversation.id, clear: true)
+            .catchError((_) => const ChatPresence(
+                  active: false,
+                  kind: '',
+                  name: '',
+                  readThrough: 0,
+                ));
       }
     });
   }
@@ -244,7 +302,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       Text(
                         presence?.active == true
                             ? (presence!.kind == 'voice'
-                                  ? '${presence!.name} is recording…'
+                                  ? '${presence!.name} is recording voice…'
                                   : '${presence!.name} is typing…')
                             : widget.conversation.statusText,
                         style: TextStyle(
@@ -309,6 +367,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   )
                 : _messageList(),
           ),
+          if (presence?.active == true)
+            _ChatPresenceBubble(
+              name: presence!.name,
+              voice: presence!.kind == 'voice',
+            ),
           if (recording) _recordingBar(),
           if (uploadProgress != null) _uploadBar(),
           if (reply != null && !_chatBlocked && selectedIds.isEmpty) _replyBar(),
@@ -1439,7 +1502,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     recording = true;
     recordingPaused = false;
     setState(() {});
-    AppScope.of(context).api.presence(widget.conversation.id, 'voice');
+    AppScope.of(context).api.presence(widget.conversation.id, kind: 'voice');
     waveTimer?.cancel();
     waveTimer = Timer.periodic(const Duration(milliseconds: 120), (_) async {
       if (!mounted || recordingPaused || !recording) return;
@@ -1455,7 +1518,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (recordingPaused) return;
       setState(() => recordSeconds++);
       if (recordSeconds % 3 == 0) {
-        AppScope.of(context).api.presence(widget.conversation.id, 'voice');
+        AppScope.of(context).api.presence(widget.conversation.id, kind: 'voice');
       }
       if (recordSeconds >= 120) _finishRecording();
     });
@@ -1466,11 +1529,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (recordingPaused) {
         await recorder.resume();
         recordingPaused = false;
-        AppScope.of(context).api.presence(widget.conversation.id, 'voice');
+        AppScope.of(context).api.presence(widget.conversation.id, kind: 'voice');
       } else {
         await recorder.pause();
         recordingPaused = true;
-        AppScope.of(context).api.presence(widget.conversation.id, '');
+        AppScope.of(context).api.presence(widget.conversation.id, clear: true);
       }
       if (mounted) setState(() {});
     } catch (e) {
@@ -1486,7 +1549,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       recording = false;
       recordingPaused = false;
     });
-    AppScope.of(context).api.presence(widget.conversation.id, '');
+    AppScope.of(context).api.presence(widget.conversation.id, clear: true);
     if (path == null || recordSeconds < 1) return;
     setState(() {
       sending = true;
@@ -1532,7 +1595,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         recordSeconds = 0;
         voiceLevels.clear();
       });
-    AppScope.of(context).api.presence(widget.conversation.id, '');
+    AppScope.of(context).api.presence(widget.conversation.id, clear: true);
   }
 
   Widget _blockedBanner() => Container(
@@ -2605,21 +2668,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   _edit(m);
                 },
               ),
-            if (m.mine)
-              ListTile(
-                leading: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: AppColors.danger,
-                ),
-                title: const Text(
-                  'Delete',
-                  style: TextStyle(color: AppColors.danger),
-                ),
-                onTap: () {
-                  Navigator.pop(sheet);
-                  _delete(m);
-                },
+            ListTile(
+              leading: const Icon(
+                Icons.delete_outline_rounded,
+                color: AppColors.danger,
               ),
+              title: Text(
+                m.mine ? 'Delete' : 'Delete for me',
+                style: const TextStyle(color: AppColors.danger),
+              ),
+              onTap: () {
+                Navigator.pop(sheet);
+                _delete(m);
+              },
+            ),
           ],
         ),
       ),
@@ -2794,29 +2856,59 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _delete(ChatMessage m) async {
-    final everyone =
-        await showDialog<bool>(
-          context: context,
-          builder: (d) => AlertDialog(
-            title: const Text('Delete message?'),
-            content: const Text(
-              'Choose whether to remove it only for you or for everyone.',
+    var everyone = false;
+    if (m.mine) {
+      everyone =
+          await showDialog<bool>(
+            context: context,
+            builder: (d) => AlertDialog(
+              title: const Text('Delete message?'),
+              content: const Text(
+                'Choose whether to remove it only for you or for everyone.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(d, false),
+                  child: const Text('For me'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(d, true),
+                  child: const Text('For everyone'),
+                ),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(d, false),
-                child: const Text('For me'),
+          ) ??
+          false;
+    } else {
+      final confirmed =
+          await showDialog<bool>(
+            context: context,
+            builder: (d) => AlertDialog(
+              title: const Text('Delete for me?'),
+              content: const Text(
+                'This message will disappear from your copy of the conversation only.',
               ),
-              FilledButton(
-                onPressed: () => Navigator.pop(d, true),
-                child: const Text('For everyone'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    await AppScope.of(context).api.deleteMessage(m.id, everyone: everyone);
-    _load();
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(d, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(d, true),
+                  child: const Text('Delete for me'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!confirmed) return;
+    }
+    try {
+      await AppScope.of(context).api.deleteMessage(m.id, everyone: everyone);
+      await _load();
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
   }
 
   void _toBottom() => WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2924,10 +3016,11 @@ class VoiceBubble extends StatefulWidget {
 }
 
 class _VoiceBubbleState extends State<VoiceBubble> {
+  static double rememberedSpeed = 1.0;
   final player = AudioPlayer();
   bool ready = false, listened = false, loading = false;
   String? localPath;
-  double speed = 1.0;
+  late double speed = rememberedSpeed;
 
   @override
   void initState() {
@@ -2978,7 +3071,11 @@ class _VoiceBubbleState extends State<VoiceBubble> {
       if (player.processingState == ProcessingState.completed) {
         await player.seek(Duration.zero);
       }
-      player.playing ? await player.pause() : await player.play();
+      if (player.playing) {
+        await player.pause();
+      } else {
+        await player.play();
+      }
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));
@@ -2991,6 +3088,7 @@ class _VoiceBubbleState extends State<VoiceBubble> {
         : speed == 1.5
         ? 2.0
         : 1.0;
+    rememberedSpeed = speed;
     if (ready) await player.setSpeed(speed);
     if (mounted) setState(() {});
   }
@@ -2999,8 +3097,11 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     await _prepare();
     if (!ready) return;
     final total = player.duration ?? Duration(seconds: widget.message.voiceSeconds);
-    final ms = (total.inMilliseconds * fraction.clamp(0.0, 1.0)).round();
-    await player.seek(Duration(milliseconds: ms));
+    await player.seek(
+      Duration(
+        milliseconds: (total.inMilliseconds * fraction.clamp(0.0, 1.0)).round(),
+      ),
+    );
   }
 
   @override
@@ -3008,7 +3109,8 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     stream: player.positionStream,
     builder: (_, snap) {
       final position = snap.data ?? Duration.zero;
-      final knownTotal = player.duration ?? Duration(seconds: widget.message.voiceSeconds);
+      final knownTotal =
+          player.duration ?? Duration(seconds: widget.message.voiceSeconds);
       final totalMs = knownTotal.inMilliseconds > 0
           ? knownTotal.inMilliseconds
           : 1;
@@ -3017,169 +3119,191 @@ class _VoiceBubbleState extends State<VoiceBubble> {
       final heard = widget.message.mine
           ? widget.message.playedByOther
           : listened;
-      final accent = heard
-          ? const Color(0xFF17A873)
-          : (widget.message.mine ? const Color(0xFFDAFF61) : const Color(0xFF128C7E));
+      final dark = Theme.of(context).brightness == Brightness.dark;
+      final playColor = widget.message.mine
+          ? Colors.white
+          : const Color(0xFF118B78);
+      final playIcon = widget.message.mine
+          ? const Color(0xFF13284B)
+          : Colors.white;
+      final active = heard
+          ? const Color(0xFF118B78)
+          : (widget.message.mine
+                ? const Color(0xFFBBD94C)
+                : const Color(0xFF56B9AA));
       final inactive = widget.message.mine
-          ? Colors.white30
-          : (Theme.of(context).brightness == Brightness.dark
-                ? const Color(0xFF566174)
-                : const Color(0xFFCFD5DC));
+          ? const Color(0x667D9250)
+          : (dark ? const Color(0xFF526274) : const Color(0xFFBBDDD8));
+      final meta = widget.message.mine ? Colors.white70 : AppColors.muted;
 
       return ConstrainedBox(
-        constraints: const BoxConstraints(minWidth: 220, maxWidth: 270),
-        child: Row(
+        constraints: const BoxConstraints(minWidth: 250, maxWidth: 310),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 44,
-              height: 44,
-              child: IconButton.filled(
-                style: IconButton.styleFrom(
-                  backgroundColor: widget.message.mine
-                      ? Colors.white
-                      : const Color(0xFF128C7E),
-                  foregroundColor: widget.message.mine
-                      ? AppColors.navy
-                      : Colors.white,
-                  padding: EdgeInsets.zero,
-                ),
-                onPressed: loading ? null : _toggle,
-                icon: loading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : StreamBuilder<bool>(
-                        stream: player.playingStream,
-                        builder: (_, s) => Icon(
-                          s.data == true
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          size: 29,
+            Row(
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    SizedBox(
+                      width: 50,
+                      height: 50,
+                      child: IconButton.filled(
+                        style: IconButton.styleFrom(
+                          backgroundColor: playColor,
+                          foregroundColor: playIcon,
+                          padding: EdgeInsets.zero,
+                        ),
+                        onPressed: loading ? null : _toggle,
+                        icon: loading
+                            ? const SizedBox(
+                                width: 19,
+                                height: 19,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : StreamBuilder<bool>(
+                                stream: player.playingStream,
+                                builder: (_, playing) => Icon(
+                                  playing.data == true
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  size: 30,
+                                ),
+                              ),
+                      ),
+                    ),
+                    if (!widget.message.mine && !heard)
+                      Positioned(
+                        right: -1,
+                        top: -1,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD9FF58),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: dark
+                                  ? const Color(0xFF152133)
+                                  : Colors.white,
+                              width: 2,
+                            ),
+                          ),
                         ),
                       ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (d) {
-                      final box = context.findRenderObject();
-                      if (box is! RenderBox) return;
-                      final local = box.globalToLocal(d.globalPosition);
-                      final fraction = (local.dx / 150).clamp(0.0, 1.0);
-                      _seek(fraction);
-                    },
-                    onHorizontalDragUpdate: (d) {
-                      final box = context.findRenderObject();
-                      if (box is! RenderBox) return;
-                      final local = box.globalToLocal(d.globalPosition);
-                      final fraction = (local.dx / 150).clamp(0.0, 1.0);
-                      _seek(fraction);
-                    },
-                    child: SizedBox(
-                      height: 31,
-                      child: CustomPaint(
-                        painter: _VoiceWavePainter(
-                          progress: progress,
-                          active: accent,
-                          inactive: inactive,
-                          seed: widget.message.id,
-                          wave: widget.message.voiceWave,
+                  ],
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (d) => _seek(
+                        d.localPosition.dx / constraints.maxWidth,
+                      ),
+                      onHorizontalDragUpdate: (d) => _seek(
+                        d.localPosition.dx / constraints.maxWidth,
+                      ),
+                      child: SizedBox(
+                        height: 34,
+                        child: CustomPaint(
+                          painter: _VoiceWavePainter(
+                            progress: progress,
+                            active: active,
+                            inactive: inactive,
+                            seed: widget.message.id,
+                            wave: widget.message.voiceWave,
+                          ),
+                          child: const SizedBox.expand(),
                         ),
-                        child: const SizedBox.expand(),
                       ),
                     ),
                   ),
-                  Row(
-                    children: [
-                      Icon(
-                        heard
-                            ? Icons.graphic_eq_rounded
-                            : Icons.mic_none_rounded,
-                        size: 14,
-                        color: accent,
+                ),
+                const SizedBox(width: 8),
+                InkWell(
+                  borderRadius: BorderRadius.circular(22),
+                  onTap: _cycleSpeed,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: active.withValues(alpha: .65),
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _voiceDuration(
-                          position.inSeconds > 0
-                              ? position.inSeconds
-                              : widget.message.voiceSeconds,
-                        ),
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w800,
-                          color: accent,
-                        ),
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                    child: Text(
+                      '${speed.toStringAsFixed(speed == 1.0 ? 0 : 1)}×',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        color: active,
                       ),
-                      if (heard) ...[
-                        const SizedBox(width: 6),
-                        Text(
-                          'played',
-                          style: TextStyle(
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w800,
-                            color: accent,
-                          ),
-                        ),
-                      ],
-                      const Spacer(),
-                      Text(
-                        widget.message.time,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: widget.message.mine
-                              ? Colors.white70
-                              : AppColors.muted,
-                        ),
-                      ),
-                      if (widget.message.mine) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          widget.message.read
-                              ? Icons.done_all_rounded
-                              : Icons.check_rounded,
-                          size: 15,
-                          color: widget.message.read
-                              ? const Color(0xFF7CE8FF)
-                              : Colors.white70,
-                        ),
-                      ],
-                      const SizedBox(width: 7),
-                      InkWell(
-                        borderRadius: BorderRadius.circular(18),
-                        onTap: _cycleSpeed,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                              color: accent.withValues(alpha: .55),
-                            ),
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: Text(
-                            '${speed.toStringAsFixed(speed == 1.0 ? 0 : 1)}×',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              color: accent,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Padding(
+              padding: const EdgeInsets.only(left: 58),
+              child: Row(
+                children: [
+                  Text(
+                    _voiceDuration(widget.message.voiceSeconds),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      color: active,
+                    ),
+                  ),
+                  if (!widget.message.mine && !heard) ...[
+                    const SizedBox(width: 7),
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Color(0xFF118B78),
+                      ),
+                    ),
+                  ],
+                  const Spacer(),
+                  Text(
+                    widget.message.time,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w500,
+                      color: meta,
+                    ),
+                  ),
+                  if (widget.message.mine && heard) ...[
+                    const SizedBox(width: 5),
+                    Text(
+                      'played',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: active,
+                      ),
+                    ),
+                  ],
+                  if (widget.message.mine) ...[
+                    const SizedBox(width: 4),
+                    Icon(
+                      widget.message.read
+                          ? Icons.done_all_rounded
+                          : Icons.check_rounded,
+                      size: 16,
+                      color: widget.message.read
+                          ? const Color(0xFF7CE8FF)
+                          : Colors.white70,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -3228,6 +3352,14 @@ class _VoiceWavePainter extends CustomPainter {
         ..strokeCap = StrokeCap.round;
       canvas.drawLine(Offset(x, y1), Offset(x, y2), paint);
     }
+    if (progress > 0 && progress < 1) {
+      final head = Paint()
+        ..color = active
+        ..strokeWidth = 2.2
+        ..strokeCap = StrokeCap.round;
+      final x = (size.width * progress).clamp(1.0, size.width - 1.0);
+      canvas.drawLine(Offset(x, 2), Offset(x, size.height - 2), head);
+    }
   }
 
   @override
@@ -3237,6 +3369,117 @@ class _VoiceWavePainter extends CustomPainter {
       oldDelegate.inactive != inactive ||
       oldDelegate.seed != seed ||
       oldDelegate.wave != wave;
+}
+
+class _ChatPresenceBubble extends StatefulWidget {
+  const _ChatPresenceBubble({required this.name, required this.voice});
+  final String name;
+  final bool voice;
+
+  @override
+  State<_ChatPresenceBubble> createState() => _ChatPresenceBubbleState();
+}
+
+class _ChatPresenceBubbleState extends State<_ChatPresenceBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  double pulse(double phase) {
+    final v = (controller.value + phase) % 1.0;
+    return v < .5 ? .35 + v * 1.3 : 1.0 - (v - .5) * 1.3;
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (_, __) => Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(14, 3, 14, 7),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xFF152133)
+              : Colors.white,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(18),
+            topRight: Radius.circular(18),
+            bottomRight: Radius.circular(18),
+            bottomLeft: Radius.circular(5),
+          ),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x1008142F),
+              blurRadius: 9,
+              offset: Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.voice) ...[
+              const Icon(
+                Icons.mic_rounded,
+                size: 17,
+                color: Color(0xFF118B78),
+              ),
+              const SizedBox(width: 7),
+              for (var i = 0; i < 4; i++) ...[
+                Container(
+                  width: 3,
+                  height: 7 + 11 * pulse(i * .17),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF118B78),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                if (i != 3) const SizedBox(width: 2),
+              ],
+              const SizedBox(width: 8),
+              Text(
+                '${widget.name} is recording voice…',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF118B78),
+                ),
+              ),
+            ] else ...[
+              for (var i = 0; i < 3; i++) ...[
+                Opacity(
+                  opacity: pulse(i * .22).clamp(.3, 1.0),
+                  child: const CircleAvatar(
+                    radius: 3.2,
+                    backgroundColor: AppColors.blue,
+                  ),
+                ),
+                if (i != 2) const SizedBox(width: 4),
+              ],
+              const SizedBox(width: 9),
+              Text(
+                '${widget.name} is typing…',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.blue,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _PulseDot extends StatefulWidget {

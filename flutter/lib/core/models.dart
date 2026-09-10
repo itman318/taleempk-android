@@ -352,7 +352,8 @@ class ChatMessage {
   final String sender, content, time, dateLabel, voiceWave;
   final String? attachmentUrl, attachmentName, attachmentType;
   final bool mine, deleted, edited, forwarded, starred, pinned, canEdit;
-  final bool playedByMe, playedByOther, encrypted;
+  final bool playedByMe, encrypted;
+  bool playedByOther;
   bool read;
   final ReplyPreview? reply;
   final List<ChatReaction> reactions;
@@ -398,15 +399,18 @@ class ChatPresence {
     required this.kind,
     required this.name,
     required this.readThrough,
+    this.playedIds = const [],
   });
   final bool active;
   final String kind, name;
   final int readThrough;
+  final List<int> playedIds;
   factory ChatPresence.fromJson(Map<String, dynamic> j) => ChatPresence(
     active: _bool(j['active']),
     kind: '${j['kind'] ?? ''}',
     name: '${j['name'] ?? ''}',
     readThrough: _int(j['read_through']),
+    playedIds: _list(j['played']).map(_int).where((id) => id > 0).toList(),
   );
 }
 

@@ -613,39 +613,63 @@ if ($action === 'presence') {
     $cid = (int)($_POST['conversation_id'] ?? 0);
     $member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
     if (!$member) mobile_error('That conversation is not yours.', 403);
+
+    /* Reading another person's presence must never mutate mine. The previous
+       mobile endpoint treated an omitted/empty kind as "clear my status", and
+       the Flutter poll used exactly that call every ~2 seconds. The app was
+       therefore erasing its own typing/recording flag as fast as it set it. */
+    $hasKind = array_key_exists('kind', $_POST);
+    $clear = !empty($_POST['clear']);
     $kind = strtolower(trim((string)($_POST['kind'] ?? '')));
     if (!in_array($kind, ['text','voice'], true)) $kind = '';
     $sharesTyping = (int)($u['show_typing'] ?? 1) === 1;
+
     try {
-        if ($sharesTyping && $kind !== '') {
+        if ($clear) {
+            q('UPDATE conversation_members SET typing_at=NULL,typing_kind=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+        } elseif ($hasKind && $sharesTyping && $kind !== '') {
             q('UPDATE conversation_members SET typing_at=NOW(),typing_kind=? WHERE conversation_id=? AND user_id=?', [$kind,$cid,$uid]);
-        } else {
-            q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+        } elseif ($hasKind && !$sharesTyping) {
+            q('UPDATE conversation_members SET typing_at=NULL,typing_kind=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
         }
-        $other = fetch_one("SELECT cm.typing_kind,u.name FROM conversation_members cm
+        $other = $sharesTyping ? fetch_one("SELECT cm.typing_kind,u.name FROM conversation_members cm
                              JOIN users u ON u.id=cm.user_id
-                            WHERE cm.conversation_id=? AND cm.user_id<>? AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
-                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]);
+                            WHERE cm.conversation_id=? AND cm.user_id<>?
+                              AND COALESCE(u.show_typing,1)=1
+                              AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
+                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]) : null;
     } catch (PDOException $e) {
-        /* Graceful compatibility for a host where the schema migration has
-           not run yet. Typing still works; voice is displayed as typing until
-           the normal TaleemPK migrator adds typing_kind. */
-        if ($sharesTyping && $kind !== '') {
+        if ($clear) {
+            q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+        } elseif ($hasKind && $sharesTyping && $kind !== '') {
             q('UPDATE conversation_members SET typing_at=NOW() WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
-        } else {
+        } elseif ($hasKind && !$sharesTyping) {
             q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
         }
-        $other = fetch_one("SELECT 'text' typing_kind,u.name FROM conversation_members cm
+        $other = $sharesTyping ? fetch_one("SELECT 'text' typing_kind,u.name FROM conversation_members cm
                              JOIN users u ON u.id=cm.user_id
-                            WHERE cm.conversation_id=? AND cm.user_id<>? AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
-                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]);
+                            WHERE cm.conversation_id=? AND cm.user_id<>?
+                              AND COALESCE(u.show_typing,1)=1
+                              AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
+                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]) : null;
     }
     $readThrough = (int)fetch_col('SELECT COALESCE(MAX(last_read_id),0) FROM conversation_members WHERE conversation_id=? AND user_id<>?', [$cid,$uid]);
+    $playedIds = [];
+    if (table_exists('message_plays')) {
+        $playedRows = fetch_all("SELECT DISTINCT m.id
+                                   FROM messages m
+                                   JOIN message_plays mp ON mp.message_id=m.id
+                                  WHERE m.conversation_id=? AND m.sender_id=?
+                                    AND mp.user_id<>? AND m.voice_seconds>0
+                                  ORDER BY m.id DESC LIMIT 150", [$cid,$uid,$uid]);
+        $playedIds = array_map(static fn(array $r): int => (int)$r['id'], $playedRows);
+    }
     mobile_out([
         'active'=>(bool)$other,
         'kind'=>$other ? (string)($other['typing_kind'] ?: 'text') : '',
         'name'=>$other ? (string)$other['name'] : '',
         'read_through'=>$readThrough,
+        'played'=>$playedIds,
     ]);
 }
 

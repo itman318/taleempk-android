@@ -214,12 +214,17 @@ class ApiClient {
         .toList();
   }
 
-  Future<ChatPresence> presence(int conversationId, String kind) async =>
+  Future<ChatPresence> presence(
+    int conversationId, {
+    String? kind,
+    bool clear = false,
+  }) async =>
       ChatPresence.fromJson(
         await _request({
           'action': 'presence',
           'conversation_id': '$conversationId',
-          'kind': kind,
+          if (kind != null && kind.isNotEmpty) 'kind': kind,
+          if (clear) 'clear': '1',
         }),
       );
 
