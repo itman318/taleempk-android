@@ -6,14 +6,14 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_chat_runtime_v25.py'
+      - 'tools/patch_chat_runtime_v251.py'
       - '.github/workflows/flutter-premium.yml'
   push:
     branches: [main, flutter-premium-v2]
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_chat_runtime_v25.py'
+      - 'tools/patch_chat_runtime_v251.py'
       - '.github/workflows/flutter-premium.yml'
 
 permissions:
@@ -28,10 +28,10 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Apply v2.5 chat runtime audit patch
+      - name: Apply final chat cleanup
         working-directory: .
-        run: python tools/patch_chat_runtime_v25.py
-      - name: Commit v2.5 chat runtime fixes
+        run: python tools/patch_chat_runtime_v251.py
+      - name: Commit final chat cleanup
         if: github.event_name == 'push' && github.ref == 'refs/heads/flutter-premium-v2'
         working-directory: .
         run: |
@@ -39,7 +39,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -A
-            git commit -m "Fix voice indicators playback actions realtime and performance"
+            git commit -m "Finish v2.5 chat runtime audit"
             git push
           fi
       - uses: subosito/flutter-action@v2
