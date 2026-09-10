@@ -515,10 +515,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       .toList(),
                 ),
               ),
-            const SizedBox(height: 3),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+            if (m.voiceSeconds == 0) ...[
+              const SizedBox(height: 3),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                 if (m.edited)
                   Text(
                     'edited · ',
@@ -547,6 +548,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ],
               ],
             ),
+            ],
           ],
         ),
       ),
@@ -2284,6 +2286,12 @@ class _VoiceBubbleState extends State<VoiceBubble> {
   double speed = 1.0;
 
   @override
+  void initState() {
+    super.initState();
+    listened = widget.message.playedByMe;
+  }
+
+  @override
   void dispose() {
     player.dispose();
     final path = localPath;
@@ -2319,7 +2327,10 @@ class _VoiceBubbleState extends State<VoiceBubble> {
     try {
       await _prepare();
       if (!ready) return;
-      if (!listened) listened = true;
+      if (!listened && !widget.message.mine) {
+        listened = true;
+        widget.api.markVoicePlayed(widget.message.id).catchError((_) {});
+      }
       if (player.processingState == ProcessingState.completed) {
         await player.seek(Duration.zero);
       }
@@ -2359,9 +2370,12 @@ class _VoiceBubbleState extends State<VoiceBubble> {
           : 1;
       final progress =
           (position.inMilliseconds / totalMs).clamp(0.0, 1.0).toDouble();
-      final accent = listened
-          ? const Color(0xFF16A873)
-          : (widget.message.mine ? Colors.white : const Color(0xFF128C7E));
+      final heard = widget.message.mine
+          ? widget.message.playedByOther
+          : listened;
+      final accent = heard
+          ? const Color(0xFF17A873)
+          : (widget.message.mine ? const Color(0xFFDAFF61) : const Color(0xFF128C7E));
       final inactive = widget.message.mine
           ? Colors.white30
           : (Theme.of(context).brightness == Brightness.dark
@@ -2433,6 +2447,7 @@ class _VoiceBubbleState extends State<VoiceBubble> {
                           active: accent,
                           inactive: inactive,
                           seed: widget.message.id,
+                          wave: widget.message.voiceWave,
                         ),
                         child: const SizedBox.expand(),
                       ),
@@ -2441,7 +2456,7 @@ class _VoiceBubbleState extends State<VoiceBubble> {
                   Row(
                     children: [
                       Icon(
-                        listened
+                        heard
                             ? Icons.graphic_eq_rounded
                             : Icons.mic_none_rounded,
                         size: 14,
@@ -2456,22 +2471,45 @@ class _VoiceBubbleState extends State<VoiceBubble> {
                         ),
                         style: TextStyle(
                           fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w800,
                           color: accent,
                         ),
                       ),
-                      if (listened) ...[
+                      if (heard) ...[
                         const SizedBox(width: 6),
                         Text(
                           'played',
                           style: TextStyle(
                             fontSize: 9.5,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w800,
                             color: accent,
                           ),
                         ),
                       ],
                       const Spacer(),
+                      Text(
+                        widget.message.time,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: widget.message.mine
+                              ? Colors.white70
+                              : AppColors.muted,
+                        ),
+                      ),
+                      if (widget.message.mine) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          widget.message.read
+                              ? Icons.done_all_rounded
+                              : Icons.check_rounded,
+                          size: 15,
+                          color: widget.message.read
+                              ? const Color(0xFF7CE8FF)
+                              : Colors.white70,
+                        ),
+                      ],
+                      const SizedBox(width: 7),
                       InkWell(
                         borderRadius: BorderRadius.circular(18),
                         onTap: _cycleSpeed,
@@ -2481,14 +2519,16 @@ class _VoiceBubbleState extends State<VoiceBubble> {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            border: Border.all(color: accent.withValues(alpha: .55)),
+                            border: Border.all(
+                              color: accent.withValues(alpha: .55),
+                            ),
                             borderRadius: BorderRadius.circular(18),
                           ),
                           child: Text(
                             '${speed.toStringAsFixed(speed == 1.0 ? 0 : 1)}×',
                             style: TextStyle(
                               fontSize: 10,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w900,
                               color: accent,
                             ),
                           ),
@@ -2515,11 +2555,13 @@ class _VoiceWavePainter extends CustomPainter {
     required this.active,
     required this.inactive,
     required this.seed,
+    required this.wave,
   });
 
   final double progress;
   final Color active, inactive;
   final int seed;
+  final String wave;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2528,8 +2570,11 @@ class _VoiceWavePainter extends CustomPainter {
     final count = (size.width / (width + gap)).floor().clamp(18, 54);
     final activeUntil = (count * progress).round();
     for (var i = 0; i < count; i++) {
-      final raw = ((i * 37 + seed * 11) % 17) / 16.0;
-      final height = 8.0 + raw * (size.height - 10.0);
+      final clean = wave.replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
+      final raw = clean.isNotEmpty
+          ? (int.tryParse(clean[i % clean.length], radix: 16) ?? 7) / 15.0
+          : ((i * 37 + seed * 11) % 17) / 16.0;
+      final height = 7.0 + raw * (size.height - 9.0);
       final x = i * (width + gap) + width / 2;
       final y1 = (size.height - height) / 2;
       final y2 = y1 + height;
@@ -2546,7 +2591,8 @@ class _VoiceWavePainter extends CustomPainter {
       oldDelegate.progress != progress ||
       oldDelegate.active != active ||
       oldDelegate.inactive != inactive ||
-      oldDelegate.seed != seed;
+      oldDelegate.seed != seed ||
+      oldDelegate.wave != wave;
 }
 
 class _PulseDot extends StatefulWidget {
