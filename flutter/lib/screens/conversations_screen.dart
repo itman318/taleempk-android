@@ -17,7 +17,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   List<Conversation> all = const [];
   String query = '';
   String? error;
-  bool loading = true;
+  bool loading = true, archivedMode = false;
   @override
   void initState() {
     super.initState();
@@ -30,7 +30,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       error = null;
     });
     try {
-      all = await AppScope.of(context).api.conversations();
+      all = await AppScope.of(context).api.conversations(
+        archived: archivedMode,
+      );
     } catch (e) {
       error = apiMessage(e);
     }
@@ -48,11 +50,60 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         .toList();
     return Scaffold(
       appBar: PremiumAppBar(
-        title: 'Messages',
-        subtitle: 'Fast, private conversations',
+        title: archivedMode ? 'Archived chats' : 'Messages',
+        subtitle: archivedMode
+            ? 'Conversations kept out of your main inbox'
+            : 'Fast, private conversations',
         actions: [
-          IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
-          const SizedBox(width: 8),
+          if (!archivedMode)
+            IconButton(
+              tooltip: 'Starred messages',
+              onPressed: _showStarred,
+              icon: const Icon(Icons.star_outline_rounded),
+            ),
+          if (!archivedMode)
+            IconButton(
+              tooltip: 'Search all messages',
+              onPressed: _globalSearch,
+              icon: const Icon(Icons.manage_search_rounded),
+            ),
+          PopupMenuButton<String>(
+            tooltip: 'Chat options',
+            onSelected: (value) {
+              if (value == 'archive') {
+                setState(() => archivedMode = !archivedMode);
+                _load();
+              } else if (value == 'group') {
+                _createGroup();
+              }
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'archive',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    archivedMode
+                        ? Icons.inbox_outlined
+                        : Icons.archive_outlined,
+                  ),
+                  title: Text(
+                    archivedMode ? 'Back to messages' : 'Archived chats',
+                  ),
+                ),
+              ),
+              if (!archivedMode)
+                const PopupMenuItem(
+                  value: 'group',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.group_add_outlined),
+                    title: Text('New group'),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(width: 6),
         ],
       ),
       body: Column(
@@ -74,10 +125,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                 : error != null
                 ? ErrorView(message: error!, retry: _load)
                 : items.isEmpty
-                ? const EmptyView(
-                    icon: Icons.forum_outlined,
-                    title: 'No conversations',
-                    message: 'Your private and group conversations will appear here.',
+                ? EmptyView(
+                    icon: archivedMode
+                        ? Icons.archive_outlined
+                        : Icons.forum_outlined,
+                    title: archivedMode ? 'Nothing archived' : 'No conversations',
+                    message: archivedMode
+                        ? 'Chats you archive will appear here.'
+                        : 'Your private and group conversations will appear here.',
                   )
                 : RefreshIndicator(
                     onRefresh: _load,
@@ -171,6 +226,19 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         ],
       ),
     ),
+    trailing: PopupMenuButton<String>(
+      onSelected: (value) => _conversationAction(c, value),
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'mute',
+          child: Text(c.muted ? 'Unmute notifications' : 'Mute notifications'),
+        ),
+        PopupMenuItem(
+          value: 'archive',
+          child: Text(archivedMode ? 'Unarchive' : 'Archive'),
+        ),
+      ],
+    ),
     onTap: () async {
       await Navigator.push(
         context,
@@ -179,4 +247,339 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       _load();
     },
   );
+
+  Future<void> _conversationAction(Conversation chat, String action) async {
+    try {
+      if (action == 'mute') {
+        await AppScope.of(context).api.toggleConversationMute(chat.id);
+      } else if (action == 'archive') {
+        await AppScope.of(context).api.toggleConversationArchive(chat.id);
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _showStarred() async {
+    try {
+      final results = await AppScope.of(context).api.starredMessages();
+      if (!mounted) return;
+      await _resultsSheet(
+        title: 'Starred messages',
+        icon: Icons.star_rounded,
+        results: results,
+      );
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    }
+  }
+
+  Future<void> _globalSearch() async {
+    final controller = TextEditingController();
+    List<Map<String, dynamic>> results = const [];
+    var busy = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheet) => StatefulBuilder(
+        builder: (context, setLocal) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * .78,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+                child: TextField(
+                  controller: controller,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) async {
+                    if (controller.text.trim().length < 2) return;
+                    setLocal(() => busy = true);
+                    try {
+                      results = await AppScope.of(context).api
+                          .searchMessages(controller.text.trim());
+                    } finally {
+                      if (sheet.mounted) setLocal(() => busy = false);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Search all messages',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: IconButton(
+                      onPressed: () async {
+                        if (controller.text.trim().length < 2) return;
+                        setLocal(() => busy = true);
+                        try {
+                          results = await AppScope.of(context).api
+                              .searchMessages(controller.text.trim());
+                        } finally {
+                          if (sheet.mounted) setLocal(() => busy = false);
+                        }
+                      },
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                    ),
+                  ),
+                ),
+              ),
+              if (busy) const LinearProgressIndicator(minHeight: 2),
+              Expanded(
+                child: results.isEmpty
+                    ? const EmptyView(
+                        icon: Icons.manage_search_rounded,
+                        title: 'Search your chats',
+                        message: 'Search message text and attachment names.',
+                      )
+                    : ListView.separated(
+                        itemCount: results.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          final item = results[i];
+                          return ListTile(
+                            leading: const Icon(Icons.chat_bubble_outline_rounded),
+                            title: Text('${item['title'] ?? item['where'] ?? 'Conversation'}'),
+                            subtitle: Text(
+                              '${item['sender'] ?? ''}: ${item['text'] ?? ''}',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: Text(
+                              '${item['time'] ?? ''}',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: AppColors.muted,
+                              ),
+                            ),
+                            onTap: () {
+                              Navigator.pop(sheet);
+                              _openConversationById(_asInt(item['conversation_id']));
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    controller.dispose();
+  }
+
+  Future<void> _resultsSheet({
+    required String title,
+    required IconData icon,
+    required List<Map<String, dynamic>> results,
+  }) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheet) => SizedBox(
+        height: MediaQuery.sizeOf(sheet).height * .72,
+        child: Column(
+          children: [
+            ListTile(
+              leading: Icon(icon, color: AppColors.blue),
+              title: Text(
+                title,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+              ),
+            ),
+            Expanded(
+              child: results.isEmpty
+                  ? const EmptyView(
+                      icon: Icons.star_border_rounded,
+                      title: 'Nothing here yet',
+                      message: 'Messages you star will appear here.',
+                    )
+                  : ListView.separated(
+                      itemCount: results.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (_, i) {
+                        final item = results[i];
+                        return ListTile(
+                          title: Text('${item['where'] ?? 'Conversation'}'),
+                          subtitle: Text(
+                            '${item['sender'] ?? ''}: ${item['text'] ?? ''}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Text(
+                            '${item['time'] ?? ''}',
+                            style: const TextStyle(fontSize: 10, color: AppColors.muted),
+                          ),
+                          onTap: () {
+                            Navigator.pop(sheet);
+                            _openConversationById(_asInt(item['conversation_id']));
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openConversationById(int id) async {
+    if (id <= 0 || !mounted) return;
+    Conversation? chat;
+    for (final item in all) {
+      if (item.id == id) {
+        chat = item;
+        break;
+      }
+    }
+    if (chat == null) {
+      final active = await AppScope.of(context).api.conversations();
+      final archived = await AppScope.of(context).api.conversations(archived: true);
+      for (final item in [...active, ...archived]) {
+        if (item.id == id) {
+          chat = item;
+          break;
+        }
+      }
+    }
+    if (chat == null || !mounted) {
+      showMessage(context, 'That conversation is no longer available.');
+      return;
+    }
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ChatScreen(conversation: chat!)),
+    );
+    if (mounted) _load();
+  }
+
+  Future<void> _createGroup() async {
+    final title = TextEditingController();
+    final search = TextEditingController();
+    List<Map<String, dynamic>> people = const [];
+    final picked = <int>{};
+    var busy = false;
+    final create = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheet) => StatefulBuilder(
+        builder: (context, setLocal) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * .82,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              18,
+              0,
+              18,
+              MediaQuery.viewInsetsOf(context).bottom + 14,
+            ),
+            child: Column(
+              children: [
+                TextField(
+                  controller: title,
+                  maxLength: 120,
+                  decoration: const InputDecoration(
+                    labelText: 'Group name',
+                    prefixIcon: Icon(Icons.groups_rounded),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: search,
+                  decoration: InputDecoration(
+                    hintText: 'Search people by name or @username',
+                    prefixIcon: const Icon(Icons.person_search_rounded),
+                    suffixIcon: IconButton(
+                      onPressed: () async {
+                        if (search.text.trim().length < 2) return;
+                        setLocal(() => busy = true);
+                        try {
+                          people = await AppScope.of(context).api
+                              .searchPeople(search.text.trim());
+                        } finally {
+                          if (sheet.mounted) setLocal(() => busy = false);
+                        }
+                      },
+                      icon: const Icon(Icons.search_rounded),
+                    ),
+                  ),
+                  onSubmitted: (_) async {
+                    if (search.text.trim().length < 2) return;
+                    setLocal(() => busy = true);
+                    try {
+                      people = await AppScope.of(context).api
+                          .searchPeople(search.text.trim());
+                    } finally {
+                      if (sheet.mounted) setLocal(() => busy = false);
+                    }
+                  },
+                ),
+                if (busy) const LinearProgressIndicator(minHeight: 2),
+                const SizedBox(height: 6),
+                Expanded(
+                  child: people.isEmpty
+                      ? const EmptyView(
+                          icon: Icons.group_add_outlined,
+                          title: 'Add members',
+                          message: 'Search for people to add to your group.',
+                        )
+                      : ListView.builder(
+                          itemCount: people.length,
+                          itemBuilder: (_, i) {
+                            final p = people[i];
+                            final id = _asInt(p['id']);
+                            return CheckboxListTile(
+                              value: picked.contains(id),
+                              onChanged: (v) => setLocal(() {
+                                if (v == true) {
+                                  picked.add(id);
+                                } else {
+                                  picked.remove(id);
+                                }
+                              }),
+                              secondary: UserAvatar(
+                                url: p['avatar']?.toString(),
+                                name: '${p['name'] ?? ''}',
+                                radius: 20,
+                              ),
+                              title: Text('${p['name'] ?? ''}'),
+                              subtitle: Text('@${p['username'] ?? ''}'),
+                            );
+                          },
+                        ),
+                ),
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(sheet, true),
+                  icon: const Icon(Icons.group_add_rounded),
+                  label: Text('Create group (${picked.length + 1})'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (create == true && mounted) {
+      if (title.text.trim().length < 2 || picked.isEmpty) {
+        showMessage(context, 'Add a group name and at least one member.');
+      } else {
+        try {
+          await AppScope.of(context).api.groupAction(
+            'create',
+            title: title.text.trim(),
+            members: picked.toList(),
+          );
+          await _load();
+        } catch (e) {
+          if (mounted) showMessage(context, apiMessage(e));
+        }
+      }
+    }
+    title.dispose();
+    search.dispose();
+  }
+
+  int _asInt(dynamic value) =>
+      value is int ? value : int.tryParse('$value') ?? 0;
 }
