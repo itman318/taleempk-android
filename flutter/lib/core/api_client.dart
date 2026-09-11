@@ -7,6 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import 'models.dart';
+import 'quiz_models.dart';
 
 class ApiException implements Exception {
   const ApiException(this.message, {this.status = 0});
@@ -179,6 +180,30 @@ class ApiClient {
       ModuleData.fromJson(await _request({'action': 'module', 'module': key}));
   Future<Map<String, dynamic>> moduleAction(String action, {int id = 0}) =>
       _request({'action': 'module_action', 'do': action, 'id': '$id'});
+
+  Future<NativeQuizSession> startNativeQuiz(int quizId) async =>
+      NativeQuizSession.fromJson(
+        await _request({
+          'action': 'quiz_start',
+          'quiz_id': '$quizId',
+        }),
+      );
+
+  Future<NativeQuizResult> submitNativeQuiz(
+    int attemptId,
+    Map<int, String> answers,
+    int timeTaken,
+  ) async =>
+      NativeQuizResult.fromJson(
+        await _request({
+          'action': 'quiz_submit',
+          'attempt_id': '$attemptId',
+          'answers': jsonEncode({
+            for (final entry in answers.entries) '\${entry.key}': entry.value,
+          }),
+          'time_taken': '$timeTaken',
+        }),
+      );
 
   Future<void> updateProfile(
     String name,

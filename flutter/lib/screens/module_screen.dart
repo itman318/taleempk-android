@@ -6,6 +6,7 @@ import '../core/models.dart';
 import '../core/theme.dart';
 import '../widgets/common.dart';
 import 'home_shell.dart';
+import 'quiz_screen.dart';
 
 class ModuleScreen extends StatefulWidget {
   const ModuleScreen({super.key, required this.module});
@@ -168,6 +169,14 @@ class _ModuleScreenState extends State<ModuleScreen> {
       }
       return;
     }
+    if (item.kind == 'quiz') {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => QuizScreen(item: item)),
+      );
+      if (mounted) _load();
+      return;
+    }
     if (item.kind == 'notification') {
       try {
         await AppScope.of(context).api.moduleAction('read_notification', id: item.id);
@@ -178,13 +187,6 @@ class _ModuleScreenState extends State<ModuleScreen> {
       return;
     }
 
-    if (item.kind == 'quiz' && item.route.isEmpty) {
-      showMessage(
-        context,
-        'This quiz needs the latest TaleemPK mobile API. Update api/mobile.php, then refresh.',
-      );
-      return;
-    }
 
     final route = item.route.isNotEmpty
         ? item.route
