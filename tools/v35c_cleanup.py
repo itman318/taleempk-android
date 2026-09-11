@@ -25,10 +25,16 @@ if start >= 0:
         end += 1
     text = text[:start] + text[end:]
 
-# The old processor was the only direct Uint8List consumer; foundation.dart
-# already exports the type for remaining generated code, so keep imports clean.
+# The legacy processor owned these imports. The new integrated editor uses
+# RenderRepaintBoundary + native processing instead, so remove dead imports.
+text = text.replace("import 'dart:typed_data';\n", '')
+text = text.replace("import 'package:image/image.dart' as img;\n", '')
+text = text.replace("import 'package:image/image.dart';\n", '')
+
 if '_processOutgoingPhoto' in text:
     raise RuntimeError('v3.5 cleanup failed to remove legacy photo processor')
+if "package:image/image.dart" in text:
+    raise RuntimeError('v3.5 cleanup failed to remove legacy image import')
 
 path.write_text(text, encoding='utf-8')
 print('TaleemPK v3.5 analyzer cleanup applied successfully')
