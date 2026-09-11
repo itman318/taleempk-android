@@ -1,32 +1,76 @@
-name: Package TaleemPK v3.7 Server API
+name: Package TaleemPK v3.8 Server API
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - flutter-premium-v2
     paths:
       - '.github/workflows/v37-server-package.yml'
-      - 'backend/api/mobile.php'
+      - 'backend/**'
+      - 'tools/**'
 
 jobs:
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Generate final v3.8 server sources
+        run: |
+          python3 tools/v31_finalize.py
+          python3 tools/run_v32.py
+          python3 tools/v33_final.py
+          python3 tools/v34_chat_runtime.py
+          python3 tools/v35b_profile_media_polish.py
+          python3 tools/v35c_cleanup.py
+          python3 tools/v36_ui_navigation_polish.py
+          python3 tools/v36b_splash_fix.py
+          python3 tools/v37b_chat_identity_polish.py
+          python3 tools/v37c_analyzer_cleanup.py
+          python3 tools/v38_messenger_security_verification.py
+
       - name: Verify PHP syntax
-        run: php -l backend/api/mobile.php
+        run: |
+          php -l backend/api/mobile.php
+          php -l backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_e2ee_v32.php
+
+      - name: Verify required v3.8 API actions
+        run: |
+          grep -q "security_snapshot" backend/api/mobile.php
+          grep -q "privacy_get" backend/api/mobile.php
+          grep -q "sessions" backend/api/mobile.php
+          grep -q "verification_status" backend/api/mobile_social_v31.php
+          grep -q "verification_apply" backend/api/mobile_social_v31.php
 
       - name: Prepare server update
         run: |
-          mkdir -p TaleemPK-v3.7.0-Server-Update/api
-          cp backend/api/mobile.php TaleemPK-v3.7.0-Server-Update/api/mobile.php
-          printf '%s\n' 'Upload api/mobile.php to your TaleemPK website, replacing the existing file.' > TaleemPK-v3.7.0-Server-Update/README.txt
+          mkdir -p TaleemPK-v3.8.0-Server-Update/api
+          cp backend/api/mobile.php TaleemPK-v3.8.0-Server-Update/api/mobile.php
+          cp backend/api/mobile_social_v31.php TaleemPK-v3.8.0-Server-Update/api/mobile_social_v31.php
+          cp backend/api/mobile_e2ee_v32.php TaleemPK-v3.8.0-Server-Update/api/mobile_e2ee_v32.php
+          cat > TaleemPK-v3.8.0-Server-Update/README.txt <<'EOF'
+          TaleemPK v3.8 server update
+
+          Upload all three files inside this package's api/ folder to your website api/ folder.
+          Typical destination: public_html/api/
+
+          Replace/overwrite:
+          - api/mobile.php
+          - api/mobile_social_v31.php
+          - api/mobile_e2ee_v32.php
+
+          Keep a backup of the existing files before replacing them.
+          This package includes Privacy & Security API fixes, verification compatibility,
+          mobile device identity support, chat API compatibility and E2EE mobile endpoints.
+          EOF
 
       - name: Upload server update
         uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.7.0-Server-Update
-          path: TaleemPK-v3.7.0-Server-Update/
+          name: TaleemPK-v3.8.0-Server-Update
+          path: TaleemPK-v3.8.0-Server-Update/
           if-no-files-found: error
