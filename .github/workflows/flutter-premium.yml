@@ -49,6 +49,9 @@ jobs:
       - name: Apply v3.6 UI and navigation polish
         working-directory: .
         run: python3 tools/v36_ui_navigation_polish.py
+      - name: Fix v3.6 splash class boundary
+        working-directory: .
+        run: python3 tools/v36b_splash_fix.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -102,6 +105,8 @@ jobs:
           assert 'indicatorShape: RoundedRectangleBorder' in shell
           assert 'Preparing your learning space' in main
           assert 'LinearProgressIndicator' in main
+          assert main.count('class OfflineScreen extends StatelessWidget') == 1
+          assert main.count('Widget _orb(double size, Color color)') == 1
           assert 'portrait_story' in native
           assert 'deviceName()' in native
           assert 'version: 3.6.0+360' in pubspec
