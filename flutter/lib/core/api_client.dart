@@ -193,6 +193,41 @@ class ApiClient {
     'bio': bio,
   });
 
+  Future<Map<String, dynamic>> privacySettings() =>
+      _request({'action': 'privacy_get'});
+
+  Future<Map<String, dynamic>> updatePrivacySetting(
+    String key,
+    String value,
+  ) =>
+      _request({
+        'action': 'privacy_update',
+        'key': key,
+        'value': value,
+      });
+
+  Future<List<Map<String, dynamic>>> mobileSessions() async {
+    final data = await _request({'action': 'sessions'});
+    return _list(data['sessions']).map(_map).toList();
+  }
+
+  Future<void> revokeMobileSession(int id) => _request({
+        'action': 'session_revoke',
+        'id': '$id',
+      });
+
+  Future<void> changePassword(
+    String currentPassword,
+    String newPassword, {
+    bool signOutOthers = true,
+  }) =>
+      _request({
+        'action': 'change_password',
+        'current_password': currentPassword,
+        'new_password': newPassword,
+        'sign_out_others': signOutOthers ? '1' : '0',
+      });
+
   Future<String> createTicket(String topic, String subject, String body) async {
     final data = await _request({
       'action': 'create_ticket',
@@ -245,12 +280,19 @@ class ApiClient {
         }),
       );
 
-  Future<void> sendText(int conversationId, String text, {int? replyTo}) =>
+  String newClientToken() => _clientToken();
+
+  Future<void> sendText(
+    int conversationId,
+    String text, {
+    int? replyTo,
+    String? clientToken,
+  }) =>
       _request({
         'action': 'send',
         'conversation_id': '$conversationId',
         'content': text,
-        'client_token': _clientToken(),
+        'client_token': clientToken ?? _clientToken(),
         if (replyTo != null) 'reply_to': '$replyTo',
       });
 

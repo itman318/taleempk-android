@@ -307,6 +307,102 @@ if ($action === 'logout') {
 $u = mobile_user();
 $uid = (int) $u['id'];
 
+function mobile_privacy_snapshot(int $uid): array
+{
+    $row = fetch_one('SELECT profile_privacy,show_online,searchable,allow_dm,allow_comments,allow_calls,show_receipts FROM users WHERE id=? LIMIT 1', [$uid]);
+    if (!$row) { mobile_error('This account is not available.', 404); }
+    return [
+        'profile_privacy' => (string) ($row['profile_privacy'] ?? 'public'),
+        'show_online' => (int) ($row['show_online'] ?? 1) === 1,
+        'searchable' => (int) ($row['searchable'] ?? 1) === 1,
+        'allow_dm' => (string) ($row['allow_dm'] ?? 'everyone'),
+        'allow_comments' => (string) ($row['allow_comments'] ?? 'everyone'),
+        'allow_calls' => (string) ($row['allow_calls'] ?? 'everyone'),
+        'show_receipts' => (int) ($row['show_receipts'] ?? 1) === 1,
+    ];
+}
+
+if ($action === 'privacy_get') {
+    mobile_out(mobile_privacy_snapshot($uid));
+}
+
+if ($action === 'privacy_update') {
+    $key = strtolower(trim((string) ($_POST['key'] ?? '')));
+    $value = strtolower(trim((string) ($_POST['value'] ?? '')));
+    $choices = [
+        'profile_privacy' => ['public','members','private'],
+        'allow_dm' => ['everyone','following','followers','none'],
+        'allow_comments' => ['everyone','following','followers','none'],
+        'allow_calls' => ['everyone','following','followers','none'],
+    ];
+    $booleans = ['show_online','searchable','show_receipts'];
+    if (isset($choices[$key])) {
+        if (!in_array($value, $choices[$key], true)) { mobile_error('That privacy option is not valid.'); }
+        q("UPDATE users SET {$key}=? WHERE id=?", [$value,$uid]);
+    } elseif (in_array($key, $booleans, true)) {
+        if (!in_array($value, ['0','1'], true)) { mobile_error('That privacy option is not valid.'); }
+        q("UPDATE users SET {$key}=? WHERE id=?", [(int)$value,$uid]);
+    } else {
+        mobile_error('That privacy setting is not supported.');
+    }
+    log_activity($uid, 'privacy_update', 'Updated ' . $key . ' from Android app');
+    mobile_out(mobile_privacy_snapshot($uid));
+}
+
+if ($action === 'sessions') {
+    $currentHash = hash('sha256', mobile_bearer());
+    $rows = fetch_all('SELECT id,token_hash,device_name,created_at,last_seen,expires_at FROM mobile_sessions WHERE user_id=? AND expires_at>NOW() ORDER BY created_at DESC LIMIT 20', [$uid]);
+    $sessions = array_map(static function(array $row) use ($currentHash): array {
+        return [
+            'id' => (int) $row['id'],
+            'device' => (string) ($row['device_name'] ?: 'Mobile device'),
+            'created_at' => (string) ($row['created_at'] ?? ''),
+            'last_seen' => (string) ($row['last_seen'] ?? $row['created_at'] ?? ''),
+            'expires_at' => (string) ($row['expires_at'] ?? ''),
+            'current' => hash_equals($currentHash, (string) $row['token_hash']),
+        ];
+    }, $rows);
+    mobile_out(['sessions' => $sessions]);
+}
+
+if ($action === 'session_revoke') {
+    $id = max(0, (int) ($_POST['id'] ?? 0));
+    if ($id <= 0) { mobile_error('Choose a valid device session.'); }
+    $row = fetch_one('SELECT id,token_hash FROM mobile_sessions WHERE id=? AND user_id=? LIMIT 1', [$id,$uid]);
+    if (!$row) { mobile_error('That device session is no longer available.', 404); }
+    if (hash_equals(hash('sha256', mobile_bearer()), (string) $row['token_hash'])) {
+        mobile_error('Use Sign out to remove the current device.', 409);
+    }
+    delete_row('mobile_sessions', 'id=? AND user_id=?', [$id,$uid]);
+    log_activity($uid, 'mobile_session_revoked', 'Revoked a mobile session from Android app');
+    mobile_out(['revoked' => true]);
+}
+
+if ($action === 'change_password') {
+    $current = (string) ($_POST['current_password'] ?? '');
+    $next = (string) ($_POST['new_password'] ?? '');
+    if ($current === '' || $next === '') { mobile_error('Enter your current and new password.'); }
+    if (!password_verify($current, (string) ($u['password_hash'] ?? ''))) {
+        mobile_error('Your current password is not correct.', 401);
+    }
+    [$passwordOk, $passwordReason] = password_quality($next, [
+        'name' => (string) ($u['name'] ?? ''),
+        'username' => (string) ($u['username'] ?? ''),
+        'email' => (string) ($u['email'] ?? ''),
+    ]);
+    if (!$passwordOk) { mobile_error($passwordReason); }
+    if (password_verify($next, (string) ($u['password_hash'] ?? ''))) {
+        mobile_error('Choose a new password that is different from your current password.');
+    }
+    q('UPDATE users SET password_hash=? WHERE id=?', [password_hash($next, PASSWORD_DEFAULT),$uid]);
+    if ((int) ($_POST['sign_out_others'] ?? 1) === 1) {
+        $currentHash = hash('sha256', mobile_bearer());
+        q('DELETE FROM mobile_sessions WHERE user_id=? AND token_hash<>?', [$uid,$currentHash]);
+    }
+    log_activity($uid, 'password_changed_mobile', 'Password changed from Android app');
+    mobile_out(['message' => 'Password updated securely.']);
+}
+
 /* Bridge the verified bearer identity into the mature browser mutation
    handlers. The website bootstrap may already have cached current_user() as
    guest before the bearer token is checked, so the companion auth.php patch
@@ -338,9 +434,97 @@ $nativeSharedHandlers = [
     'create_post'    => 'post_create.php',
     'react_post'     => 'react.php',
     'create_comment' => 'comment_create.php',
+    'edit_comment'   => 'post_edit.php',
 ];
 if (isset($nativeSharedHandlers[$action])) {
     require __DIR__ . '/' . $nativeSharedHandlers[$action];
+}
+
+if ($action === 'delete_comment') {
+    require_feature('feature_comments');
+    $id = (int) ($_POST['id'] ?? 0);
+    $c = fetch_one(
+        'SELECT c.*, p.user_id AS post_owner, p.type AS post_type, p.status AS post_status
+           FROM comments c JOIN posts p ON p.id=c.post_id WHERE c.id=?',
+        [$id]
+    );
+    if (!$c) { mobile_error('That comment no longer exists.', 404); }
+    if ((int) $c['user_id'] !== $uid && !mod_can('comments')) {
+        mobile_error('You can only delete your own comments.', 403);
+    }
+    db_transaction(static function () use ($id, $c): void {
+        delete_row('reactions', "target_type='comment' AND target_id=?", [$id]);
+        delete_row('notifications', "target_type='comment' AND target_id=?", [$id]);
+        q('UPDATE comments SET parent_id=NULL WHERE parent_id=?', [$id]);
+        delete_row('comments', 'id=?', [$id]);
+        if (($c['status'] ?? 'active') === 'active') {
+            q('UPDATE posts SET comments_count=GREATEST(comments_count-1,0) WHERE id=?', [$c['post_id']]);
+        }
+        if ((int) ($c['is_best_answer'] ?? 0) === 1) {
+            q('UPDATE posts SET is_solved=0 WHERE id=?', [$c['post_id']]);
+            remove_points_for_target((int) $c['user_id'], 'best_answer', 'comment', $id);
+        }
+        remove_points_for_target((int) $c['user_id'], 'comment', 'comment', $id);
+    });
+    mobile_out(['deleted' => true]);
+}
+
+if ($action === 'notification_peek') {
+    $latestChat = null;
+    $row = fetch_one(
+        "SELECT m.id,m.conversation_id,m.content,m.enc,m.attachment_name,m.voice_seconds,
+                sender.name AS from_name
+           FROM messages m
+           JOIN conversation_members cm
+             ON cm.conversation_id=m.conversation_id AND cm.user_id=?
+           JOIN users sender ON sender.id=m.sender_id
+          WHERE m.sender_id<>? AND m.status='sent'
+            AND m.id>COALESCE(cm.last_read_id,0)
+          ORDER BY m.id DESC LIMIT 1",
+        [$uid, $uid]
+    );
+    if ($row) {
+        if ((int) ($row['enc'] ?? 0) === 1) {
+            $text = 'Sent you an encrypted message';
+        } elseif ((int) ($row['voice_seconds'] ?? 0) > 0) {
+            $text = 'Sent a voice message';
+        } elseif (trim((string) ($row['content'] ?? '')) !== '') {
+            $text = excerpt((string) $row['content'], 90);
+        } elseif (trim((string) ($row['attachment_name'] ?? '')) !== '') {
+            $text = 'Sent a file';
+        } else {
+            $text = 'Sent you a message';
+        }
+        $latestChat = [
+            'id' => (int) $row['id'],
+            'from' => (string) $row['from_name'],
+            'text' => $text,
+            'conversation' => (int) $row['conversation_id'],
+        ];
+    }
+
+    $latestNotification = fetch_one(
+        "SELECT id,message,type,created_at FROM notifications
+          WHERE user_id=? AND is_read=0 AND type<>'message'
+          ORDER BY id DESC LIMIT 1",
+        [$uid]
+    );
+    mobile_out([
+        'chat_unread' => (int) fetch_col(
+            'SELECT COALESCE(SUM(unread_count),0) FROM conversation_members WHERE user_id=?',
+            [$uid]
+        ),
+        'notification_unread' => (int) fetch_col(
+            'SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0',
+            [$uid]
+        ),
+        'latest_chat' => $latestChat,
+        'latest_notification' => $latestNotification ? [
+            'id' => (int) $latestNotification['id'],
+            'message' => (string) $latestNotification['message'],
+            'type' => (string) $latestNotification['type'],
+        ] : null,
+    ]);
 }
 
 if ($action === 'bootstrap') {
@@ -371,7 +555,7 @@ if ($action === 'feed') {
         "SELECT p.id,p.type,p.content,p.created_at,p.likes_count,p.comments_count,p.is_solved,
                 EXISTS(SELECT 1 FROM reactions r WHERE r.target_type='post' AND r.target_id=p.id
                         AND r.user_id=? AND r.type='like') liked,
-                u.name,u.username,u.avatar
+                u.name,u.username,u.avatar,u.is_verified
            FROM posts p JOIN users u ON u.id=p.user_id
           WHERE p.status='active' AND p.visibility='public' AND p.group_id IS NULL
             AND u.status='active'
@@ -383,6 +567,7 @@ if ($action === 'feed') {
         'type'=>$p['type'], 'content'=>(string)($p['content'] ?? ''),
         'created_at'=>time_ago($p['created_at']), 'likes'=>(int)$p['likes_count'],
         'comments'=>(int)$p['comments_count'], 'solved'=>(int)$p['is_solved']===1, 'liked'=>(bool)$p['liked'],
+        'verified'=>(int)$p['is_verified']===1,
     ], $rows);
     mobile_out(['posts'=>$posts, 'page'=>$page]);
 }
@@ -426,14 +611,15 @@ if ($action === 'module') {
             'kind'=>'resource','done'=>false];
     } elseif ($key === 'quizzes') {
         require_feature('feature_quizzes'); $title = 'Quizzes'; $subtitle = 'Practice and test your knowledge';
-        $rows = fetch_all("SELECT q.id,q.title,q.subject,q.class_grade,q.time_limit,q.attempts_count,
+        $rows = fetch_all("SELECT q.id,q.slug,q.title,q.subject,q.class_grade,q.time_limit,q.attempts_count,
                            (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id=q.id) questions
                            FROM quizzes q WHERE q.status='approved' AND q.is_public=1
                            ORDER BY q.attempts_count DESC,q.id DESC LIMIT 60");
         foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['title'],
             'subtitle'=>(string)($r['subject']?:'General knowledge'),
             'meta'=>(int)$r['questions'].' questions'.((int)$r['time_limit']?' · '.(int)$r['time_limit'].' min':'').' · '.(int)$r['attempts_count'].' attempts',
-            'kind'=>'quiz','done'=>false];
+            'kind'=>'quiz','done'=>false,
+            'route'=>'quiz-take.php?s='.rawurlencode((string)$r['slug'])];
     } elseif ($key === 'groups') {
         require_feature('feature_groups'); $title = 'Study groups'; $subtitle = 'Learn together by subject';
         $rows = fetch_all("SELECT g.id,g.name,g.subject,g.level,g.members_count,gm.role

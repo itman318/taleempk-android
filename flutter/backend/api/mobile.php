@@ -307,6 +307,102 @@ if ($action === 'logout') {
 $u = mobile_user();
 $uid = (int) $u['id'];
 
+function mobile_privacy_snapshot(int $uid): array
+{
+    $row = fetch_one('SELECT profile_privacy,show_online,searchable,allow_dm,allow_comments,allow_calls,show_receipts FROM users WHERE id=? LIMIT 1', [$uid]);
+    if (!$row) { mobile_error('This account is not available.', 404); }
+    return [
+        'profile_privacy' => (string) ($row['profile_privacy'] ?? 'public'),
+        'show_online' => (int) ($row['show_online'] ?? 1) === 1,
+        'searchable' => (int) ($row['searchable'] ?? 1) === 1,
+        'allow_dm' => (string) ($row['allow_dm'] ?? 'everyone'),
+        'allow_comments' => (string) ($row['allow_comments'] ?? 'everyone'),
+        'allow_calls' => (string) ($row['allow_calls'] ?? 'everyone'),
+        'show_receipts' => (int) ($row['show_receipts'] ?? 1) === 1,
+    ];
+}
+
+if ($action === 'privacy_get') {
+    mobile_out(mobile_privacy_snapshot($uid));
+}
+
+if ($action === 'privacy_update') {
+    $key = strtolower(trim((string) ($_POST['key'] ?? '')));
+    $value = strtolower(trim((string) ($_POST['value'] ?? '')));
+    $choices = [
+        'profile_privacy' => ['public','members','private'],
+        'allow_dm' => ['everyone','following','followers','none'],
+        'allow_comments' => ['everyone','following','followers','none'],
+        'allow_calls' => ['everyone','following','followers','none'],
+    ];
+    $booleans = ['show_online','searchable','show_receipts'];
+    if (isset($choices[$key])) {
+        if (!in_array($value, $choices[$key], true)) { mobile_error('That privacy option is not valid.'); }
+        q("UPDATE users SET {$key}=? WHERE id=?", [$value,$uid]);
+    } elseif (in_array($key, $booleans, true)) {
+        if (!in_array($value, ['0','1'], true)) { mobile_error('That privacy option is not valid.'); }
+        q("UPDATE users SET {$key}=? WHERE id=?", [(int)$value,$uid]);
+    } else {
+        mobile_error('That privacy setting is not supported.');
+    }
+    log_activity($uid, 'privacy_update', 'Updated ' . $key . ' from Android app');
+    mobile_out(mobile_privacy_snapshot($uid));
+}
+
+if ($action === 'sessions') {
+    $currentHash = hash('sha256', mobile_bearer());
+    $rows = fetch_all('SELECT id,token_hash,device_name,created_at,last_seen,expires_at FROM mobile_sessions WHERE user_id=? AND expires_at>NOW() ORDER BY created_at DESC LIMIT 20', [$uid]);
+    $sessions = array_map(static function(array $row) use ($currentHash): array {
+        return [
+            'id' => (int) $row['id'],
+            'device' => (string) ($row['device_name'] ?: 'Mobile device'),
+            'created_at' => (string) ($row['created_at'] ?? ''),
+            'last_seen' => (string) ($row['last_seen'] ?? $row['created_at'] ?? ''),
+            'expires_at' => (string) ($row['expires_at'] ?? ''),
+            'current' => hash_equals($currentHash, (string) $row['token_hash']),
+        ];
+    }, $rows);
+    mobile_out(['sessions' => $sessions]);
+}
+
+if ($action === 'session_revoke') {
+    $id = max(0, (int) ($_POST['id'] ?? 0));
+    if ($id <= 0) { mobile_error('Choose a valid device session.'); }
+    $row = fetch_one('SELECT id,token_hash FROM mobile_sessions WHERE id=? AND user_id=? LIMIT 1', [$id,$uid]);
+    if (!$row) { mobile_error('That device session is no longer available.', 404); }
+    if (hash_equals(hash('sha256', mobile_bearer()), (string) $row['token_hash'])) {
+        mobile_error('Use Sign out to remove the current device.', 409);
+    }
+    delete_row('mobile_sessions', 'id=? AND user_id=?', [$id,$uid]);
+    log_activity($uid, 'mobile_session_revoked', 'Revoked a mobile session from Android app');
+    mobile_out(['revoked' => true]);
+}
+
+if ($action === 'change_password') {
+    $current = (string) ($_POST['current_password'] ?? '');
+    $next = (string) ($_POST['new_password'] ?? '');
+    if ($current === '' || $next === '') { mobile_error('Enter your current and new password.'); }
+    if (!password_verify($current, (string) ($u['password_hash'] ?? ''))) {
+        mobile_error('Your current password is not correct.', 401);
+    }
+    [$passwordOk, $passwordReason] = password_quality($next, [
+        'name' => (string) ($u['name'] ?? ''),
+        'username' => (string) ($u['username'] ?? ''),
+        'email' => (string) ($u['email'] ?? ''),
+    ]);
+    if (!$passwordOk) { mobile_error($passwordReason); }
+    if (password_verify($next, (string) ($u['password_hash'] ?? ''))) {
+        mobile_error('Choose a new password that is different from your current password.');
+    }
+    q('UPDATE users SET password_hash=? WHERE id=?', [password_hash($next, PASSWORD_DEFAULT),$uid]);
+    if ((int) ($_POST['sign_out_others'] ?? 1) === 1) {
+        $currentHash = hash('sha256', mobile_bearer());
+        q('DELETE FROM mobile_sessions WHERE user_id=? AND token_hash<>?', [$uid,$currentHash]);
+    }
+    log_activity($uid, 'password_changed_mobile', 'Password changed from Android app');
+    mobile_out(['message' => 'Password updated securely.']);
+}
+
 /* Bridge the verified bearer identity into the mature browser mutation
    handlers. The website bootstrap may already have cached current_user() as
    guest before the bearer token is checked, so the companion auth.php patch

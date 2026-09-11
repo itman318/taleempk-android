@@ -18,6 +18,7 @@ import '../core/app_state.dart';
 import '../core/api_client.dart';
 import '../core/models.dart';
 import '../core/native_bridge.dart';
+import '../core/outbox.dart';
 import '../core/theme.dart';
 import '../widgets/common.dart';
 import 'call_screen.dart';
@@ -81,6 +82,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final textController = TextEditingController(), scroll = ScrollController();
   final recorder = AudioRecorder();
   final voicePreviewPlayer = AudioPlayer();
+  final outbox = MessageOutbox();
   Timer? poll, recordTimer, waveTimer, presenceDebounce, typingHeartbeat, voiceHeartbeat;
   ChatPresence? presence;
   ReplyPreview? reply;
@@ -97,7 +99,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       loadingOlder = false,
       historyDone = false,
       foreground = true;
-  int recordSeconds = 0, pollTicks = 0;
+  int recordSeconds = 0, pollTicks = 0, queuedMessages = 0;
+  bool flushingOutbox = false;
   double? uploadProgress;
   String? error, recordPath, voicePreviewPath;
   String searchQuery = '', emojiCategory = 'Recent';
@@ -115,6 +118,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     muted = widget.conversation.muted;
     scroll.addListener(_historyListener);
     _loadRecentEmojis();
+    _refreshOutboxCount();
     _load(jumpToBottom: true);
   }
 
@@ -244,6 +248,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         scroll.position.maxScrollExtent - scroll.position.pixels < 220;
     try {
       pollTicks++;
+      if (queuedMessages > 0 && pollTicks % 3 == 0) {
+        await _flushOutbox();
+      }
       final fullSync = pollTicks % 4 == 0;
       final after = messages.isEmpty ? 0 : messages.last.id;
       final api = AppScope.of(context).api;
@@ -554,6 +561,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           else if (voicePreviewPath != null)
             _voicePreviewBar(),
           if (uploadProgress != null) _uploadBar(),
+          if (queuedMessages > 0 && selectedIds.isEmpty) _outboxBar(),
           if (reply != null &&
               !_chatBlocked &&
               selectedIds.isEmpty &&
@@ -1948,19 +1956,102 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final text = textController.text.trim();
     if (text.isEmpty) return;
     final currentReply = reply;
+    final api = AppScope.of(context).api;
+    final token = api.newClientToken();
     setState(() => sending = true);
     textController.clear();
     setState(() => reply = null);
     try {
-      await AppScope.of(context).api
-          .sendText(widget.conversation.id, text, replyTo: currentReply?.id);
+      await api.sendText(
+        widget.conversation.id,
+        text,
+        replyTo: currentReply?.id,
+        clientToken: token,
+      );
       await _load(jumpToBottom: true);
     } catch (e) {
-      textController.text = text;
-      if (mounted) showMessage(context, apiMessage(e));
+      if (e is ApiException && e.status == 0) {
+        await outbox.enqueue(
+          OutboxItem(
+            token: token,
+            conversationId: widget.conversation.id,
+            text: text,
+            replyTo: currentReply?.id,
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+        await _refreshOutboxCount();
+        if (mounted) {
+          showMessage(context, 'Message queued. It will send automatically when the connection returns.');
+        }
+      } else {
+        textController.text = text;
+        if (mounted) showMessage(context, apiMessage(e));
+      }
     }
     if (mounted) setState(() => sending = false);
   }
+
+  Future<void> _refreshOutboxCount() async {
+    final count = await outbox.countForConversation(widget.conversation.id);
+    if (mounted && count != queuedMessages) setState(() => queuedMessages = count);
+  }
+
+  Future<void> _flushOutbox() async {
+    if (flushingOutbox || queuedMessages <= 0 || !mounted) return;
+    flushingOutbox = true;
+    try {
+      final api = AppScope.of(context).api;
+      final pending = await outbox.forConversation(widget.conversation.id);
+      for (final item in pending) {
+        try {
+          await api.sendText(
+            item.conversationId,
+            item.text,
+            replyTo: item.replyTo,
+            clientToken: item.token,
+          );
+          await outbox.remove(item.token);
+        } catch (e) {
+          await outbox.updateAttempts(item.token, item.attempts + 1);
+          if (e is ApiException && e.status != 0) {
+            // A server-side rejection will not recover merely by retrying.
+            break;
+          }
+          break;
+        }
+      }
+    } finally {
+      flushingOutbox = false;
+      await _refreshOutboxCount();
+    }
+  }
+
+  Widget _outboxBar() => Container(
+        margin: const EdgeInsets.fromLTRB(10, 4, 10, 3),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: AppColors.violet.withValues(alpha: .10),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: AppColors.violet.withValues(alpha: .18)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_upload_outlined, size: 18, color: AppColors.violet),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '$queuedMessages message${queuedMessages == 1 ? '' : 's'} waiting for connection',
+                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800),
+              ),
+            ),
+            TextButton(
+              onPressed: flushingOutbox ? null : _flushOutbox,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
 
   Future<void> _pickAttachment() async {
     if (_chatBlocked) return;

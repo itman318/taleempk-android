@@ -6,6 +6,7 @@ import '../core/theme.dart';
 import '../widgets/common.dart';
 import 'home_shell.dart';
 import 'module_screen.dart';
+import 'security_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -63,8 +64,11 @@ class ProfileScreen extends StatelessWidget {
             _tile(
               Icons.shield_outlined,
               'Privacy & security',
-              'Control profile and online visibility',
-              () => _privacy(context),
+              'Privacy, password and signed-in devices',
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SecurityScreen()),
+              ),
             ),
             _tile(
               Icons.support_agent_rounded,
