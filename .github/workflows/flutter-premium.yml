@@ -43,6 +43,9 @@ jobs:
       - name: Apply v3.5 profile and media polish
         working-directory: .
         run: python3 tools/v35b_profile_media_polish.py
+      - name: Clean legacy v3.5 analyzer code
+        working-directory: .
+        run: python3 tools/v35c_cleanup.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -79,6 +82,7 @@ jobs:
           assert "'story': '9:16'" in chat
           assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
           assert 'paths.length >= 20' in chat and 'Add photos' in chat
+          assert '_processOutgoingPhoto' not in chat
           assert 'maximumSize: const Size(double.infinity, 44)' in profile
           assert 'surfaceContainerHighest' in profile
           assert 'Privacy & security' in profile
