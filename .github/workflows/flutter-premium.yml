@@ -22,7 +22,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: flutter
@@ -31,6 +31,9 @@ jobs:
       - name: Finalize v3.1 source
         working-directory: .
         run: python3 tools/v31_finalize.py
+      - name: Apply v3.2 messaging and E2EE upgrade
+        working-directory: .
+        run: python3 tools/v32_upgrade.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -38,16 +41,26 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
-      - name: PHP syntax check mobile API
+      - name: PHP syntax check mobile APIs
         working-directory: .
         run: |
           php -l flutter/backend/api/mobile.php
           php -l backend/api/mobile.php
           php -l flutter/backend/api/mobile_social_v31.php
           php -l backend/api/mobile_social_v31.php
-      - run: flutter build apk --release
+          php -l backend/api/mobile_e2ee_v32.php
+      - name: Build universal APK
+        run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
+      - name: Preserve universal APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.2.0-Universal.apk
+      - name: Build smaller per-ABI APKs
+        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.1.0-APK
-          path: flutter/build/app/outputs/flutter-apk/app-release.apk
+          name: TaleemPK-v3.2.0-APKs
+          path: |
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.2.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
           if-no-files-found: error
