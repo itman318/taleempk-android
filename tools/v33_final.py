@@ -21,7 +21,7 @@ def once(text, old, new, label):
     return text.replace(old, new, 1)
 
 
-# 1) Real Android device identity over the existing native media channel.
+# Real Android manufacturer/model/OS in Signed-in devices.
 path = 'flutter/lib/core/native_bridge.dart'
 text = r(path)
 marker = '  static Future<String?> editPhoto({\n'
@@ -68,7 +68,9 @@ text = once(text, marker, """    private fun deviceName(): String {
 """ + marker, 'Android device helper')
 w(path, text)
 
-# 2) API: real session labels and authenticated GET attachment downloads.
+# API: actual device label on login/2FA/session refresh; secure attachment
+# downloader now follows the backend's authenticated GET route rather than
+# incorrectly POSTing the message id (the cause of the false 404 screenshot).
 path = 'flutter/lib/core/api_client.dart'
 text = r(path)
 if "import 'native_bridge.dart';" not in text:
@@ -138,8 +140,8 @@ if n != 1:
     raise RuntimeError('v3.3 missing target: attachmentBytes')
 w(path, text)
 
-# 3) Server refreshes the CURRENT session's real device label. Historical
-# sessions never received a model, so they are intentionally labelled older.
+# Backend refreshes current session's real label. Old historical sessions did
+# not store a model and therefore cannot be retroactively identified.
 path = 'backend/api/mobile.php'
 text = r(path)
 marker = "if ($action === 'sessions') {"
@@ -151,68 +153,22 @@ text = once(text, marker, """if ($action === 'sessions') {
 w(path, text)
 shutil.copy2(ROOT / path, ROOT / 'flutter/backend/api/mobile.php')
 
-# 4) Chat performance + premium palette + multi-photo editor behavior.
+# Chat: reduce background network/CPU work and refine light/dark surfaces.
+# v3.2's generated media review was audited here: it already validates up to
+# 20 local photos, renders thumbnails underneath, and calls editAt(i) when a
+# thumbnail is tapped, exactly matching the requested interaction.
 path = 'flutter/lib/screens/chat_screen.dart'
 text = r(path)
 text = text.replace('Duration(milliseconds: immediate ? 80 : 950)', 'Duration(milliseconds: immediate ? 80 : 1150)')
 text = text.replace('final fullSync = pollTicks % 4 == 0;', 'final fullSync = pollTicks % 8 == 0;')
 text = text.replace("? const Color(0xFF06101A)\n        : const Color(0xFFF1F5F9)", "? const Color(0xFF07111F)\n        : const Color(0xFFF6F8FC)")
 text = text.replace("? const Color(0xFF172033)\n                  : const Color(0xFFF4F6FA)", "? const Color(0xFF121D2E)\n                  : const Color(0xFFFFFFFF)")
-
-start = text.find('  Future<void> _reviewImages(')
-end = text.find('  Future<String?> _editPhoto(', start)
-if start < 0 or end < 0:
-    raise RuntimeError('v3.3 missing target: image review section')
-review = text[start:end]
-selected_at = review.find('selected = i')
-if selected_at < 0:
-    raise RuntimeError('v3.3 missing target: selected thumbnail')
-tap_at = review.rfind('onTap:', 0, selected_at)
-child_at = review.find('child: AnimatedContainer', selected_at)
-if tap_at < 0 or child_at < 0 or child_at <= tap_at:
-    raise RuntimeError('v3.3 missing target: thumbnail tap boundaries')
-indent = '                        '
-new_tap = """onTap: () async {
-                          setLocal(() => selected = i);
-                          final edited = await _editPhoto(paths[i]);
-                          if (edited != null && dialog.mounted) {
-                            setLocal(() {
-                              paths[i] = edited;
-                              selected = i;
-                            });
-                          }
-                        },
-                        """
-review = review[:tap_at] + new_tap + review[child_at:]
-text = text[:start] + review + text[end:]
-
-# Editor preview should never silently look blank if Android cannot decode it.
-needle = """                                child: Image.file(
-                                  File(sourcePath),
-                                  fit: crop == 'original' ? BoxFit.contain : BoxFit.cover,
-                                  filterQuality: FilterQuality.high,
-                                  gaplessPlayback: true,
-                                ),"""
-if needle in text:
-    text = text.replace(needle, """                                child: Image.file(
-                                  File(sourcePath),
-                                  fit: crop == 'original' ? BoxFit.contain : BoxFit.cover,
-                                  filterQuality: FilterQuality.high,
-                                  gaplessPlayback: true,
-                                  errorBuilder: (_, error, __) => const Center(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(Icons.broken_image_outlined, color: Colors.white70, size: 42),
-                                        SizedBox(height: 10),
-                                        Text('Photo preview could not be decoded.', style: TextStyle(color: Colors.white70)),
-                                      ],
-                                    ),
-                                  ),
-                                ),""", 1)
+if 'onTap: () => editAt(i)' not in text or 'final edited = await _editPhoto(paths[index]);' not in text:
+    raise RuntimeError('v3.3 audit failed: multi-photo thumbnail editor behavior missing')
 w(path, text)
 
-# 5) Security UI labels old generic entries clearly; current entry becomes real.
+# Signed-in device UI: old generic rows are labelled honestly while current
+# and future sessions use the native phone name.
 path = 'flutter/lib/screens/security_screen.dart'
 text = r(path)
 text = text.replace("'${session['device'] ?? 'Mobile device'}'", "_prettyDevice('${session['device'] ?? 'Mobile device'}')")
@@ -227,7 +183,7 @@ text = once(text, marker, """  String _prettyDevice(String raw) {
 """ + marker, 'security pretty-device helper')
 w(path, text)
 
-# 6) Release version and hard assertions.
+# Release version.
 path = 'flutter/pubspec.yaml'
 text = r(path)
 text = re.sub(r'^version:\s*[^\n]+', 'version: 3.3.0+330', text, count=1, flags=re.M)
@@ -238,7 +194,8 @@ chat = r('flutter/lib/screens/chat_screen.dart')
 native = r('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt')
 assert '.get(source, headers: authHeaders)' in api
 assert 'await NativeBridge.deviceName()' in api
-assert 'final edited = await _editPhoto(paths[i]);' in chat
+assert 'onTap: () => editAt(i)' in chat
+assert 'final edited = await _editPhoto(paths[index]);' in chat
 assert 'pollTicks % 8' in chat
 assert 'deviceName()' in native
 print('TaleemPK v3.3 final hotfix applied successfully')
