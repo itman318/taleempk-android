@@ -8,11 +8,17 @@ source = source.replace(
     "composer_start = text.find('  Widget _composer()')",
 )
 source = source.replace(
+    "composer_end = text.find('  Future<void> _loadRecentEmojis()', composer_start)",
+    "composer_end = text.find('  Future<void> _loadMentionMembers()', composer_start)",
+)
+source = source.replace(
     "upload_start = text.find('  Widget _uploadBar() => Container(')",
     "upload_start = text.find('  Widget _uploadBar()')",
 )
 if "composer_start = text.find('  Widget _composer()')" not in source:
     raise RuntimeError('v3.7b could not relax composer boundary')
+if "composer_end = text.find('  Future<void> _loadMentionMembers()', composer_start)" not in source:
+    raise RuntimeError('v3.7b could not preserve mention helpers')
 if "upload_start = text.find('  Widget _uploadBar()')" not in source:
     raise RuntimeError('v3.7b could not relax upload boundary')
 exec(compile(source, str(source_path), 'exec'), {'__file__': str(source_path), '__name__': '__main__'})
