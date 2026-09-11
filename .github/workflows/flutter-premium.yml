@@ -34,6 +34,9 @@ jobs:
       - name: Apply v3.2 messaging and E2EE upgrade
         working-directory: .
         run: python3 tools/run_v32.py
+      - name: Inspect generated image review
+        working-directory: .
+        run: python3 tools/diagnose_review.py
       - name: Apply v3.3 media, device and performance hotfix
         working-directory: .
         run: python3 tools/v33_final.py
