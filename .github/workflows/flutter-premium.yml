@@ -33,7 +33,7 @@ jobs:
         run: python3 tools/v31_finalize.py
       - name: Apply v3.2 messaging and E2EE upgrade
         working-directory: .
-        run: python3 tools/v32_upgrade.py
+        run: python3 tools/run_v32.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
