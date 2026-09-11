@@ -1,0 +1,43 @@
+name: Package TaleemPK v3.3 Server API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [flutter-premium-v2]
+    paths:
+      - 'tools/v31_finalize.py'
+      - 'tools/run_v32.py'
+      - 'tools/v32_upgrade.py'
+      - 'tools/v33_final.py'
+      - '.github/workflows/v33-server.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate current backend
+        run: |
+          python3 tools/v31_finalize.py
+          python3 tools/run_v32.py
+          python3 tools/v33_final.py
+      - name: PHP syntax audit
+        run: |
+          php -l backend/api/mobile.php
+          php -l backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_e2ee_v32.php
+      - name: Prepare deploy package
+        run: |
+          mkdir -p dist/api
+          cp backend/api/mobile.php dist/api/mobile.php
+          cp backend/api/mobile_social_v31.php dist/api/mobile_social_v31.php
+          cp backend/api/mobile_e2ee_v32.php dist/api/mobile_e2ee_v32.php
+          printf '%s\n' 'TaleemPK v3.3 server API' 'Upload the api folder to your TaleemPK website root, replacing matching files.' > dist/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v3.3.0-Server-API
+          path: dist
+          if-no-files-found: error
