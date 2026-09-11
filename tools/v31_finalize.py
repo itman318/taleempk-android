@@ -19,15 +19,32 @@ flutter_backend.parent.mkdir(parents=True, exist_ok=True)
 shutil.copy2(backend, flutter_backend)
 
 # --- Flutter analyzer/runtime fixes -----------------------------------------
-# FilePicker 12 uses the instance API in the current Flutter toolchain.
-for rel in [
-    'flutter/lib/screens/feed_screen.dart',
-    'flutter/lib/screens/verification_screen.dart',
-]:
-    path = ROOT / rel
-    source = path.read_text(encoding='utf-8')
-    source = source.replace('FilePicker.platform.pickFiles(', 'FilePicker().pickFiles(')
-    path.write_text(source, encoding='utf-8')
+feed = ROOT / 'flutter/lib/screens/feed_screen.dart'
+text = feed.read_text(encoding='utf-8')
+text = text.replace(
+    "final picked = await FilePicker.platform.pickFiles(\n                            allowMultiple: true,",
+    "final picked = await FilePicker.pickFiles(",
+)
+text = text.replace(
+    "final picked = await FilePicker().pickFiles(\n                            allowMultiple: true,",
+    "final picked = await FilePicker.pickFiles(",
+)
+text = text.replace("                          if (picked == null) return;\n", "                          if (picked.isEmpty) return;\n")
+text = text.replace("                            for (final f in picked.files) {", "                            for (final f in picked) {")
+feed.write_text(text, encoding='utf-8')
+
+verification = ROOT / 'flutter/lib/screens/verification_screen.dart'
+text = verification.read_text(encoding='utf-8')
+text = text.replace(
+    "final result = await FilePicker.platform.pickFiles(\n                        allowMultiple: false,",
+    "final result = await FilePicker.pickFile(",
+)
+text = text.replace(
+    "final result = await FilePicker().pickFiles(\n                        allowMultiple: false,",
+    "final result = await FilePicker.pickFile(",
+)
+text = text.replace("                      onPick(result?.files.single.path);", "                      onPick(result?.path);")
+verification.write_text(text, encoding='utf-8')
 
 # Shared warning color used by the native verification status UI.
 theme = ROOT / 'flutter/lib/core/theme.dart'
