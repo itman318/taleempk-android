@@ -37,6 +37,9 @@ jobs:
       - name: Apply v3.3 media, device and performance hotfix
         working-directory: .
         run: python3 tools/v33_final.py
+      - name: Apply v3.4 adaptive chat runtime
+        working-directory: .
+        run: python3 tools/v34_chat_runtime.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -60,25 +63,31 @@ jobs:
           api = Path('flutter/lib/core/api_client.dart').read_text()
           chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
+          pubspec = Path('flutter/pubspec.yaml').read_text()
           assert '.get(source, headers: authHeaders)' in api
           assert 'await NativeBridge.deviceName()' in api
           assert 'onTap: () => editAt(i)' in chat
           assert 'final edited = await _editPhoto(paths[index]);' in chat
           assert 'pollTicks % 8' in chat
+          assert 'Duration(milliseconds: immediate ? 60 : delayMs)' in chat
+          assert 'Future<void> _syncAfterSend() async' in chat
+          assert chat.count('await _syncAfterSend();') >= 4
+          assert 'recordingPaused = true;' in chat and 'await recorder.resume();' in chat
+          assert 'version: 3.4.0+340' in pubspec
           assert 'deviceName()' in native
-          print('v3.3 regression audit passed')
+          print('v3.4 regression audit passed')
           PY
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.3.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.4.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.3.0-APKs
+          name: TaleemPK-v3.4.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.3.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.4.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
