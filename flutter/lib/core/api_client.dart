@@ -236,9 +236,9 @@ class ApiClient {
     return _list(data['sessions']).map(_map).toList();
   }
 
-  Future<void> revokeMobileSession(int id) => _request({
+  Future<void> revokeMobileSession(String sessionId) => _request({
         'action': 'session_revoke',
-        'id': '$id',
+        'session_id': sessionId,
       });
 
   Future<void> changePassword(

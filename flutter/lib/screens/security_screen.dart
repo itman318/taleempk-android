@@ -110,8 +110,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
               values: const {
                 'everyone': 'Everyone',
                 'following': 'People you follow',
-                'followers': 'Followers',
-                'none': 'Nobody',
+                'nobody': 'Nobody',
               },
               onChanged: (v) => _savePrivacy('allow_dm', v),
             ),
@@ -121,8 +120,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
               values: const {
                 'everyone': 'Everyone',
                 'following': 'People you follow',
-                'followers': 'Followers',
-                'none': 'Nobody',
+                'nobody': 'Nobody',
               },
               onChanged: (v) => _savePrivacy('allow_calls', v),
             ),
@@ -131,9 +129,8 @@ class _SecurityScreenState extends State<SecurityScreen> {
               value: '${s['allow_comments'] ?? 'everyone'}',
               values: const {
                 'everyone': 'Everyone',
-                'following': 'People you follow',
                 'followers': 'Followers',
-                'none': 'Nobody',
+                'nobody': 'Nobody',
               },
               onChanged: (v) => _savePrivacy('allow_comments', v),
             ),
@@ -157,6 +154,13 @@ class _SecurityScreenState extends State<SecurityScreen> {
               onChanged: saving ? null : (v) => _savePrivacy('show_receipts', v ? '1' : '0'),
               title: const Text('Read & played receipts'),
               subtitle: const Text('Share message read and voice played status.'),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              value: _bool(s['show_typing'], true),
+              onChanged: saving ? null : (v) => _savePrivacy('show_typing', v ? '1' : '0'),
+              title: const Text('Typing & recording indicators'),
+              subtitle: const Text('Share live typing and voice-recording presence.'),
             ),
           ],
         ),
@@ -217,7 +221,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
                         ? const Chip(label: Text('Current'))
                         : IconButton(
                             tooltip: 'Sign out this device',
-                            onPressed: () => _revokeSession(_int(session['id'])),
+                            onPressed: () => _revokeSession('${session['session_id'] ?? ''}'),
                             icon: const Icon(
                               Icons.logout_rounded,
                               color: AppColors.danger,
@@ -315,8 +319,8 @@ class _SecurityScreenState extends State<SecurityScreen> {
     if (mounted) setState(() => saving = false);
   }
 
-  Future<void> _revokeSession(int id) async {
-    if (id <= 0) return;
+  Future<void> _revokeSession(String sessionId) async {
+    if (sessionId.length != 64) return;
     final yes = await showDialog<bool>(
           context: context,
           builder: (dialog) => AlertDialog(
@@ -339,7 +343,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
         false;
     if (!yes || !mounted) return;
     try {
-      await AppScope.of(context).api.revokeMobileSession(id);
+      await AppScope.of(context).api.revokeMobileSession(sessionId);
       await _load();
     } catch (e) {
       if (mounted) showMessage(context, apiMessage(e));

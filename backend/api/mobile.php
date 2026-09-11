@@ -309,7 +309,7 @@ $uid = (int) $u['id'];
 
 function mobile_privacy_snapshot(int $uid): array
 {
-    $row = fetch_one('SELECT profile_privacy,show_online,searchable,allow_dm,allow_comments,allow_calls,show_receipts FROM users WHERE id=? LIMIT 1', [$uid]);
+    $row = fetch_one('SELECT profile_privacy,show_online,searchable,allow_dm,allow_comments,allow_calls,show_receipts,show_typing FROM users WHERE id=? LIMIT 1', [$uid]);
     if (!$row) { mobile_error('This account is not available.', 404); }
     return [
         'profile_privacy' => (string) ($row['profile_privacy'] ?? 'public'),
@@ -319,6 +319,7 @@ function mobile_privacy_snapshot(int $uid): array
         'allow_comments' => (string) ($row['allow_comments'] ?? 'everyone'),
         'allow_calls' => (string) ($row['allow_calls'] ?? 'everyone'),
         'show_receipts' => (int) ($row['show_receipts'] ?? 1) === 1,
+        'show_typing' => (int) ($row['show_typing'] ?? 1) === 1,
     ];
 }
 
@@ -331,11 +332,11 @@ if ($action === 'privacy_update') {
     $value = strtolower(trim((string) ($_POST['value'] ?? '')));
     $choices = [
         'profile_privacy' => ['public','members','private'],
-        'allow_dm' => ['everyone','following','followers','none'],
-        'allow_comments' => ['everyone','following','followers','none'],
-        'allow_calls' => ['everyone','following','followers','none'],
+        'allow_dm' => ['everyone','following','nobody'],
+        'allow_comments' => ['everyone','followers','nobody'],
+        'allow_calls' => ['everyone','following','nobody'],
     ];
-    $booleans = ['show_online','searchable','show_receipts'];
+    $booleans = ['show_online','searchable','show_receipts','show_typing'];
     if (isset($choices[$key])) {
         if (!in_array($value, $choices[$key], true)) { mobile_error('That privacy option is not valid.'); }
         q("UPDATE users SET {$key}=? WHERE id=?", [$value,$uid]);
@@ -351,10 +352,10 @@ if ($action === 'privacy_update') {
 
 if ($action === 'sessions') {
     $currentHash = hash('sha256', mobile_bearer());
-    $rows = fetch_all('SELECT id,token_hash,device_name,created_at,last_seen,expires_at FROM mobile_sessions WHERE user_id=? AND expires_at>NOW() ORDER BY created_at DESC LIMIT 20', [$uid]);
+    $rows = fetch_all('SELECT token_hash,device_name,created_at,last_seen,expires_at FROM mobile_sessions WHERE user_id=? AND expires_at>NOW() ORDER BY created_at DESC LIMIT 20', [$uid]);
     $sessions = array_map(static function(array $row) use ($currentHash): array {
         return [
-            'id' => (int) $row['id'],
+            'session_id' => (string) $row['token_hash'],
             'device' => (string) ($row['device_name'] ?: 'Mobile device'),
             'created_at' => (string) ($row['created_at'] ?? ''),
             'last_seen' => (string) ($row['last_seen'] ?? $row['created_at'] ?? ''),
@@ -366,14 +367,14 @@ if ($action === 'sessions') {
 }
 
 if ($action === 'session_revoke') {
-    $id = max(0, (int) ($_POST['id'] ?? 0));
-    if ($id <= 0) { mobile_error('Choose a valid device session.'); }
-    $row = fetch_one('SELECT id,token_hash FROM mobile_sessions WHERE id=? AND user_id=? LIMIT 1', [$id,$uid]);
+    $sessionId = strtolower(trim((string) ($_POST['session_id'] ?? '')));
+    if (!preg_match('/^[a-f0-9]{64}$/', $sessionId)) { mobile_error('Choose a valid device session.'); }
+    $row = fetch_one('SELECT token_hash FROM mobile_sessions WHERE token_hash=? AND user_id=? LIMIT 1', [$sessionId,$uid]);
     if (!$row) { mobile_error('That device session is no longer available.', 404); }
     if (hash_equals(hash('sha256', mobile_bearer()), (string) $row['token_hash'])) {
         mobile_error('Use Sign out to remove the current device.', 409);
     }
-    delete_row('mobile_sessions', 'id=? AND user_id=?', [$id,$uid]);
+    delete_row('mobile_sessions', 'token_hash=? AND user_id=?', [$sessionId,$uid]);
     log_activity($uid, 'mobile_session_revoked', 'Revoked a mobile session from Android app');
     mobile_out(['revoked' => true]);
 }
