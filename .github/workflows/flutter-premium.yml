@@ -46,6 +46,9 @@ jobs:
       - name: Clean legacy v3.5 analyzer code
         working-directory: .
         run: python3 tools/v35c_cleanup.py
+      - name: Apply v3.6 UI and navigation polish
+        working-directory: .
+        run: python3 tools/v36_ui_navigation_polish.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -69,6 +72,9 @@ jobs:
           api = Path('flutter/lib/core/api_client.dart').read_text()
           chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
           profile = Path('flutter/lib/screens/profile_screen.dart').read_text()
+          home = Path('flutter/lib/screens/home_screen.dart').read_text()
+          shell = Path('flutter/lib/screens/home_shell.dart').read_text()
+          main = Path('flutter/lib/main.dart').read_text()
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
           assert '.get(source, headers: authHeaders)' in api
@@ -83,25 +89,35 @@ jobs:
           assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
           assert 'paths.length >= 20' in chat and 'Add photos' in chat
           assert '_processOutgoingPhoto' not in chat
+          assert 'PublicProfileScreen(' in chat
+          assert 'profile.php?u=' not in chat
+          assert 'Keep your learning identity up to date' in profile
+          assert "section('BASIC INFORMATION'" in profile
+          assert "section('EDUCATION'" in profile
           assert 'maximumSize: const Size(double.infinity, 44)' in profile
-          assert 'surfaceContainerHighest' in profile
-          assert 'Privacy & security' in profile
+          assert 'Your learning space is ready' in home
+          assert "'Practice', 'Quick quiz'" in home
+          assert 'WidgetsBindingObserver' in shell
+          assert 'didChangeAppLifecycleState' in shell
+          assert 'indicatorShape: RoundedRectangleBorder' in shell
+          assert 'Preparing your learning space' in main
+          assert 'LinearProgressIndicator' in main
           assert 'portrait_story' in native
           assert 'deviceName()' in native
-          assert 'version: 3.5.0+350' in pubspec
-          print('v3.5 deep regression audit passed')
+          assert 'version: 3.6.0+360' in pubspec
+          print('v3.6 deep regression audit passed')
           PY
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.5.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.6.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.5.0-APKs
+          name: TaleemPK-v3.6.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.5.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.6.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
