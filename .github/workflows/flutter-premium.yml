@@ -40,6 +40,9 @@ jobs:
       - name: Apply v3.4 adaptive chat runtime
         working-directory: .
         run: python3 tools/v34_chat_runtime.py
+      - name: Apply v3.5 profile and media polish
+        working-directory: .
+        run: python3 tools/v35_profile_media_polish.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -55,39 +58,46 @@ jobs:
           php -l flutter/backend/api/mobile_social_v31.php
           php -l backend/api/mobile_social_v31.php
           php -l backend/api/mobile_e2ee_v32.php
-      - name: Regression audit
+      - name: Deep regression audit
         working-directory: .
         run: |
           python3 - <<'PY'
           from pathlib import Path
           api = Path('flutter/lib/core/api_client.dart').read_text()
           chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
+          profile = Path('flutter/lib/screens/profile_screen.dart').read_text()
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
           assert '.get(source, headers: authHeaders)' in api
           assert 'await NativeBridge.deviceName()' in api
-          assert 'onTap: () => editAt(i)' in chat
-          assert 'final edited = await _editPhoto(paths[index]);' in chat
           assert 'pollTicks % 8' in chat
           assert 'Duration(milliseconds: immediate ? 60 : delayMs)' in chat
           assert 'Future<void> _syncAfterSend() async' in chat
           assert chat.count('await _syncAfterSend();') >= 4
           assert 'recordingPaused = true;' in chat and 'await recorder.resume();' in chat
-          assert 'version: 3.4.0+340' in pubspec
+          assert "label: 'Pen'" in chat and "label: 'Highlight'" in chat and "label: 'Hide'" in chat
+          assert "'story': '9:16'" in chat
+          assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
+          assert '.take(20)' in chat
+          assert 'maximumSize: const Size(double.infinity, 44)' in profile
+          assert 'surfaceContainerHighest' in profile
+          assert 'Privacy & security' in profile
+          assert 'portrait_story' in native
           assert 'deviceName()' in native
-          print('v3.4 regression audit passed')
+          assert 'version: 3.5.0+350' in pubspec
+          print('v3.5 deep regression audit passed')
           PY
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.4.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.5.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.4.0-APKs
+          name: TaleemPK-v3.5.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.4.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.5.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
