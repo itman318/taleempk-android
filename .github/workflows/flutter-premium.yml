@@ -57,12 +57,13 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          mobile = Path('backend/api/mobile.php').read_text()
           api = Path('flutter/lib/core/api_client.dart').read_text()
           chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
-          assert "$_POST['id'] ?? $_GET['id']" in mobile
+          native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
+          assert '.get(source, headers: authHeaders)' in api
           assert 'await NativeBridge.deviceName()' in api
           assert 'pollTicks % 8' in chat
+          assert 'deviceName()' in native
           print('v3.3 regression audit passed')
           PY
       - name: Build universal APK
