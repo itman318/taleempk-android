@@ -90,10 +90,16 @@ write(path, text)
 # Server: fix secure attachment POST id bug and refresh current session name.
 path = 'backend/api/mobile.php'
 text = read(path)
-text = require_replace(text,
-    "$id = max(0, (int) ($_GET['id'] ?? 0));",
-    "$id = max(0, (int) ($_POST['id'] ?? $_GET['id'] ?? 0));",
-    'attachment POST id')
+# v3.1/v3.2 formatting around this expression can vary, so patch the GET-only
+# id fallback itself rather than the whole statement.
+text, count = re.subn(
+    r"\$_GET\['id'\]\s*\?\?\s*0",
+    "$_POST['id'] ?? $_GET['id'] ?? 0",
+    text,
+    count=1,
+)
+if count != 1:
+    raise RuntimeError('v3.3 target missing: attachment POST id')
 session_marker = "if ($action === 'sessions') {"
 text = require_replace(text, session_marker, """if ($action === 'sessions') {
     $device = mb_substr(trim((string)($_POST['device'] ?? '')), 0, 100);
