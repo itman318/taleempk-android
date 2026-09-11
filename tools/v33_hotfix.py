@@ -43,12 +43,20 @@ write(path, text)
 
 path = 'flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt'
 text = read(path)
-text = replace_once(
-    text,
-    '                when (call.method) {\n                    "editPhoto" -> {',
-    '                when (call.method) {\n                    "deviceName" -> result.success(deviceName())\n                    "editPhoto" -> {',
-    'Android deviceName method channel',
+pattern = re.compile(
+    r'(MethodChannel\(flutterEngine\.dartExecutor\.binaryMessenger,\s*mediaBridge\)\s*'
+    r'\.setMethodCallHandler\s*\{\s*call,\s*result\s*->\s*)',
+    re.S,
 )
+match = pattern.search(text)
+if not match:
+    raise RuntimeError('v3.3 hotfix target missing: Android media method channel')
+device_dispatch = """if (call.method == \"deviceName\") {
+                    result.success(deviceName())
+                    return@setMethodCallHandler
+                }
+                """
+text = text[:match.end()] + device_dispatch + text[match.end():]
 marker = """    private fun editPhoto(
 """
 insert = """    private fun deviceName(): String {
@@ -70,12 +78,13 @@ write(path, text)
 
 path = 'flutter/lib/core/api_client.dart'
 text = read(path)
-text = replace_once(
-    text,
-    "import 'models.dart';\n",
-    "import 'models.dart';\nimport 'native_bridge.dart';\n",
-    'ApiClient NativeBridge import',
-)
+if "import 'native_bridge.dart';" not in text:
+    text = replace_once(
+        text,
+        "import 'models.dart';\n",
+        "import 'models.dart';\nimport 'native_bridge.dart';\n",
+        'ApiClient NativeBridge import',
+    )
 text = text.replace("'device': '${Platform.operatingSystem} Flutter app',", "'device': await NativeBridge.deviceName(),")
 old = """  Future<List<Map<String, dynamic>>> mobileSessions() async {
     final data = await _request({'action': 'sessions'});
@@ -122,8 +131,8 @@ write(path, text)
 shutil.copy2(ROOT / path, ROOT / 'flutter/backend/api/mobile.php')
 
 # ---------------------------------------------------------------------------
-# Chat polish: selected gallery thumbnails open the editor directly, lighter
-# render palette, and less aggressive polling/full refresh for lower CPU/network.
+# Chat polish: thumbnail tap opens that photo in the editor; less aggressive
+# full refresh for lower CPU/network; cleaner light/dark surfaces.
 # ---------------------------------------------------------------------------
 path = 'flutter/lib/screens/chat_screen.dart'
 text = read(path)
@@ -132,10 +141,15 @@ text = text.replace(
     'Duration(milliseconds: immediate ? 80 : 1150)',
 )
 text = text.replace('final fullSync = pollTicks % 4 == 0;', 'final fullSync = pollTicks % 8 == 0;')
-text = text.replace("? const Color(0xFF06101A)\n        : const Color(0xFFF1F5F9)", "? const Color(0xFF07111F)\n        : const Color(0xFFF6F8FC)")
-text = text.replace("? const Color(0xFF172033)\n                  : const Color(0xFFF4F6FA)", "? const Color(0xFF121D2E)\n                  : const Color(0xFFFFFFFF)")
-# Make tapping a selected-photo thumbnail the direct edit action the user expects.
-old_tap = "onTap: () => setLocal(() => selected = i),"
+text = text.replace(
+    "? const Color(0xFF06101A)\n        : const Color(0xFFF1F5F9)",
+    "? const Color(0xFF07111F)\n        : const Color(0xFFF6F8FC)",
+)
+text = text.replace(
+    "? const Color(0xFF172033)\n                  : const Color(0xFFF4F6FA)",
+    "? const Color(0xFF121D2E)\n                  : const Color(0xFFFFFFFF)",
+)
+
 new_tap = """onTap: () async {
                             setLocal(() => selected = i);
                             final edited = await _editPhoto(paths[i]);
@@ -146,28 +160,22 @@ new_tap = """onTap: () async {
                               });
                             }
                           },"""
-if old_tap in text:
-    text = text.replace(old_tap, new_tap, 1)
-else:
-    # The v3.2 patch may have slightly different whitespace; require exactly one
-    # simple selected-index thumbnail tap to avoid silently patching the wrong UI.
-    text, count = re.subn(
-        r"onTap:\s*\(\)\s*=>\s*setLocal\(\(\)\s*=>\s*selected\s*=\s*i\),",
-        new_tap,
-        text,
-        count=1,
-    )
-    if count != 1:
-        raise RuntimeError('v3.3 hotfix target missing: multi-photo thumbnail edit tap')
-# Improve failed local preview feedback instead of an empty/black editor canvas.
-text = text.replace(
-    """                                child: Image.file(
+text, count = re.subn(
+    r"onTap:\s*\(\)\s*=>\s*setLocal\(\(\)\s*=>\s*selected\s*=\s*i\),",
+    lambda _m: new_tap,
+    text,
+    count=1,
+)
+if count != 1:
+    raise RuntimeError('v3.3 hotfix target missing: multi-photo thumbnail edit tap')
+
+preview_old = """                                child: Image.file(
                                   File(sourcePath),
                                   fit: crop == 'original' ? BoxFit.contain : BoxFit.cover,
                                   filterQuality: FilterQuality.high,
                                   gaplessPlayback: true,
-                                ),""",
-    """                                child: Image.file(
+                                ),"""
+preview_new = """                                child: Image.file(
                                   File(sourcePath),
                                   fit: crop == 'original' ? BoxFit.contain : BoxFit.cover,
                                   filterQuality: FilterQuality.high,
@@ -182,9 +190,8 @@ text = text.replace(
                                       ],
                                     ),
                                   ),
-                                ),""",
-    1,
-)
+                                ),"""
+text = replace_once(text, preview_old, preview_new, 'photo editor preview feedback')
 write(path, text)
 
 # ---------------------------------------------------------------------------
