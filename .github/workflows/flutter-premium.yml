@@ -55,6 +55,9 @@ jobs:
       - name: Apply v3.7 chat and identity polish
         working-directory: .
         run: python3 tools/v37b_chat_identity_polish.py
+      - name: Clean v3.7 mention analyzer warnings
+        working-directory: .
+        run: python3 tools/v37c_analyzer_cleanup.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -101,6 +104,7 @@ jobs:
           assert 'profile.php?u=' not in chat
           assert "hintText: 'Write a message…'" in chat
           assert 'Uploading photo / file' in chat
+          assert '_mentionSuggestions();' in chat and '_insertMention(member)' in chat
           assert 'rootNavigator: true' in conv
           assert '_verificationColor(ProfileData p)' in profile
           assert 'Keep your learning identity up to date' in profile
