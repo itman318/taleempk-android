@@ -17,3 +17,4 @@ def _literal_sub(pattern, repl, string, count=0, flags=0):
 
 re.sub = _literal_sub
 runpy.run_path(str(Path(__file__).with_name('v32_upgrade.py')), run_name='__main__')
+runpy.run_path(str(Path(__file__).with_name('v32_hotfix.py')), run_name='__main__')
