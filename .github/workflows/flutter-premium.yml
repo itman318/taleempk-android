@@ -34,9 +34,6 @@ jobs:
       - name: Apply v3.2 messaging and E2EE upgrade
         working-directory: .
         run: python3 tools/run_v32.py
-      - name: Inspect generated image review
-        working-directory: .
-        run: python3 tools/diagnose_review.py
       - name: Apply v3.3 media, device and performance hotfix
         working-directory: .
         run: python3 tools/v33_final.py
@@ -65,7 +62,8 @@ jobs:
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           assert '.get(source, headers: authHeaders)' in api
           assert 'await NativeBridge.deviceName()' in api
-          assert 'final edited = await _editPhoto(paths[i]);' in chat
+          assert 'onTap: () => editAt(i)' in chat
+          assert 'final edited = await _editPhoto(paths[index]);' in chat
           assert 'pollTicks % 8' in chat
           assert 'deviceName()' in native
           print('v3.3 regression audit passed')
