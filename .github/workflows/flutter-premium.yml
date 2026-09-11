@@ -1,4 +1,4 @@
-name: Build StudyHub Flutter APK
+name: Build TaleemPK Flutter APK
 
 on:
   workflow_dispatch:
@@ -6,14 +6,14 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_v30_quiz.py'
+      - 'tools/finalize_v30.py'
       - '.github/workflows/flutter-premium.yml'
   push:
     branches: [main, flutter-premium-v2]
     paths:
       - 'flutter/**'
       - 'backend/**'
-      - 'tools/patch_v30_quiz.py'
+      - 'tools/finalize_v30.py'
       - '.github/workflows/flutter-premium.yml'
 
 permissions:
@@ -28,15 +28,15 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Apply TaleemPK v3 native quiz migration
-        run: python ../tools/patch_v30_quiz.py
-      - name: Commit TaleemPK v3 native quiz migration
+      - name: Finalize TaleemPK v3 committed source
+        run: python ../tools/finalize_v30.py
+      - name: Commit finalized TaleemPK v3 source
         run: |
           if ! git diff --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898253+github-actions[bot]@users.noreply.github.com"
             git add -A
-            git commit -m "Add native TaleemPK quiz engine for v3"
+            git commit -m "Finalize TaleemPK v3 native app source"
             git push
           fi
       - uses: subosito/flutter-action@v2
@@ -46,6 +46,11 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
+      - name: PHP syntax check mobile API
+        working-directory: .
+        run: |
+          php -l flutter/backend/api/mobile.php
+          php -l backend/api/mobile.php
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
