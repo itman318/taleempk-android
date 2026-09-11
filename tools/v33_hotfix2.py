@@ -85,7 +85,6 @@ replacement = """  Future<List<Map<String, dynamic>>> mobileSessions() async {
 text, count = pattern.subn(replacement, text, count=1)
 if count != 1:
     raise RuntimeError('v3.3 target missing: mobileSessions')
-
 attachment_pattern = re.compile(
     r"  Future<Uint8List> attachmentBytes\(String url\) async \{.*?\n  \}\n\n  Future<bool> toggleConversationArchive",
     re.S,
@@ -159,7 +158,16 @@ text = text.replace('Duration(milliseconds: immediate ? 80 : 950)', 'Duration(mi
 text = text.replace('final fullSync = pollTicks % 4 == 0;', 'final fullSync = pollTicks % 8 == 0;')
 text = text.replace("? const Color(0xFF06101A)\n        : const Color(0xFFF1F5F9)", "? const Color(0xFF07111F)\n        : const Color(0xFFF6F8FC)")
 text = text.replace("? const Color(0xFF172033)\n                  : const Color(0xFFF4F6FA)", "? const Color(0xFF121D2E)\n                  : const Color(0xFFFFFFFF)")
-thumb = re.compile(r"onTap:\s*\(\)\s*=>\s*setLocal\(\(\)\s*=>\s*selected\s*=\s*i\),")
+
+review_start = text.find('  Future<void> _reviewImages(')
+review_end = text.find('  Future<String?> _editPhoto(', review_start)
+if review_start < 0 or review_end < 0:
+    raise RuntimeError('v3.3 target missing: reviewImages section')
+review = text[review_start:review_end]
+thumb = re.compile(
+    r"(itemBuilder:\s*\(_,\s*i\)\s*=>\s*InkWell\(\s*)(.*?)(\s*child:\s*AnimatedContainer\()",
+    re.S,
+)
 thumb_repl = """onTap: () async {
                             setLocal(() => selected = i);
                             final edited = await _editPhoto(paths[i]);
@@ -170,9 +178,11 @@ thumb_repl = """onTap: () async {
                               });
                             }
                           },"""
-text, count = thumb.subn(thumb_repl, text, count=1)
+review, count = thumb.subn(lambda m: m.group(1) + thumb_repl + m.group(3), review, count=1)
 if count != 1:
-    raise RuntimeError('v3.3 target missing: photo thumbnail tap')
+    raise RuntimeError('v3.3 target missing: photo thumbnail editor')
+text = text[:review_start] + review + text[review_end:]
+
 preview = """                                child: Image.file(
                                   File(sourcePath),
                                   fit: crop == 'original' ? BoxFit.contain : BoxFit.cover,
@@ -225,4 +235,5 @@ assert '.get(source, headers: authHeaders)' in read('flutter/lib/core/api_client
 assert 'await NativeBridge.deviceName()' in read('flutter/lib/core/api_client.dart')
 assert 'pollTicks % 8' in read('flutter/lib/screens/chat_screen.dart')
 assert 'deviceName()' in read('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt')
+assert 'final edited = await _editPhoto(paths[i]);' in read('flutter/lib/screens/chat_screen.dart')
 print('TaleemPK v3.3 runtime hotfix applied')
