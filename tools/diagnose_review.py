@@ -4,8 +4,12 @@ t=p.read_text(encoding='utf-8')
 s=t.find('  Future<void> _reviewImages(')
 e=t.find('  Future<String?> _editPhoto(',s)
 r=t[s:e]
-i=r.find('selected = i')
-print('REVIEW_SELECTED_INDEX',i)
-print('REVIEW_SNIPPET_START')
-print(r[max(0,i-700):i+900])
-print('REVIEW_SNIPPET_END')
+lines=r.splitlines()
+print('REVIEW_SECTION_START')
+for no,line in enumerate(lines,1):
+    if any(k in line for k in ['editAt(', 'itemBuilder', 'onTap:', 'paths[i]', 'selected = i', 'AnimatedContainer', 'ListView.separated']):
+        start=max(1,no-4); end=min(len(lines),no+7)
+        print(f'--- lines {start}-{end} around {no} ---')
+        for idx in range(start,end+1):
+            print(f'{idx:04d}: {lines[idx-1]}')
+print('REVIEW_SECTION_END')
