@@ -1,0 +1,32 @@
+name: Package TaleemPK v3.7 Server API
+
+on:
+  push:
+    branches:
+      - flutter-premium-v2
+    paths:
+      - '.github/workflows/v37-server-package.yml'
+      - 'backend/api/mobile.php'
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify PHP syntax
+        run: php -l backend/api/mobile.php
+
+      - name: Prepare server update
+        run: |
+          mkdir -p TaleemPK-v3.7.0-Server-Update/api
+          cp backend/api/mobile.php TaleemPK-v3.7.0-Server-Update/api/mobile.php
+          printf '%s\n' 'Upload api/mobile.php to your TaleemPK website, replacing the existing file.' > TaleemPK-v3.7.0-Server-Update/README.txt
+
+      - name: Upload server update
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v3.7.0-Server-Update
+          path: TaleemPK-v3.7.0-Server-Update/
+          if-no-files-found: error
