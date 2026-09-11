@@ -31,7 +31,7 @@ jobs:
       - name: Finalize v3.1 source
         working-directory: .
         run: python3 tools/v31_finalize.py
-      - name: Apply v3.2 messaging and E2EE upgrade
+      - name: Apply v3.2.1 messaging, media and device polish
         working-directory: .
         run: python3 tools/run_v32.py
       - uses: subosito/flutter-action@v2
@@ -49,17 +49,19 @@ jobs:
           php -l flutter/backend/api/mobile_social_v31.php
           php -l backend/api/mobile_social_v31.php
           php -l backend/api/mobile_e2ee_v32.php
+          php -l backend/api/chat_send.php
+          php -l flutter/backend/api/chat_send.php
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.2.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.2.1-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.2.0-APKs
+          name: TaleemPK-v3.2.1-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.2.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.2.1-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
