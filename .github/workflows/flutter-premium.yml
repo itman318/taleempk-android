@@ -58,9 +58,9 @@ jobs:
       - name: Clean v3.7 mention analyzer warnings
         working-directory: .
         run: python3 tools/v37c_analyzer_cleanup.py
-      - name: Apply v3.8 messenger, security and verification polish
+      - name: Apply corrected v3.8 messenger, security and verification polish
         working-directory: .
-        run: python3 tools/v38_messenger_security_verification.py
+        run: python3 tools/v38b_boundary_fix.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -115,6 +115,10 @@ jobs:
           assert 'height: compactHeight' in chat and 'crossAxisCount: 8' in chat
           assert 'Uploading photo / file' in chat
           assert '_mentionSuggestions();' in chat and '_insertMention(member)' in chat
+          assert 'Widget _recordingBar()' in chat
+          assert 'Future<void> _sendText()' in chat
+          assert 'Future<void> _syncAfterSend() async' in chat
+          assert 'bool get _chatBlocked' in chat
           assert 'rootNavigator: true' in conv
           assert '_verificationColor(ProfileData p)' in profile
           assert "tooltip: 'Sign out'" in profile
