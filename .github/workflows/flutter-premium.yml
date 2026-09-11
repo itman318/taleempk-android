@@ -42,7 +42,7 @@ jobs:
         run: python3 tools/v34_chat_runtime.py
       - name: Apply v3.5 profile and media polish
         working-directory: .
-        run: python3 tools/v35_profile_media_polish.py
+        run: python3 tools/v35b_profile_media_polish.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -78,7 +78,7 @@ jobs:
           assert "label: 'Pen'" in chat and "label: 'Highlight'" in chat and "label: 'Hide'" in chat
           assert "'story': '9:16'" in chat
           assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
-          assert '.take(20)' in chat
+          assert 'paths.length >= 20' in chat and 'Add photos' in chat
           assert 'maximumSize: const Size(double.infinity, 44)' in profile
           assert 'surfaceContainerHighest' in profile
           assert 'Privacy & security' in profile
