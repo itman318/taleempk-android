@@ -58,6 +58,9 @@ jobs:
       - name: Clean v3.7 mention analyzer warnings
         working-directory: .
         run: python3 tools/v37c_analyzer_cleanup.py
+      - name: Apply v3.8 messenger, security and verification polish
+        working-directory: .
+        run: python3 tools/v38_messenger_security_verification.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -79,13 +82,17 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           api = Path('flutter/lib/core/api_client.dart').read_text()
+          state = Path('flutter/lib/core/app_state.dart').read_text()
           chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
           conv = Path('flutter/lib/screens/conversations_screen.dart').read_text()
           profile = Path('flutter/lib/screens/profile_screen.dart').read_text()
+          security = Path('flutter/lib/screens/security_screen.dart').read_text()
+          verification = Path('flutter/lib/screens/verification_screen.dart').read_text()
           home = Path('flutter/lib/screens/home_screen.dart').read_text()
           shell = Path('flutter/lib/screens/home_shell.dart').read_text()
           main = Path('flutter/lib/main.dart').read_text()
           mobile = Path('backend/api/mobile.php').read_text()
+          social = Path('backend/api/mobile_social_v31.php').read_text()
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
           assert '.get(source, headers: authHeaders)' in api
@@ -102,15 +109,26 @@ jobs:
           assert '_processOutgoingPhoto' not in chat
           assert 'PublicProfileScreen(' in chat
           assert 'profile.php?u=' not in chat
-          assert "hintText: 'Write a message…'" in chat
+          assert "hintText: 'Message...'" in chat
+          assert 'Icons.attach_file_rounded' in chat
+          assert 'FocusManager.instance.primaryFocus?.unfocus()' in chat
+          assert 'height: compactHeight' in chat and 'crossAxisCount: 8' in chat
           assert 'Uploading photo / file' in chat
           assert '_mentionSuggestions();' in chat and '_insertMention(member)' in chat
           assert 'rootNavigator: true' in conv
           assert '_verificationColor(ProfileData p)' in profile
+          assert "tooltip: 'Sign out'" in profile
           assert 'Keep your learning identity up to date' in profile
           assert "section('BASIC INFORMATION'" in profile
           assert "section('EDUCATION'" in profile
           assert 'maximumSize: const Size(double.infinity, 44)' in profile
+          assert 'securitySnapshot()' in api and "'action': 'security_snapshot'" in api
+          assert 'The website API is older than this app.' in security
+          assert 'Sign out of this device' in security
+          assert 'await api.clearToken();' in state
+          assert 'Verify your TaleemPK profile' in verification
+          assert 'CNIC / B-Form / Passport number *' in verification
+          assert 'YOUR DETAILS' in verification and 'DOCUMENTS' in verification
           assert 'Your learning space is ready' in home
           assert "'Practice', 'Quick quiz'" in home
           assert 'WidgetsBindingObserver' in shell
@@ -120,23 +138,26 @@ jobs:
           assert 'LinearProgressIndicator' in main
           assert main.count('class OfflineScreen extends StatelessWidget') == 1
           assert main.count('Widget _orb(double size, Color color)') == 1
-          assert 'TaleemPKApp/3.7' in mobile
+          assert "if ($action === 'security_snapshot')" in mobile
+          assert "'api_version' => '3.8'" in mobile
+          assert 'TaleemPKApp/3.8' in mobile
+          assert 'verification_status' in social and 'verification_apply' in social
           assert 'portrait_story' in native
           assert 'deviceName()' in native
-          assert 'version: 3.7.0+370' in pubspec
-          print('v3.7 deep regression audit passed')
+          assert 'version: 3.8.0+380' in pubspec
+          print('v3.8 deep regression audit passed')
           PY
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.7.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.8.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.7.0-APKs
+          name: TaleemPK-v3.8.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.7.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.8.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
