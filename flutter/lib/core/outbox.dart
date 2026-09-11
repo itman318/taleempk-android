@@ -10,6 +10,8 @@ class OutboxItem {
     required this.createdAt,
     this.replyTo,
     this.attempts = 0,
+    this.encrypted = false,
+    this.mentionIds = const <int>[],
   });
 
   final String token;
@@ -18,6 +20,8 @@ class OutboxItem {
   final int? replyTo;
   final int createdAt;
   final int attempts;
+  final bool encrypted;
+  final List<int> mentionIds;
 
   OutboxItem copyWith({int? attempts}) => OutboxItem(
         token: token,
@@ -26,6 +30,8 @@ class OutboxItem {
         replyTo: replyTo,
         createdAt: createdAt,
         attempts: attempts ?? this.attempts,
+        encrypted: encrypted,
+        mentionIds: mentionIds,
       );
 
   Map<String, dynamic> toJson() => {
@@ -35,6 +41,8 @@ class OutboxItem {
         'reply_to': replyTo,
         'created_at': createdAt,
         'attempts': attempts,
+        'encrypted': encrypted,
+        'mention_ids': mentionIds,
       };
 
   factory OutboxItem.fromJson(Map<String, dynamic> json) => OutboxItem(
@@ -44,6 +52,10 @@ class OutboxItem {
         replyTo: json['reply_to'] == null ? null : _asInt(json['reply_to']),
         createdAt: _asInt(json['created_at']),
         attempts: _asInt(json['attempts']),
+        encrypted: json['encrypted'] == true || json['encrypted'] == 1 || json['encrypted'] == '1',
+        mentionIds: json['mention_ids'] is List
+            ? (json['mention_ids'] as List).map(_asInt).where((id) => id > 0).toList()
+            : const <int>[],
       );
 
   static int _asInt(dynamic value) =>
