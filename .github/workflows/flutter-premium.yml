@@ -36,7 +36,7 @@ jobs:
         run: python3 tools/run_v32.py
       - name: Apply v3.3 media, device and performance hotfix
         working-directory: .
-        run: python3 tools/v33_hotfix.py
+        run: python3 tools/v33_hotfix2.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
