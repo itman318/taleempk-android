@@ -22,7 +22,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: flutter
@@ -31,9 +31,12 @@ jobs:
       - name: Finalize v3.1 source
         working-directory: .
         run: python3 tools/v31_finalize.py
-      - name: Apply v3.2.1 messaging, media and device polish
+      - name: Apply v3.2 messaging and E2EE upgrade
         working-directory: .
         run: python3 tools/run_v32.py
+      - name: Apply v3.3 media, device and performance hotfix
+        working-directory: .
+        run: python3 tools/v33_hotfix.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -49,17 +52,23 @@ jobs:
           php -l flutter/backend/api/mobile_social_v31.php
           php -l backend/api/mobile_social_v31.php
           php -l backend/api/mobile_e2ee_v32.php
+      - name: Regression audit
+        working-directory: .
+        run: |
+          grep -Fq "$_POST['id'] ?? $_GET['id']" backend/api/mobile.php
+          grep -Fq "await NativeBridge.deviceName()" flutter/lib/core/api_client.dart
+          grep -Fq "pollTicks % 8" flutter/lib/screens/chat_screen.dart
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.2.1-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.3.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.2.1-APKs
+          name: TaleemPK-v3.3.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.2.1-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.3.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
