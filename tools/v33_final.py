@@ -138,6 +138,13 @@ text, n = re.subn(
 )
 if n != 1:
     raise RuntimeError('v3.3 missing target: attachmentBytes')
+# v3.2 had byte-budget counters for an older in-memory attachment cache path.
+# The secure GET downloader no longer uses those counters; remove them so the
+# analyzer stays clean rather than leaving dead performance bookkeeping.
+text = '\n'.join(
+    line for line in text.split('\n')
+    if '_attachmentCacheBytes' not in line and '_attachmentCacheLimit' not in line
+)
 w(path, text)
 
 # Backend refreshes current session's real label. Old historical sessions did
@@ -198,4 +205,5 @@ assert 'onTap: () => editAt(i)' in chat
 assert 'final edited = await _editPhoto(paths[index]);' in chat
 assert 'pollTicks % 8' in chat
 assert 'deviceName()' in native
+assert '_attachmentCacheBytes' not in api and '_attachmentCacheLimit' not in api
 print('TaleemPK v3.3 final hotfix applied successfully')
