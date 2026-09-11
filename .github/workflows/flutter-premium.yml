@@ -54,7 +54,7 @@ jobs:
         run: python3 tools/v36b_splash_fix.py
       - name: Apply v3.7 chat and identity polish
         working-directory: .
-        run: python3 tools/v37_chat_identity_polish.py
+        run: python3 tools/v37b_chat_identity_polish.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
