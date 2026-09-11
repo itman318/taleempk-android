@@ -199,7 +199,7 @@ class ApiClient {
           'action': 'quiz_submit',
           'attempt_id': '$attemptId',
           'answers': jsonEncode({
-            for (final entry in answers.entries) '\${entry.key}': entry.value,
+            for (final entry in answers.entries) '${entry.key}': entry.value,
           }),
           'time_taken': '$timeTaken',
         }),

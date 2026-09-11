@@ -63,7 +63,9 @@ class _QuizScreenState extends State<QuizScreen> {
           if (!mounted || submitting || result != null) return;
           setState(() {
             elapsed++;
-            secondsLeft = (loaded.timeLimitSeconds - elapsed).clamp(0, loaded.timeLimitSeconds);
+            secondsLeft = (loaded.timeLimitSeconds - elapsed)
+                .clamp(0, loaded.timeLimitSeconds)
+                .toInt();
           });
           if (secondsLeft <= 0) {
             timer?.cancel();
