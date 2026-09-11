@@ -6,12 +6,14 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
+      - 'tools/patch_v30.py'
       - '.github/workflows/flutter-premium.yml'
   push:
     branches: [main, flutter-premium-v2]
     paths:
       - 'flutter/**'
       - 'backend/**'
+      - 'tools/patch_v30.py'
       - '.github/workflows/flutter-premium.yml'
 
 permissions:
@@ -26,17 +28,15 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Normalize module route source
-        run: python ../tools/patch_v29_prep.py
-      - name: Apply TaleemPK v2.9 parity fixes
-        run: python ../tools/patch_v29.py
-      - name: Commit TaleemPK v2.9 fixes
+      - name: Apply TaleemPK v3 source migration
+        run: python ../tools/patch_v30.py
+      - name: Commit TaleemPK v3 source migration
         run: |
           if ! git diff --quiet; then
             git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.email "41898253+github-actions[bot]@users.noreply.github.com"
             git add -A
-            git commit -m "Fix quiz routing, comments, native notifications and photo editing"
+            git commit -m "Build TaleemPK v3 reliability and security foundation"
             git push
           fi
       - uses: subosito/flutter-action@v2
@@ -49,6 +49,6 @@ jobs:
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
-          name: StudyHub-Flutter-APK
+          name: TaleemPK-v3.0.0-APK
           path: flutter/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
