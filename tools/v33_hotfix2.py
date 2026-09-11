@@ -66,7 +66,9 @@ text = require_replace(text, marker, """    private fun deviceName(): String {
 """ + marker, 'Android device helper')
 write(path, text)
 
-# API client: actual device name on login/2FA and current-session refresh.
+# API client: actual device name on login/2FA/current session and authenticated
+# GET for chat attachments. The backend file endpoint is a GET route, while the
+# previous app posted the id in a body, producing the screenshot's false 404.
 path = 'flutter/lib/core/api_client.dart'
 text = read(path)
 if "import 'native_bridge.dart';" not in text:
@@ -83,23 +85,63 @@ replacement = """  Future<List<Map<String, dynamic>>> mobileSessions() async {
 text, count = pattern.subn(replacement, text, count=1)
 if count != 1:
     raise RuntimeError('v3.3 target missing: mobileSessions')
-if 'await NativeBridge.deviceName()' not in text:
-    raise RuntimeError('v3.3 failed to add real device name')
+
+attachment_pattern = re.compile(
+    r"  Future<Uint8List> attachmentBytes\(String url\) async \{.*?\n  \}\n\n  Future<bool> toggleConversationArchive",
+    re.S,
+)
+attachment_replacement = """  Future<Uint8List> attachmentBytes(String url) async {
+    if (_token == null || _token!.isEmpty) {
+      throw const ApiException('Sign in to continue.', status: 401);
+    }
+    try {
+      final source = Uri.parse(url);
+      final id = source.queryParameters['id'];
+      if (id == null || int.tryParse(id) == null) {
+        throw const ApiException('This attachment link is invalid.');
+      }
+      final response = await _http
+          .get(source, headers: authHeaders)
+          .timeout(const Duration(seconds: 45));
+      if (response.statusCode == 401) {
+        await _expireSession('Your session has expired. Please sign in again.');
+        throw const ApiException(
+          'Your session has expired. Please sign in again.',
+          status: 401,
+        );
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiException(
+          response.statusCode == 404
+              ? 'This attachment is no longer available.'
+              : 'The attachment could not be downloaded.',
+          status: response.statusCode,
+        );
+      }
+      if (response.bodyBytes.isEmpty) {
+        throw const ApiException('The attachment is empty or unavailable.');
+      }
+      return response.bodyBytes;
+    } on TimeoutException {
+      throw const ApiException('The attachment download timed out.');
+    } on SocketException {
+      throw const ApiException('The connection was lost during download.');
+    } on http.ClientException {
+      throw const ApiException('Could not download the secure attachment.');
+    }
+  }
+
+  Future<bool> toggleConversationArchive"""
+text, count = attachment_pattern.subn(attachment_replacement, text, count=1)
+if count != 1:
+    raise RuntimeError('v3.3 target missing: attachmentBytes')
+if 'await NativeBridge.deviceName()' not in text or '.get(source, headers: authHeaders)' not in text:
+    raise RuntimeError('v3.3 API client verification failed')
 write(path, text)
 
-# Server: fix secure attachment POST id bug and refresh current session name.
+# Server: refresh current session device label without forcing a new login.
 path = 'backend/api/mobile.php'
 text = read(path)
-# v3.1/v3.2 formatting around this expression can vary, so patch the GET-only
-# id fallback itself rather than the whole statement.
-text, count = re.subn(
-    r"\$_GET\['id'\]\s*\?\?\s*0",
-    "$_POST['id'] ?? $_GET['id'] ?? 0",
-    text,
-    count=1,
-)
-if count != 1:
-    raise RuntimeError('v3.3 target missing: attachment POST id')
 session_marker = "if ($action === 'sessions') {"
 text = require_replace(text, session_marker, """if ($action === 'sessions') {
     $device = mb_substr(trim((string)($_POST['device'] ?? '')), 0, 100);
@@ -179,7 +221,7 @@ text = re.sub(r'^version:\s*[^\n]+', 'version: 3.3.0+330', text, count=1, flags=
 write(path, text)
 
 # Fail fast if critical regressions are absent from generated source.
-assert "$_POST['id'] ?? $_GET['id']" in read('backend/api/mobile.php')
+assert '.get(source, headers: authHeaders)' in read('flutter/lib/core/api_client.dart')
 assert 'await NativeBridge.deviceName()' in read('flutter/lib/core/api_client.dart')
 assert 'pollTicks % 8' in read('flutter/lib/screens/chat_screen.dart')
 assert 'deviceName()' in read('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt')
