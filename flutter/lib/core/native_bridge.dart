@@ -36,12 +36,20 @@ class NativeBridge {
     required int turns,
     required bool flip,
     required String crop,
+    double brightness = 0,
+    double contrast = 1,
+    int quality = 90,
+    int maxDimension = 2560,
   }) async {
     return _media.invokeMethod<String>('editPhoto', {
       'path': path,
       'turns': turns,
       'flip': flip,
       'crop': crop,
+      'brightness': brightness,
+      'contrast': contrast,
+      'quality': quality,
+      'max_dimension': maxDimension,
     });
   }
 }
