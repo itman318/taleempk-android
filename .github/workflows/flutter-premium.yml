@@ -6,12 +6,14 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
+      - 'tools/**'
       - '.github/workflows/flutter-premium.yml'
   push:
     branches: [main, flutter-premium-v2]
     paths:
       - 'flutter/**'
       - 'backend/**'
+      - 'tools/**'
       - '.github/workflows/flutter-premium.yml'
 
 permissions:
@@ -26,6 +28,9 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
+      - name: Finalize v3.1 source
+        working-directory: .
+        run: python3 tools/v31_finalize.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -38,9 +43,11 @@ jobs:
         run: |
           php -l flutter/backend/api/mobile.php
           php -l backend/api/mobile.php
+          php -l flutter/backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_social_v31.php
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.0.0-APK
+          name: TaleemPK-v3.1.0-APK
           path: flutter/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
