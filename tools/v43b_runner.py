@@ -211,6 +211,14 @@ if review_old not in source:
     raise RuntimeError('v4.3b queue review marker missing')
 source = source.replace(review_old, review_new, 1)
 
+# The original v4.3 self-check expected the pre-E2EE variable name. Keep the
+# check strict while aligning it with the encrypted send implementation above.
+old_assert = "assert 'reply = currentReply;' in chat and \"await _persistDraft(text);\" in chat"
+new_assert = "assert 'reply = currentReply;' in chat and \"await _persistDraft(plainText);\" in chat"
+if old_assert not in source:
+    raise RuntimeError('v4.3b send recovery assertion marker missing')
+source = source.replace(old_assert, new_assert, 1)
+
 code = compile(source, str(script_path), 'exec')
 exec(code, {'__name__': '__main__', '__file__': str(script_path)})
 
