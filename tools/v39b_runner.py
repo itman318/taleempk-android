@@ -68,11 +68,49 @@ exec(
     {'__file__': str(source_path), '__name__': '__main__'},
 )
 
+# v3.8 changed the security screen wording, so the original v3.9 exact string
+# replacement may not fire. Add an explicit visible network-location note after
+# Signed-in devices. Security alerts intentionally use the connection IP/network
+# area; exact GPS is not collected silently.
+security_path = ROOT / 'flutter/lib/screens/security_screen.dart'
+security_text = security_path.read_text(encoding='utf-8')
+if 'network/IP area' not in security_text:
+    target = "                        _sessionsCard(),\n                        const SizedBox(height: 16),\n                        _passwordCard(),"
+    note = r'''                        _sessionsCard(),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(13),
+                          decoration: BoxDecoration(
+                            color: AppColors.blue.withValues(alpha: .055),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.blue.withValues(alpha: .13)),
+                          ),
+                          child: const Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.location_on_outlined, color: AppColors.blue, size: 20),
+                              SizedBox(width: 9),
+                              Expanded(
+                                child: Text(
+                                  'Sign-in location uses your network/IP area for account security. Mobile carriers and VPNs can show a nearby city; TaleemPK does not silently use your exact GPS location.',
+                                  style: TextStyle(fontSize: 12, height: 1.4),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        _passwordCard(),'''
+    if target not in security_text:
+        raise RuntimeError('v3.9b security location note placement missing')
+    security_text = security_text.replace(target, note, 1)
+    security_path.write_text(security_text, encoding='utf-8')
+
 checks = {
     'api': (ROOT / 'flutter/lib/core/api_client.dart').read_text(encoding='utf-8'),
     'common': (ROOT / 'flutter/lib/widgets/common.dart').read_text(encoding='utf-8'),
     'verification': (ROOT / 'flutter/lib/screens/verification_screen.dart').read_text(encoding='utf-8'),
-    'security': (ROOT / 'flutter/lib/screens/security_screen.dart').read_text(encoding='utf-8'),
+    'security': security_path.read_text(encoding='utf-8'),
     'mobile': (ROOT / 'backend/api/mobile.php').read_text(encoding='utf-8'),
     'pubspec': (ROOT / 'flutter/pubspec.yaml').read_text(encoding='utf-8'),
 }
