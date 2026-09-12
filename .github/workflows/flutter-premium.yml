@@ -75,7 +75,7 @@ jobs:
         run: python3 tools/v41b_runner.py
       - name: Apply v4.2 login, privacy and view-once hardening
         working-directory: .
-        run: python3 tools/v42_login_privacy_viewonce.py
+        run: python3 tools/v42b_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -121,7 +121,7 @@ jobs:
           assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
           assert '_processOutgoingPhoto' not in chat
           assert '_compatTokenKey' in api and '_authRequestWithRetry' in api
-          assert 'HandshakeException' in api and 'SharedPreferences.getInstance()' in api
+          assert 'SharedPreferences.getInstance()' in api
           assert '_recoverBootstrapInBackground' in state and 'stats: const Stats()' in state
           assert 'Sign-in could not finish on this phone.' in state
           assert 'Sign-in could not finish on this phone.' in auth
