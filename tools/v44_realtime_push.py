@@ -19,9 +19,45 @@ def function_bounds(text: str, signature: str):
     start = text.find(signature)
     if start < 0:
         raise RuntimeError(f'v4.4 missing function: {signature}')
-    brace = text.find('{', start)
+
+    # Dart named/optional parameters contain { ... } inside the parameter list.
+    # Find the closing parenthesis of the declaration first, then the real body.
+    paren = text.find('(', start)
+    if paren < 0:
+        raise RuntimeError(f'v4.4 malformed function parameters: {signature}')
+    pdepth = 0
+    quote = None
+    escape = False
+    i = paren
+    param_end = -1
+    while i < len(text):
+        ch = text[i]
+        if quote is not None:
+            if escape:
+                escape = False
+            elif ch == '\\':
+                escape = True
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch == '(':
+            pdepth += 1
+        elif ch == ')':
+            pdepth -= 1
+            if pdepth == 0:
+                param_end = i
+                break
+        i += 1
+    if param_end < 0:
+        raise RuntimeError(f'v4.4 unterminated parameters: {signature}')
+
+    brace = text.find('{', param_end + 1)
     if brace < 0:
-        raise RuntimeError(f'v4.4 malformed function: {signature}')
+        raise RuntimeError(f'v4.4 missing function body: {signature}')
+
     depth = 0
     quote = None
     escape = False
@@ -79,9 +115,7 @@ def replace_function(text: str, signature: str, replacement: str) -> str:
     return text[:start] + replacement + text[end:]
 
 
-# ---------------------------------------------------------------------------
 # Dependencies + release version.
-# ---------------------------------------------------------------------------
 path = 'flutter/pubspec.yaml'
 text = r(path)
 if 'web_socket_channel:' not in text:
@@ -100,10 +134,7 @@ text = re.sub(r'^version:\s*[^\n]+', 'version: 4.4.0+440', text, count=1, flags=
 w(path, text)
 
 
-# ---------------------------------------------------------------------------
-# API client: configure realtime/push and publish invalidations after the
-# existing, authoritative PHP send succeeds.
-# ---------------------------------------------------------------------------
+# API client.
 path = 'flutter/lib/core/api_client.dart'
 text = r(path)
 if "import 'realtime_service.dart';" not in text:
@@ -225,10 +256,7 @@ if 'Future<Map<String, dynamic>> realtimeConfig()' not in text:
 w(path, text)
 
 
-# ---------------------------------------------------------------------------
-# App lifecycle: activate optional transports after authentication. Failure of
-# Firebase/WebSocket must never block account access.
-# ---------------------------------------------------------------------------
+# App state lifecycle.
 path = 'flutter/lib/core/app_state.dart'
 text = r(path)
 if "import 'dart:async';" not in text:
@@ -271,16 +299,11 @@ if 'Future<void> _activateRealtimePush() async {' not in text:
 '''
     text = text[:start_pos] + helper + text[start_pos:]
 
-# Add activation after any generated path that reaches signedIn. Avoid duplicate
-# insertion if this transform is intentionally run twice during debugging.
 pattern = re.compile(r'(?P<indent>\s*)status = AppStatus\.signedIn;\n(?P=indent)notifyListeners\(\);')
-def activate(match):
-    block = match.group(0)
-    indent = match.group('indent')
-    tail = f'\n{indent}unawaited(_activateRealtimePush());'
-    after = text[match.end():match.end()+len(tail)+8]
-    return block if '_activateRealtimePush' in after else block + tail
-text = pattern.sub(activate, text)
+text = pattern.sub(
+    lambda m: m.group(0) + f"\n{m.group('indent')}unawaited(_activateRealtimePush());",
+    text,
+)
 
 ss, se = function_bounds(text, '  void _sessionExpired(String message) {')
 chunk = text[ss:se]
@@ -310,10 +333,7 @@ text = replace_function(text, '  Future<void> logout() async {', logout)
 w(path, text)
 
 
-# ---------------------------------------------------------------------------
-# Chat screen: subscribe to invalidations and let the existing API refresh stay
-# authoritative for encryption, moderation, read receipts, edits and deletes.
-# ---------------------------------------------------------------------------
+# Chat room subscription and event-driven refresh.
 path = 'flutter/lib/screens/chat_screen.dart'
 text = r(path)
 if "import '../core/realtime_service.dart';" not in text:
@@ -381,9 +401,7 @@ text = replace_function(text, '  void _schedulePoll(', schedule_poll)
 w(path, text)
 
 
-# ---------------------------------------------------------------------------
 # Android 13+ notification permission.
-# ---------------------------------------------------------------------------
 path = 'flutter/android/app/src/main/AndroidManifest.xml'
 text = r(path)
 permission = '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
@@ -399,9 +417,7 @@ if permission not in text:
 w(path, text)
 
 
-# ---------------------------------------------------------------------------
-# PHP mobile API: install the v4.4 authenticated realtime/push action module.
-# ---------------------------------------------------------------------------
+# Authenticated PHP action module.
 for path in ('backend/api/mobile.php', 'flutter/backend/api/mobile.php'):
     text = r(path)
     marker = "$u = mobile_user();\n$uid = (int) $u['id'];\n"
@@ -418,9 +434,7 @@ shutil.copyfile(
 )
 
 
-# ---------------------------------------------------------------------------
 # Regression guarantees.
-# ---------------------------------------------------------------------------
 pubspec = r('flutter/pubspec.yaml')
 api = r('flutter/lib/core/api_client.dart')
 state = r('flutter/lib/core/app_state.dart')
