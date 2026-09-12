@@ -73,6 +73,9 @@ jobs:
       - name: Apply v4.1 reply, media and view-once fixes
         working-directory: .
         run: python3 tools/v41b_runner.py
+      - name: Apply v4.2 login, privacy and view-once hardening
+        working-directory: .
+        run: python3 tools/v42_login_privacy_viewonce.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -117,9 +120,10 @@ jobs:
           assert "'story': '9:16'" in chat and 'portrait_story' in native
           assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
           assert '_processOutgoingPhoto' not in chat
-          assert 'Secure sign-in storage timed out on this phone.' in api
-          assert 'Future<BootstrapData> _bootstrapAfterAuth() async' in state
-          assert 'Sign-in could not be completed on this phone.' in state
+          assert '_compatTokenKey' in api and '_authRequestWithRetry' in api
+          assert 'HandshakeException' in api and 'SharedPreferences.getInstance()' in api
+          assert '_recoverBootstrapInBackground' in state and 'stats: const Stats()' in state
+          assert 'Sign-in could not finish on this phone.' in state
           assert 'Sign-in could not finish on this phone.' in auth
           assert ".timeout(const Duration(seconds: 2))" in native_bridge
           assert 'maximumSize: const Size(double.infinity, 44)' in profile
@@ -133,23 +137,29 @@ jobs:
           assert 'bool viewOnce = false' in chat
           assert '_prepareViewOnceFile' in chat and 'once__' in chat
           assert 'voicePreviewViewOnce' in chat and 'Send as view once' in chat
+          assert "label: Text('Once')" in chat
+          assert 'setSecureScreen(bool enabled)' in native_bridge
+          assert 'WindowManager.LayoutParams.FLAG_SECURE' in native
+          assert 'await NativeBridge.setSecureScreen(true)' in chat
+          assert '_setSecureViewOnce(true)' in chat and '_setSecureViewOnce(false)' in chat
           assert 'markViewOnceConsumed' in api
           assert "if ($action === 'mark_view_once')" in mobile
-          assert "strncmp($onceName, 'once__', 6)" in mobile
-          assert 'version: 4.1.0+410' in pubspec
-          print('v4.1 deep regression audit passed')
+          assert "UPDATE messages SET status='deleted'" in mobile
+          assert '@unlink($file)' in mobile
+          assert 'version: 4.2.0+420' in pubspec
+          print('v4.2 deep regression audit passed')
           PY
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.1.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.2.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v4.1.0-APKs
+          name: TaleemPK-v4.2.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.1.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.2.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
