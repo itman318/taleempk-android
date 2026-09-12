@@ -1,4 +1,4 @@
-name: Package TaleemPK v4.2 Server API
+name: Package TaleemPK v4.4 Server + Realtime
 
 on:
   workflow_dispatch:
@@ -8,6 +8,8 @@ on:
     paths:
       - '.github/workflows/v37-server-package.yml'
       - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
       - 'tools/**'
 
 jobs:
@@ -18,7 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Generate final v4.2 server sources
+      - name: Generate final v4.4 server sources
         run: |
           python3 tools/v31_finalize.py
           python3 tools/run_v32.py
@@ -36,56 +38,74 @@ jobs:
           python3 tools/v40_cleanup.py
           python3 tools/v41b_runner.py
           python3 tools/v42b_runner.py
+          python3 tools/v43b_runner.py
+          python3 tools/v44_realtime_push.py
 
       - name: Verify PHP syntax
         run: |
           php -l backend/api/mobile.php
           php -l backend/api/mobile_social_v31.php
           php -l backend/api/mobile_e2ee_v32.php
+          php -l backend/api/mobile_realtime_push_v44.php
 
-      - name: Verify required v4.2 API actions
+      - name: Verify realtime gateway syntax
+        run: node --check realtime/server.mjs
+
+      - name: Verify required v4.4 actions
         run: |
           grep -q "security_snapshot" backend/api/mobile.php
-          grep -q "privacy_get" backend/api/mobile.php
-          grep -q "sessions" backend/api/mobile.php
-          grep -q "TaleemPK Android app" backend/api/mobile.php
           grep -q "mark_view_once" backend/api/mobile.php
-          grep -q "UPDATE messages SET status='deleted'" backend/api/mobile.php
-          grep -q "@unlink" backend/api/mobile.php
+          grep -q "mobile_realtime_push_v44.php" backend/api/mobile.php
+          grep -q "realtime_config" backend/api/mobile_realtime_push_v44.php
+          grep -q "register_push" backend/api/mobile_realtime_push_v44.php
+          grep -q "push_chat" backend/api/mobile_realtime_push_v44.php
+          grep -q "fcm.googleapis.com/v1/projects" backend/api/mobile_realtime_push_v44.php
           grep -q "verification_status" backend/api/mobile_social_v31.php
           grep -q "verification_apply" backend/api/mobile_social_v31.php
 
       - name: Prepare server update
         run: |
-          mkdir -p TaleemPK-v4.2.0-Server-Update/api
-          cp backend/api/mobile.php TaleemPK-v4.2.0-Server-Update/api/mobile.php
-          cp backend/api/mobile_social_v31.php TaleemPK-v4.2.0-Server-Update/api/mobile_social_v31.php
-          cp backend/api/mobile_e2ee_v32.php TaleemPK-v4.2.0-Server-Update/api/mobile_e2ee_v32.php
-          cat > TaleemPK-v4.2.0-Server-Update/README.txt <<'EOF'
-          TaleemPK v4.2 server update
+          mkdir -p TaleemPK-v4.4.0-Server-Realtime-Update/api
+          mkdir -p TaleemPK-v4.4.0-Server-Realtime-Update/realtime
+          cp backend/api/mobile.php TaleemPK-v4.4.0-Server-Realtime-Update/api/mobile.php
+          cp backend/api/mobile_social_v31.php TaleemPK-v4.4.0-Server-Realtime-Update/api/mobile_social_v31.php
+          cp backend/api/mobile_e2ee_v32.php TaleemPK-v4.4.0-Server-Realtime-Update/api/mobile_e2ee_v32.php
+          cp backend/api/mobile_realtime_push_v44.php TaleemPK-v4.4.0-Server-Realtime-Update/api/mobile_realtime_push_v44.php
+          cp realtime/package.json TaleemPK-v4.4.0-Server-Realtime-Update/realtime/package.json
+          cp realtime/server.mjs TaleemPK-v4.4.0-Server-Realtime-Update/realtime/server.mjs
+          cp realtime/README.md TaleemPK-v4.4.0-Server-Realtime-Update/realtime/README.md
+          cp render.yaml TaleemPK-v4.4.0-Server-Realtime-Update/render.yaml
+          cat > TaleemPK-v4.4.0-Server-Realtime-Update/README.txt <<'EOF'
+          TaleemPK v4.4 server + realtime update
 
-          Upload all three files inside this package's api/ folder to your website api/ folder.
-          Typical destination: public_html/api/
+          WEBSITE API
+          Upload the four files inside api/ to your website api/ folder,
+          normally public_html/api/, and overwrite the matching files.
 
-          Replace/overwrite:
-          - api/mobile.php
-          - api/mobile_social_v31.php
-          - api/mobile_e2ee_v32.php
+          REALTIME WEBSOCKET
+          The realtime/ folder and render.yaml contain the small Node WebSocket
+          gateway. Deploy it as a separate Render web service and set the same
+          TALEEMPK_REALTIME_SECRET on Render and on the PHP website. Then set
+          TALEEMPK_WS_URL on the PHP website to the service's wss:// URL.
 
-          Keep a backup of the existing files before replacing them.
+          FIREBASE PUSH
+          For killed/background-app notifications configure these PHP hosting
+          environment values:
+          FIREBASE_PROJECT_ID
+          FIREBASE_ANDROID_APP_ID
+          FIREBASE_SENDER_ID
+          FIREBASE_API_KEY
+          FIREBASE_CLIENT_EMAIL
+          FIREBASE_PRIVATE_KEY
 
-          v4.2 includes Android login/session compatibility APIs and true one-time
-          media cleanup. After a recipient consumes a one-time photo or finishes a
-          one-time voice message, the server removes the stored media file and marks
-          that message deleted so it cannot be fetched again.
-
-          Android screenshot/screen-recording protection for one-time media is handled
-          by the v4.2 app using FLAG_SECURE and requires the matching v4.2 APK.
+          Without those external values the app still works normally and falls
+          back to the existing polling system. Login and message delivery never
+          depend on WebSocket or Firebase being available.
           EOF
 
       - name: Upload server update
         uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v4.2.0-Server-Update
-          path: TaleemPK-v4.2.0-Server-Update/
+          name: TaleemPK-v4.4.0-Server-Realtime-Update
+          path: TaleemPK-v4.4.0-Server-Realtime-Update/
           if-no-files-found: error
