@@ -11,22 +11,46 @@ end = source.find(end_marker, start)
 if start < 0 or end < 0:
     raise RuntimeError('v3.9b could not locate authentication metadata transform')
 
-replacement = r'''# Include timezone metadata on authentication calls. The server still uses the
-# connection IP for the security alert's network area; timezone is a useful
-# diagnostic hint but is not treated as a physical location. The first two
-# NativeBridge.deviceName() fields belong to login and verify_2fa. Match the
-# expression itself rather than indentation/newline formatting so older source
-# transforms cannot silently skip the metadata.
-device_expr = "'device': await NativeBridge.deviceName(),"
-if text.count(device_expr) < 2:
-    raise RuntimeError('v3.9 authentication device fields missing')
-auth_metadata = (
-    device_expr
-    + "\n      'client': 'TaleemPK Android app',"
-    + "\n      'tz_offset': '${DateTime.now().timeZoneOffset.inMinutes}',"
-    + "\n      'tz_name': DateTime.now().timeZoneName,"
-)
-text = text.replace(device_expr, auth_metadata, 2)
+replacement = r'''# Canonicalize authentication requests instead of depending on the formatting
+# produced by earlier transformations. This guarantees that both password login
+# and 2FA send the real native device label plus app/timezone metadata.
+login_pattern = r"  Future<AuthResult> login\(String identifier, String password\) async \{.*?\n  \}\n\n  Future<AuthResult> verifyTwoFactor"
+login_replacement = """  Future<AuthResult> login(String identifier, String password) async {
+    final data = await _request({
+      'action': 'login',
+      'identifier': identifier.trim(),
+      'password': password,
+      'device': await NativeBridge.deviceName(),
+      'client': 'TaleemPK Android app',
+      'tz_offset': '${DateTime.now().timeZoneOffset.inMinutes}',
+      'tz_name': DateTime.now().timeZoneName,
+    }, authenticated: false);
+    return _authResult(data);
+  }
+
+  Future<AuthResult> verifyTwoFactor"""
+text, login_count = re.subn(login_pattern, login_replacement, text, count=1, flags=re.S)
+if login_count != 1:
+    raise RuntimeError('v3.9 login method boundary missing')
+
+verify_pattern = r"  Future<AuthResult> verifyTwoFactor\(String challenge, String code\) async \{.*?\n  \}\n\n  Future<String> forgotPassword"
+verify_replacement = """  Future<AuthResult> verifyTwoFactor(String challenge, String code) async {
+    final data = await _request({
+      'action': 'verify_2fa',
+      'challenge': challenge,
+      'code': code.trim(),
+      'device': await NativeBridge.deviceName(),
+      'client': 'TaleemPK Android app',
+      'tz_offset': '${DateTime.now().timeZoneOffset.inMinutes}',
+      'tz_name': DateTime.now().timeZoneName,
+    }, authenticated: false);
+    return _authResult(data);
+  }
+
+  Future<String> forgotPassword"""
+text, verify_count = re.subn(verify_pattern, verify_replacement, text, count=1, flags=re.S)
+if verify_count != 1:
+    raise RuntimeError('v3.9 verifyTwoFactor method boundary missing')
 w(path, text)
 
 '''
@@ -40,6 +64,8 @@ exec(
 api = (ROOT / 'flutter/lib/core/api_client.dart').read_text(encoding='utf-8')
 if api.count("'client': 'TaleemPK Android app'") < 2:
     raise RuntimeError('v3.9b authentication client metadata was not generated')
+if api.count("'device': await NativeBridge.deviceName()") < 2:
+    raise RuntimeError('v3.9b native device metadata was not generated')
 if api.count("'tz_offset':") < 2 or api.count("'tz_name':") < 2:
     raise RuntimeError('v3.9b authentication timezone metadata was not generated')
 print('TaleemPK v3.9 authentication metadata fix applied successfully')
