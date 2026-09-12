@@ -1,4 +1,4 @@
-name: Package TaleemPK v3.9 Server API
+name: Package TaleemPK v4.2 Server API
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Generate final v3.9 server sources
+      - name: Generate final v4.2 server sources
         run: |
           python3 tools/v31_finalize.py
           python3 tools/run_v32.py
@@ -32,6 +32,10 @@ jobs:
           python3 tools/v37c_analyzer_cleanup.py
           python3 tools/v38b_boundary_fix.py
           python3 tools/v39b_runner.py
+          python3 tools/v40_runner.py
+          python3 tools/v40_cleanup.py
+          python3 tools/v41b_runner.py
+          python3 tools/v42b_runner.py
 
       - name: Verify PHP syntax
         run: |
@@ -39,24 +43,26 @@ jobs:
           php -l backend/api/mobile_social_v31.php
           php -l backend/api/mobile_e2ee_v32.php
 
-      - name: Verify required v3.9 API actions and identity hooks
+      - name: Verify required v4.2 API actions
         run: |
           grep -q "security_snapshot" backend/api/mobile.php
           grep -q "privacy_get" backend/api/mobile.php
           grep -q "sessions" backend/api/mobile.php
-          grep -q "TaleemPKAndroid/3.9" backend/api/mobile.php
           grep -q "TaleemPK Android app" backend/api/mobile.php
+          grep -q "mark_view_once" backend/api/mobile.php
+          grep -q "UPDATE messages SET status='deleted'" backend/api/mobile.php
+          grep -q "@unlink" backend/api/mobile.php
           grep -q "verification_status" backend/api/mobile_social_v31.php
           grep -q "verification_apply" backend/api/mobile_social_v31.php
 
       - name: Prepare server update
         run: |
-          mkdir -p TaleemPK-v3.9.0-Server-Update/api
-          cp backend/api/mobile.php TaleemPK-v3.9.0-Server-Update/api/mobile.php
-          cp backend/api/mobile_social_v31.php TaleemPK-v3.9.0-Server-Update/api/mobile_social_v31.php
-          cp backend/api/mobile_e2ee_v32.php TaleemPK-v3.9.0-Server-Update/api/mobile_e2ee_v32.php
-          cat > TaleemPK-v3.9.0-Server-Update/README.txt <<'EOF'
-          TaleemPK v3.9 server update
+          mkdir -p TaleemPK-v4.2.0-Server-Update/api
+          cp backend/api/mobile.php TaleemPK-v4.2.0-Server-Update/api/mobile.php
+          cp backend/api/mobile_social_v31.php TaleemPK-v4.2.0-Server-Update/api/mobile_social_v31.php
+          cp backend/api/mobile_e2ee_v32.php TaleemPK-v4.2.0-Server-Update/api/mobile_e2ee_v32.php
+          cat > TaleemPK-v4.2.0-Server-Update/README.txt <<'EOF'
+          TaleemPK v4.2 server update
 
           Upload all three files inside this package's api/ folder to your website api/ folder.
           Typical destination: public_html/api/
@@ -68,17 +74,18 @@ jobs:
 
           Keep a backup of the existing files before replacing them.
 
-          v3.9 improves Android sign-in identity reporting so security emails can show
-          the real phone/model and TaleemPK Android app instead of Unknown device / Unknown browser.
-          The Network area remains IP-based by design; mobile carriers and VPNs can show a nearby
-          city and it should not be treated as exact GPS location.
+          v4.2 includes Android login/session compatibility APIs and true one-time
+          media cleanup. After a recipient consumes a one-time photo or finishes a
+          one-time voice message, the server removes the stored media file and marks
+          that message deleted so it cannot be fetched again.
 
-          This package also includes Privacy & Security, verification, chat and E2EE mobile APIs.
+          Android screenshot/screen-recording protection for one-time media is handled
+          by the v4.2 app using FLAG_SECURE and requires the matching v4.2 APK.
           EOF
 
       - name: Upload server update
         uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.9.0-Server-Update
-          path: TaleemPK-v3.9.0-Server-Update/
+          name: TaleemPK-v4.2.0-Server-Update
+          path: TaleemPK-v4.2.0-Server-Update/
           if-no-files-found: error
