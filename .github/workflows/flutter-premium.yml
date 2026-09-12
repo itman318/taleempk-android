@@ -6,6 +6,8 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
       - 'tools/**'
       - '.github/workflows/flutter-premium.yml'
   push:
@@ -13,6 +15,8 @@ on:
     paths:
       - 'flutter/**'
       - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
       - 'tools/**'
       - '.github/workflows/flutter-premium.yml'
 
@@ -79,6 +83,9 @@ jobs:
       - name: Apply v4.3 chat stability and draft recovery
         working-directory: .
         run: python3 tools/v43b_runner.py
+      - name: Apply v4.4 realtime WebSocket and FCM push
+        working-directory: .
+        run: python3 tools/v44_realtime_push.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -94,6 +101,11 @@ jobs:
           php -l flutter/backend/api/mobile_social_v31.php
           php -l backend/api/mobile_social_v31.php
           php -l backend/api/mobile_e2ee_v32.php
+          php -l flutter/backend/api/mobile_realtime_push_v44.php
+          php -l backend/api/mobile_realtime_push_v44.php
+      - name: Realtime gateway syntax check
+        working-directory: .
+        run: node --check realtime/server.mjs
       - name: Deep regression audit
         working-directory: .
         run: |
@@ -107,7 +119,11 @@ jobs:
           verification = Path('flutter/lib/screens/verification_screen.dart').read_text()
           common = Path('flutter/lib/widgets/common.dart').read_text()
           mobile = Path('backend/api/mobile.php').read_text()
+          push_module = Path('backend/api/mobile_realtime_push_v44.php').read_text()
+          realtime = Path('flutter/lib/core/realtime_service.dart').read_text()
+          push = Path('flutter/lib/core/push_service.dart').read_text()
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
+          manifest = Path('flutter/android/app/src/main/AndroidManifest.xml').read_text()
           native_bridge = Path('flutter/lib/core/native_bridge.dart').read_text()
           auth = Path('flutter/lib/screens/auth_screen.dart').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
@@ -158,20 +174,30 @@ jobs:
           assert 'View once is available in direct chats only.' in chat
           assert 'await remoteRenderer.initialize();\n    if (!mounted) return;' in calls
           assert 'final api = AppScope.of(context).api;\n    try {\n      final state = await api.callState(' in calls
-          assert 'version: 4.3.0+430' in pubspec
-          print('v4.3 deep regression audit passed')
+          assert 'WebSocketChannel.connect' in realtime
+          assert 'RealtimeService.instance.subscribe(widget.conversation.id)' in chat
+          assert 'RealtimeService.instance.publish' in api
+          assert 'FirebaseMessaging.instance' in push
+          assert 'PushService.instance.bind' in state
+          assert "'action': 'register_push'" in api
+          assert "if ($action === 'push_chat')" in push_module
+          assert 'https://fcm.googleapis.com/v1/projects/' in push_module
+          assert 'mobile_realtime_push_v44.php' in mobile
+          assert 'POST_NOTIFICATIONS' in manifest
+          assert 'version: 4.4.0+440' in pubspec
+          print('v4.4 deep regression audit passed')
           PY
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.3.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.4.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v4.3.0-APKs
+          name: TaleemPK-v4.4.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.3.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.4.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
