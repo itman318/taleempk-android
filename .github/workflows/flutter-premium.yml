@@ -72,7 +72,7 @@ jobs:
         run: python3 tools/v40_cleanup.py
       - name: Apply v4.1 reply, media and view-once fixes
         working-directory: .
-        run: python3 tools/v41_reply_media_viewonce.py
+        run: python3 tools/v41b_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -97,7 +97,6 @@ jobs:
           state = Path('flutter/lib/core/app_state.dart').read_text()
           chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
           profile = Path('flutter/lib/screens/profile_screen.dart').read_text()
-          security = Path('flutter/lib/screens/security_screen.dart').read_text()
           verification = Path('flutter/lib/screens/verification_screen.dart').read_text()
           common = Path('flutter/lib/widgets/common.dart').read_text()
           mobile = Path('backend/api/mobile.php').read_text()
@@ -105,8 +104,6 @@ jobs:
           native_bridge = Path('flutter/lib/core/native_bridge.dart').read_text()
           auth = Path('flutter/lib/screens/auth_screen.dart').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
-
-          # Existing reliability/performance regressions.
           assert '.get(source, headers: authHeaders)' in api
           assert 'await NativeBridge.deviceName()' in api
           assert '_attachmentCache' not in api
@@ -128,8 +125,6 @@ jobs:
           assert 'maximumSize: const Size(double.infinity, 44)' in profile
           assert 'Verify your TaleemPK profile' in verification
           assert 'PageRoute<T> premiumRoute<T>' in common
-
-          # v4.1 reply/media regressions.
           assert 'Future<void> _jumpToMessage(int messageId) async' in chat
           assert 'Scrollable.ensureVisible' in chat
           assert 'key: _messageKey(m.id)' in chat
