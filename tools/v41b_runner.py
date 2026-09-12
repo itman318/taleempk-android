@@ -136,6 +136,15 @@ text = text[:os] + open_chunk + text[oe:]
 '''
 source = source[:start] + replacement + source[end:]
 
+# Current VoiceBubble keeps its autoplay decision immediately after the
+# handlingCompletion flag. Patch the v4.1 transform to preserve those lines
+# while injecting view-once consumption state.
+old_completion = """completion_marker = '  Future<void> _handleCompleted() async {\\n    if (handlingCompletion) return;\\n    handlingCompletion = true;\\n'\nif completion_marker not in voice_class:\n    raise RuntimeError('v4.1 voice completion marker missing')\nvoice_class = voice_class.replace(\n    completion_marker,\n    r'''  Future<void> _handleCompleted() async {\n    if (handlingCompletion) return;\n    handlingCompletion = true;\n    final consumeViewOnce = _isViewOnceAttachmentName(widget.message.attachmentName) &&\n        !widget.message.mine &&\n        !widget.message.playedByMe;\n''',\n    1,\n)\n"""
+new_completion = """completion_marker = '  Future<void> _handleCompleted() async {\\n    if (handlingCompletion) return;\\n    handlingCompletion = true;\\n    final shouldContinue = activeVoice == this;\\n    if (shouldContinue) activeVoice = null;\\n'\nif completion_marker not in voice_class:\n    raise RuntimeError('v4.1 voice completion marker missing')\nvoice_class = voice_class.replace(\n    completion_marker,\n    r'''  Future<void> _handleCompleted() async {\n    if (handlingCompletion) return;\n    handlingCompletion = true;\n    final shouldContinue = activeVoice == this;\n    if (shouldContinue) activeVoice = null;\n    final consumeViewOnce = _isViewOnceAttachmentName(widget.message.attachmentName) &&\n        !widget.message.mine &&\n        !widget.message.playedByMe;\n''',\n    1,\n)\n"""
+if old_completion not in source:
+    raise RuntimeError('v4.1b completion source block missing')
+source = source.replace(old_completion, new_completion, 1)
+
 code = compile(source, str(script_path), 'exec')
 exec(code, {'__name__': '__main__', '__file__': str(script_path)})
 
