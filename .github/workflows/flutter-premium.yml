@@ -67,6 +67,9 @@ jobs:
       - name: Apply v4.0 audio, login and performance hardening
         working-directory: .
         run: python3 tools/v40_runner.py
+      - name: Clean legacy v4 analyzer code
+        working-directory: .
+        run: python3 tools/v40_cleanup.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -109,6 +112,7 @@ jobs:
           assert "'User-Agent': 'TaleemPKAndroid/3.9'" in api
           assert api.count("'client': 'TaleemPK Android app'") >= 2
           assert api.count("'tz_offset':") >= 2 and api.count("'tz_name':") >= 2
+          assert '_attachmentCache' not in api
           assert 'pollTicks % 12' in chat
           assert 'Duration(milliseconds: immediate ? 60 : delayMs)' in chat
           assert 'Future<void> _syncAfterSend() async' in chat
