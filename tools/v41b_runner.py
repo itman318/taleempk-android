@@ -145,6 +145,15 @@ if old_completion not in source:
     raise RuntimeError('v4.1b completion source block missing')
 source = source.replace(old_completion, new_completion, 1)
 
+# The base app already owns one _jumpToMessage implementation. The v4.1 core
+# assertions still expected the temporary GlobalKey implementation that this
+# compatibility runner deliberately removes. Assert the behavior we keep.
+old_asserts = """assert 'Future<void> _jumpToMessage(int messageId) async' in chat\nassert 'Scrollable.ensureVisible' in chat and 'key: _messageKey(m.id)' in chat\n"""
+new_asserts = """assert chat.count('Future<void> _jumpToMessage(') == 1\nassert 'onTap: () => _jumpToMessage(r.id)' in chat\n"""
+if old_asserts not in source:
+    raise RuntimeError('v4.1b legacy reply assertions missing')
+source = source.replace(old_asserts, new_asserts, 1)
+
 code = compile(source, str(script_path), 'exec')
 exec(code, {'__name__': '__main__', '__file__': str(script_path)})
 
