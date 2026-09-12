@@ -125,9 +125,8 @@ jobs:
           assert 'maximumSize: const Size(double.infinity, 44)' in profile
           assert 'Verify your TaleemPK profile' in verification
           assert 'PageRoute<T> premiumRoute<T>' in common
-          assert 'Future<void> _jumpToMessage(int messageId) async' in chat
-          assert 'Scrollable.ensureVisible' in chat
-          assert 'key: _messageKey(m.id)' in chat
+          assert chat.count('Future<void> _jumpToMessage(') == 1
+          assert 'onTap: () => _jumpToMessage(r.id)' in chat
           assert 'Icons.arrow_upward_rounded' in chat
           assert 'SecureChatImage(' in chat and 'View once photo' in chat
           assert 'send directly in chat' in chat
