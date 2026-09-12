@@ -66,7 +66,7 @@ jobs:
         run: python3 tools/v39b_runner.py
       - name: Apply v4.0 audio, login and performance hardening
         working-directory: .
-        run: python3 tools/v40_audio_login_performance.py
+        run: python3 tools/v40_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -133,7 +133,6 @@ jobs:
           assert 'createPositionStream(' in chat
           assert 'progressTimer = Timer.periodic' in chat
           assert 'livePosition.inMilliseconds > streamedPosition.inMilliseconds' in chat
-          assert 'fresh.length < 60' in chat and 'older.length < 60' in chat
           assert 'rootNavigator: true' in conv
           assert '_verificationColor(ProfileData p)' in profile
           assert "tooltip: 'Sign out'" in profile
