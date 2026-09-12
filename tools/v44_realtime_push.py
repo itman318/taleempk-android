@@ -25,8 +25,24 @@ def function_bounds(text: str, signature: str):
     depth = 0
     quote = None
     escape = False
-    for i in range(brace, len(text)):
+    line_comment = False
+    block_comment = False
+    i = brace
+    while i < len(text):
         ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ''
+        if line_comment:
+            if ch == '\n':
+                line_comment = False
+            i += 1
+            continue
+        if block_comment:
+            if ch == '*' and nxt == '/':
+                block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
         if quote is not None:
             if escape:
                 escape = False
@@ -34,9 +50,19 @@ def function_bounds(text: str, signature: str):
                 escape = True
             elif ch == quote:
                 quote = None
+            i += 1
+            continue
+        if ch == '/' and nxt == '/':
+            line_comment = True
+            i += 2
+            continue
+        if ch == '/' and nxt == '*':
+            block_comment = True
+            i += 2
             continue
         if ch in ("'", '"'):
             quote = ch
+            i += 1
             continue
         if ch == '{':
             depth += 1
@@ -44,6 +70,7 @@ def function_bounds(text: str, signature: str):
             depth -= 1
             if depth == 0:
                 return start, i + 1
+        i += 1
     raise RuntimeError(f'v4.4 unterminated function: {signature}')
 
 
@@ -52,28 +79,38 @@ def replace_function(text: str, signature: str, replacement: str) -> str:
     return text[:start] + replacement + text[end:]
 
 
+# ---------------------------------------------------------------------------
 # Dependencies + release version.
+# ---------------------------------------------------------------------------
 path = 'flutter/pubspec.yaml'
 text = r(path)
 if 'web_socket_channel:' not in text:
+    marker = '  flutter_webrtc: ^1.2.0\n'
+    if marker not in text:
+        raise RuntimeError('v4.4 pubspec dependency marker missing')
     text = text.replace(
-        '  flutter_webrtc: ^1.2.0\n',
-        '  flutter_webrtc: ^1.2.0\n'
-        '  web_socket_channel: ^3.0.3\n'
-        '  firebase_core: ^4.14.0\n'
-        '  firebase_messaging: ^16.6.0\n',
+        marker,
+        marker
+        + '  web_socket_channel: ^3.0.3\n'
+        + '  firebase_core: ^4.14.0\n'
+        + '  firebase_messaging: ^16.6.0\n',
         1,
     )
 text = re.sub(r'^version:\s*[^\n]+', 'version: 4.4.0+440', text, count=1, flags=re.M)
 w(path, text)
 
 
-# API client: realtime configuration, Firebase token registration, and room
-# invalidation + push request after successful sends.
+# ---------------------------------------------------------------------------
+# API client: configure realtime/push and publish invalidations after the
+# existing, authoritative PHP send succeeds.
+# ---------------------------------------------------------------------------
 path = 'flutter/lib/core/api_client.dart'
 text = r(path)
 if "import 'realtime_service.dart';" not in text:
-    text = text.replace("import 'quiz_models.dart';\n", "import 'quiz_models.dart';\nimport 'realtime_service.dart';\n", 1)
+    marker = "import 'quiz_models.dart';\n"
+    if marker not in text:
+        raise RuntimeError('v4.4 API import marker missing')
+    text = text.replace(marker, marker + "import 'realtime_service.dart';\n", 1)
 
 presence = r'''  Future<ChatPresence> presence(
     int conversationId, {
@@ -151,8 +188,8 @@ send_file = r'''  Future<void> sendFile(
   }'''
 text = replace_function(text, '  Future<void> sendFile(', send_file)
 
-marker = '  String newClientToken() => _clientToken();\n'
-if marker not in text:
+api_marker = '  String newClientToken() => _clientToken();\n'
+if api_marker not in text:
     raise RuntimeError('v4.4 API insertion marker missing')
 if 'Future<Map<String, dynamic>> realtimeConfig()' not in text:
     methods = r'''  Future<Map<String, dynamic>> realtimeConfig() =>
@@ -179,32 +216,38 @@ if 'Future<Map<String, dynamic>> realtimeConfig()' not in text:
         'conversation_id': '$conversationId',
       });
     } catch (_) {
-      // Delivery already succeeded; push must never make chat sending fail.
+      // The message is already stored; push delivery is best-effort only.
     }
   }
 
 '''
-    text = text.replace(marker, methods + marker, 1)
+    text = text.replace(api_marker, methods + api_marker, 1)
 w(path, text)
 
 
-# App state: turn realtime/push on after auth and off on logout/session expiry.
+# ---------------------------------------------------------------------------
+# App lifecycle: activate optional transports after authentication. Failure of
+# Firebase/WebSocket must never block account access.
+# ---------------------------------------------------------------------------
 path = 'flutter/lib/core/app_state.dart'
 text = r(path)
 if "import 'dart:async';" not in text:
     text = "import 'dart:async';\n\n" + text
 if "import 'push_service.dart';" not in text:
+    marker = "import 'models.dart';\n"
+    if marker not in text:
+        raise RuntimeError('v4.4 AppState import marker missing')
     text = text.replace(
-        "import 'models.dart';\n",
-        "import 'models.dart';\nimport 'push_service.dart';\nimport 'realtime_service.dart';\n",
+        marker,
+        marker + "import 'push_service.dart';\nimport 'realtime_service.dart';\n",
         1,
     )
 
 start_marker = '  Future<void> start() async {\n'
-idx = text.find(start_marker)
-if idx < 0:
+start_pos = text.find(start_marker)
+if start_pos < 0:
     raise RuntimeError('v4.4 AppState start marker missing')
-if '_activateRealtimePush()' not in text:
+if 'Future<void> _activateRealtimePush() async {' not in text:
     helper = r'''  Future<void> _activateRealtimePush() async {
     if (status != AppStatus.signedIn || api.token == null) return;
     try {
@@ -226,14 +269,18 @@ if '_activateRealtimePush()' not in text:
   }
 
 '''
-    text = text[:idx] + helper + text[idx:]
+    text = text[:start_pos] + helper + text[start_pos:]
 
-# Final generated source has several authenticated success paths. Attach the
-# transport after each without making authentication wait on WebSocket/Firebase.
-for indent in ('      ', '        ', '          '):
-    old = f'{indent}status = AppStatus.signedIn;\n{indent}notifyListeners();'
-    new = old + f'\n{indent}unawaited(_activateRealtimePush());'
-    text = text.replace(old, new)
+# Add activation after any generated path that reaches signedIn. Avoid duplicate
+# insertion if this transform is intentionally run twice during debugging.
+pattern = re.compile(r'(?P<indent>\s*)status = AppStatus\.signedIn;\n(?P=indent)notifyListeners\(\);')
+def activate(match):
+    block = match.group(0)
+    indent = match.group('indent')
+    tail = f'\n{indent}unawaited(_activateRealtimePush());'
+    after = text[match.end():match.end()+len(tail)+8]
+    return block if '_activateRealtimePush' in after else block + tail
+text = pattern.sub(activate, text)
 
 ss, se = function_bounds(text, '  void _sessionExpired(String message) {')
 chunk = text[ss:se]
@@ -263,16 +310,18 @@ text = replace_function(text, '  Future<void> logout() async {', logout)
 w(path, text)
 
 
-# Chat: subscribe to room events. The authoritative refresh stays the existing
-# API sync so all encryption, receipts and moderation logic remain unchanged.
+# ---------------------------------------------------------------------------
+# Chat screen: subscribe to invalidations and let the existing API refresh stay
+# authoritative for encryption, moderation, read receipts, edits and deletes.
+# ---------------------------------------------------------------------------
 path = 'flutter/lib/screens/chat_screen.dart'
 text = r(path)
 if "import '../core/realtime_service.dart';" not in text:
-    text = text.replace(
-        "import '../core/outbox.dart';\n",
-        "import '../core/outbox.dart';\nimport '../core/realtime_service.dart';\n",
-        1,
-    )
+    marker = "import '../core/outbox.dart';\n"
+    if marker not in text:
+        raise RuntimeError('v4.4 chat import marker missing')
+    text = text.replace(marker, marker + "import '../core/realtime_service.dart';\n", 1)
+
 state_marker = '  final outbox = MessageOutbox();\n'
 if state_marker not in text:
     raise RuntimeError('v4.4 chat outbox marker missing')
@@ -316,20 +365,25 @@ if 'realtimeSubscription?.cancel();' not in chunk:
     )
 text = text[:ss] + chunk + text[se:]
 
-# Healthy WebSocket receives immediate invalidations; keep a slightly slower
-# fallback poll for web/older clients and transient socket misses.
-text, count = re.subn(
-    r'Duration\(milliseconds: immediate \? 80 : \d+\)',
-    "Duration(\n        milliseconds: immediate\n            ? 80\n            : (RealtimeService.instance.connected ? 1400 : 950),\n      )",
-    text,
-    count=1,
-)
-if count == 0 and 'RealtimeService.instance.connected ? 1400 : 950' not in text:
-    raise RuntimeError('v4.4 chat poll duration marker missing')
+schedule_poll = r'''  void _schedulePoll({bool immediate = false}) {
+    poll?.cancel();
+    if (!mounted || !foreground) return;
+    poll = Timer(
+      Duration(
+        milliseconds: immediate
+            ? 70
+            : (RealtimeService.instance.connected ? 1800 : 950),
+      ),
+      _poll,
+    );
+  }'''
+text = replace_function(text, '  void _schedulePoll(', schedule_poll)
 w(path, text)
 
 
+# ---------------------------------------------------------------------------
 # Android 13+ notification permission.
+# ---------------------------------------------------------------------------
 path = 'flutter/android/app/src/main/AndroidManifest.xml'
 text = r(path)
 permission = '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
@@ -345,7 +399,9 @@ if permission not in text:
 w(path, text)
 
 
-# Server: install the authenticated v4.4 module immediately after mobile_user.
+# ---------------------------------------------------------------------------
+# PHP mobile API: install the v4.4 authenticated realtime/push action module.
+# ---------------------------------------------------------------------------
 for path in ('backend/api/mobile.php', 'flutter/backend/api/mobile.php'):
     text = r(path)
     marker = "$u = mobile_user();\n$uid = (int) $u['id'];\n"
@@ -356,14 +412,15 @@ for path in ('backend/api/mobile.php', 'flutter/backend/api/mobile.php'):
         text = text.replace(marker, marker + require_line, 1)
     w(path, text)
 
-# Keep the generated Flutter server copy identical to the canonical backend file.
 shutil.copyfile(
     ROOT / 'backend/api/mobile_realtime_push_v44.php',
     ROOT / 'flutter/backend/api/mobile_realtime_push_v44.php',
 )
 
 
+# ---------------------------------------------------------------------------
 # Regression guarantees.
+# ---------------------------------------------------------------------------
 pubspec = r('flutter/pubspec.yaml')
 api = r('flutter/lib/core/api_client.dart')
 state = r('flutter/lib/core/app_state.dart')
@@ -380,8 +437,9 @@ assert "'action': 'realtime_config'" in api and "'action': 'register_push'" in a
 assert '_activateRealtimePush' in state and 'PushService.instance.bind' in state
 assert 'StreamSubscription<RealtimeEvent>? realtimeSubscription;' in chat
 assert 'RealtimeService.instance.subscribe(widget.conversation.id)' in chat
+assert 'RealtimeService.instance.connected ? 1800 : 950' in chat
 assert 'POST_NOTIFICATIONS' in manifest
-assert "mobile_realtime_push_v44.php" in mobile
+assert 'mobile_realtime_push_v44.php' in mobile
 assert "if ($action === 'realtime_config')" in module
 assert "if ($action === 'register_push')" in module
 assert "if ($action === 'push_chat')" in module
