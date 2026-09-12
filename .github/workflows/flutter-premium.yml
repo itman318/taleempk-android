@@ -61,9 +61,9 @@ jobs:
       - name: Apply corrected v3.8 messenger, security and verification polish
         working-directory: .
         run: python3 tools/v38b_boundary_fix.py
-      - name: Apply v3.9 identity, speed and verification polish
+      - name: Apply corrected v3.9 identity, speed and verification polish
         working-directory: .
-        run: python3 tools/v39_identity_speed_verification.py
+        run: python3 tools/v39b_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -102,7 +102,8 @@ jobs:
           assert '.get(source, headers: authHeaders)' in api
           assert 'await NativeBridge.deviceName()' in api
           assert "'User-Agent': 'TaleemPKAndroid/3.9'" in api
-          assert "'client': 'TaleemPK Android app'" in api
+          assert api.count("'client': 'TaleemPK Android app'") >= 2
+          assert api.count("'tz_offset':") >= 2 and api.count("'tz_name':") >= 2
           assert 'pollTicks % 8' in chat
           assert 'Duration(milliseconds: immediate ? 60 : delayMs)' in chat
           assert 'Future<void> _syncAfterSend() async' in chat
