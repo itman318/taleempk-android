@@ -42,9 +42,6 @@ replacement = r'''def function_bounds(text: str, signature: str):
     if param_end < 0:
         raise RuntimeError(f'v4.4 unterminated parameters: {signature}')
 
-    # Expression-bodied Dart methods can be `) => expression;` or
-    # `) async => expression;`. Their expression often contains map literals,
-    # so the first `{` after the parameters is not a function body.
     arrow = text.find('=>', param_end + 1)
     body_brace = text.find('{', param_end + 1)
     if arrow >= 0 and (body_brace < 0 or arrow < body_brace):
@@ -162,4 +159,21 @@ replacement = r'''def function_bounds(text: str, signature: str):
 
 code = code[:start] + replacement + code[end:]
 exec(compile(code, str(script), 'exec'), {'__name__': '__main__', '__file__': str(script)})
-print('TaleemPK v4.4 expression-body compatibility runner applied successfully')
+
+# Do not assume a mute column name in older TaleemPK databases. Push delivery
+# stays schema-compatible; per-chat mute handling can be added server-side once
+# the canonical schema exposes a stable field.
+root = script.resolve().parents[1]
+for relative in ('backend/api/mobile_realtime_push_v44.php', 'flutter/backend/api/mobile_realtime_push_v44.php'):
+    path = root / relative
+    text = path.read_text(encoding='utf-8')
+    text = text.replace(
+        '"SELECT cm.user_id,COALESCE(cm.is_muted,0) is_muted\n'
+        '           FROM conversation_members cm JOIN users u2 ON u2.id=cm.user_id\n',
+        '"SELECT cm.user_id\n'
+        '           FROM conversation_members cm JOIN users u2 ON u2.id=cm.user_id\n',
+    )
+    text = text.replace("        if ((int)$recipient['is_muted'] === 1) continue;\n", '')
+    path.write_text(text, encoding='utf-8')
+
+print('TaleemPK v4.4 expression-body + server compatibility runner applied successfully')
