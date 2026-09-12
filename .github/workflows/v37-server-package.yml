@@ -39,7 +39,7 @@ jobs:
           python3 tools/v41b_runner.py
           python3 tools/v42b_runner.py
           python3 tools/v43b_runner.py
-          python3 tools/v44_realtime_push.py
+          python3 tools/v44c_runner.py
 
       - name: Verify PHP syntax
         run: |
