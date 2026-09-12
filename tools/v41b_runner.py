@@ -113,7 +113,7 @@ for i in range(paren, len(open_chunk)):
             break
 if dialog_end is None:
     raise RuntimeError('v4.1 image viewer statement boundary missing')
-consume_block = r'''
+consume_block = r"""
       if (viewOnce && !m.mine && !m.playedByMe) {
         try {
           await AppScope.of(context).api.markViewOnceConsumed(m.id);
@@ -121,7 +121,7 @@ consume_block = r'''
           if (mounted) setState(() {});
         } catch (_) {}
       }
-'''
+"""
 open_chunk = open_chunk[:dialog_end] + consume_block + open_chunk[dialog_end:]
 text = text[:os] + open_chunk + text[oe:]
 
