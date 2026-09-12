@@ -20,8 +20,8 @@ w(path, text)
 # 2) Do not throw away a valid login"""
 source = source[:start] + replacement + source[end + len(end_marker):]
 source = source.replace(
-    "assert '_authRequestWithRetry' in api and 'HandshakeException' in api\n",
-    "assert '_authRequestWithRetry' in api\n",
+    "assert '_authRequestWithRetry' in api and 'HandshakeException' in api",
+    "assert '_authRequestWithRetry' in api",
 )
 
 code = compile(source, str(script_path), 'exec')
