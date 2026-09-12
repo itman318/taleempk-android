@@ -4,57 +4,65 @@ ROOT = Path(__file__).resolve().parents[1]
 script_path = ROOT / 'tools' / 'v41_reply_media_viewonce.py'
 source = script_path.read_text(encoding='utf-8')
 
-# Keep only the GlobalKey map; the original experimental visual highlight
-# wrapper added a parent without a safe generated-source boundary.
+# Put the view-once helpers after every import/directive. Later transforms add
+# imports after call_screen.dart, so inserting declarations beside that import
+# can produce `directive_after_declaration` in the generated Dart file.
+old_helpers = '''import_marker = "import 'call_screen.dart';\\n"
+helpers = r\'\'\'
+
+bool _isViewOnceAttachmentName(String? value) =>
+    value != null && value.startsWith('once__');
+
+String _cleanAttachmentName(String? value) {
+  final name = (value ?? '').trim();
+  return name.startsWith('once__') ? name.substring(6) : name;
+}
+\'\'\'
+if '_isViewOnceAttachmentName' not in text:
+    text = once(text, import_marker, import_marker + helpers, 'view-once helpers')
+'''
+new_helpers = '''helpers = r\'\'\'
+
+bool _isViewOnceAttachmentName(String? value) =>
+    value != null && value.startsWith('once__');
+
+String _cleanAttachmentName(String? value) {
+  final name = (value ?? '').trim();
+  return name.startsWith('once__') ? name.substring(6) : name;
+}
+\'\'\'
+if '_isViewOnceAttachmentName' not in text:
+    class_marker = 'class ChatScreen extends StatefulWidget {'
+    text = once(text, class_marker, helpers + '\\n' + class_marker, 'view-once helpers')
+'''
+if old_helpers not in source:
+    raise RuntimeError('v4.1b helper insertion source block missing')
+source = source.replace(old_helpers, new_helpers, 1)
+
+# No new reply navigation method is needed: TaleemPK already has a robust
+# _jumpToMessage() used by pinned/search results. Reuse it from the quoted reply
+# card instead of defining a duplicate method and extra message-key state.
 source = source.replace(
-    """state_extra = \"\"\"  final selectedIds = <int>{};
+    '''state_extra = """  final selectedIds = <int>{};
   final Map<int, GlobalKey> _messageKeys = <int, GlobalKey>{};
   Timer? _replyHighlightTimer;
   int? _replyHighlightId;
-\"\"\"""",
-    """state_extra = \"\"\"  final selectedIds = <int>{};
-  final Map<int, GlobalKey> _messageKeys = <int, GlobalKey>{};
-\"\"\"""",
+"""''',
+    '''state_extra = """  final selectedIds = <int>{};
+"""''',
     1,
 )
 
-# Remove the matching timer-dispose source patch.
 start = source.find('# Dispose the reply highlight timer')
-end = source.find('# Use a real GlobalKey', start)
+end = source.find('# Voice preview gets an explicit 1x / view-once toggle.', start)
 if start < 0 or end < 0:
-    raise RuntimeError('v4.1b dispose patch boundary missing')
+    raise RuntimeError('v4.1b reply-state cleanup boundary missing')
 source = source[:start] + source[end:]
 
-# Reply navigation still scrolls precisely, but use haptic feedback rather than
-# mutating the surrounding bubble layout.
-source = source.replace(
-    """    _replyHighlightTimer?.cancel();
-    if (mounted) setState(() => _replyHighlightId = messageId);
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-""",
-    """    await Future<void>.delayed(const Duration(milliseconds: 30));
-""",
-    1,
-)
-source = source.replace(
-    """    await reveal();
-    _replyHighlightTimer = Timer(const Duration(milliseconds: 1500), () {
-      if (mounted && _replyHighlightId == messageId) {
-        setState(() => _replyHighlightId = null);
-      }
-    });
-""",
-    """    await reveal();
-    unawaited(HapticFeedback.selectionClick());
-""",
-    1,
-)
-
-# Remove the experimental bubble wrapper source block entirely.
-start = source.find('# Give the original bubble a brief visual cue')
+start = source.find('# Use a real GlobalKey')
 end = source.find('# Replace the quoted/reply card.', start)
 if start < 0 or end < 0:
-    raise RuntimeError('v4.1b bubble wrapper boundary missing')
+    raise RuntimeError('v4.1b duplicate reply navigation boundary missing')
 source = source[:start] + source[end:]
 
 # Replace the fragile image-viewer branch search with a balanced-parentheses
@@ -131,8 +139,24 @@ source = source[:start] + replacement + source[end:]
 code = compile(source, str(script_path), 'exec')
 exec(code, {'__name__': '__main__', '__file__': str(script_path)})
 
-chat = (ROOT / 'flutter/lib/screens/chat_screen.dart').read_text(encoding='utf-8')
+# Final generated-source analyzer cleanup for code made obsolete by v4.1.
+chat_path = ROOT / 'flutter/lib/screens/chat_screen.dart'
+chat = chat_path.read_text(encoding='utf-8')
+chat = chat.replace('url: original!.attachmentUrl!,', 'url: original.attachmentUrl!,')
+legacy_icon = """  IconData _fileIcon(String? type) =>
+      ['jpg', 'jpeg', 'png', 'gif', 'webp'].contains(type)
+      ? Icons.image_rounded
+      : type == 'pdf'
+      ? Icons.picture_as_pdf_rounded
+      : Icons.description_rounded;
+"""
+if legacy_icon in chat:
+    chat = chat.replace(legacy_icon, '', 1)
+chat_path.write_text(chat, encoding='utf-8')
+
+assert chat.count('Future<void> _jumpToMessage(') == 1
+assert 'onTap: () => _jumpToMessage(r.id)' in chat
+assert '_messageKeys' not in chat
 assert '_replyHighlightTimer' not in chat
-assert '_replyHighlightId' not in chat
-assert 'unawaited(HapticFeedback.selectionClick())' in chat
-print('TaleemPK v4.1 boundary fixes applied successfully')
+assert '_fileIcon(String? type)' not in chat
+print('TaleemPK v4.1 boundary/analyzer fixes applied successfully')
