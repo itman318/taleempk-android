@@ -54,7 +54,7 @@ source = source.replace(
 )
 
 start = source.find('# Dispose the reply highlight timer')
-end = source.find('# Voice preview gets an explicit 1x / view-once toggle.', start)
+end = source.find('# Use a real GlobalKey', start)
 if start < 0 or end < 0:
     raise RuntimeError('v4.1b reply-state cleanup boundary missing')
 source = source[:start] + source[end:]
