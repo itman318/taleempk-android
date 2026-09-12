@@ -31,7 +31,7 @@ jobs:
           python3 tools/v37b_chat_identity_polish.py
           python3 tools/v37c_analyzer_cleanup.py
           python3 tools/v38b_boundary_fix.py
-          python3 tools/v39_identity_speed_verification.py
+          python3 tools/v39b_runner.py
 
       - name: Verify PHP syntax
         run: |
