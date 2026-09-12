@@ -14,19 +14,19 @@ if start < 0 or end < 0:
 replacement = r'''# Include timezone metadata on authentication calls. The server still uses the
 # connection IP for the security alert's network area; timezone is a useful
 # diagnostic hint but is not treated as a physical location. The first two
-# NativeBridge.deviceName() fields belong to login and verify_2fa; use a
-# line-level replacement so formatting changes from older transforms cannot
-# silently skip the metadata.
-device_line = "      'device': await NativeBridge.deviceName(),\n"
-if text.count(device_line) < 2:
+# NativeBridge.deviceName() fields belong to login and verify_2fa. Match the
+# expression itself rather than indentation/newline formatting so older source
+# transforms cannot silently skip the metadata.
+device_expr = "'device': await NativeBridge.deviceName(),"
+if text.count(device_expr) < 2:
     raise RuntimeError('v3.9 authentication device fields missing')
 auth_metadata = (
-    device_line
-    + "      'client': 'TaleemPK Android app',\n"
-    + "      'tz_offset': '${DateTime.now().timeZoneOffset.inMinutes}',\n"
-    + "      'tz_name': DateTime.now().timeZoneName,\n"
+    device_expr
+    + "\n      'client': 'TaleemPK Android app',"
+    + "\n      'tz_offset': '${DateTime.now().timeZoneOffset.inMinutes}',"
+    + "\n      'tz_name': DateTime.now().timeZoneName,"
 )
-text = text.replace(device_line, auth_metadata, 2)
+text = text.replace(device_expr, auth_metadata, 2)
 w(path, text)
 
 '''
