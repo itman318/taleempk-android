@@ -190,9 +190,10 @@ class RealtimeService {
   void _scheduleReconnect() {
     _reconnectTimer?.cancel();
     if (_url.isEmpty || _ticket.isEmpty) return;
-    _attempt = (_attempt + 1).clamp(1, 6);
+    final nextAttempt = _attempt + 1;
+    _attempt = nextAttempt > 6 ? 6 : nextAttempt;
     final delayMs = 700 * (1 << (_attempt - 1));
-    final capped = delayMs.clamp(700, 15000);
+    final capped = delayMs > 15000 ? 15000 : delayMs;
     final generation = _generation;
     _reconnectTimer = Timer(Duration(milliseconds: capped), () {
       if (generation == _generation) _connect(generation);
