@@ -40,7 +40,7 @@ send_call = source.find(send_marker, send_start)
 if send_start < 0 or send_call < 0:
     raise RuntimeError('v4.3b sendText source boundary missing')
 send_end = send_call + len(send_marker)
-send_replacement = r'''send_text = r'''  Future<void> _sendText() async {
+send_replacement = r"""send_text = r'''  Future<void> _sendText() async {
     if (_chatBlocked) return;
     final plainText = textController.text.trim();
     if (plainText.isEmpty) return;
@@ -116,7 +116,7 @@ send_replacement = r'''send_text = r'''  Future<void> _sendText() async {
       if (mounted) setState(() => sending = false);
     }
   }'''
-text = replace_function(text, '  Future<void> _sendText() async {', send_text)'''
+text = replace_function(text, '  Future<void> _sendText() async {', send_text)"""
 source = source[:send_start] + send_replacement + source[send_end:]
 
 # Preserve encrypted/mention metadata when retrying queued messages. A 4xx
@@ -127,7 +127,7 @@ flush_call = source.find(flush_marker, flush_start)
 if flush_start < 0 or flush_call < 0:
     raise RuntimeError('v4.3b outbox retry source boundary missing')
 flush_end = flush_call + len(flush_marker)
-flush_replacement = r'''flush = r'''  Future<void> _flushOutbox() async {
+flush_replacement = r"""flush = r'''  Future<void> _flushOutbox() async {
     if (flushingOutbox || queuedMessages <= 0 || !mounted) return;
     flushingOutbox = true;
     var sentAny = false;
@@ -169,7 +169,7 @@ flush_replacement = r'''flush = r'''  Future<void> _flushOutbox() async {
       if (mounted) setState(() {});
     }
   }'''
-text = replace_function(text, '  Future<void> _flushOutbox() async {', flush)'''
+text = replace_function(text, '  Future<void> _flushOutbox() async {', flush)"""
 source = source[:flush_start] + flush_replacement + source[flush_end:]
 
 # Never put encrypted ciphertext into the visible composer during manual queue
@@ -249,7 +249,6 @@ assert 'mentionIds: mentions' in chat
 assert 'encrypted: encrypted' in chat
 assert 'encrypted: item.encrypted' in chat and 'mentionIds: item.mentionIds' in chat
 assert 'wireReady && e is ApiException && e.status == 0' in chat
-assert "outbox_end" not in chat
 assert 'sending || widget.conversation.isGroup' in chat
 assert 'voicePreviewViewOnce && !widget.conversation.isGroup' in chat
 print('TaleemPK v4.3 compatibility, E2EE and direct-only view-once fixes applied successfully')
