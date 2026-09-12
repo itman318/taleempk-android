@@ -64,6 +64,9 @@ jobs:
       - name: Apply corrected v3.9 identity, speed and verification polish
         working-directory: .
         run: python3 tools/v39b_runner.py
+      - name: Apply v4.0 audio, login and performance hardening
+        working-directory: .
+        run: python3 tools/v40_audio_login_performance.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -98,13 +101,15 @@ jobs:
           mobile = Path('backend/api/mobile.php').read_text()
           social = Path('backend/api/mobile_social_v31.php').read_text()
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
+          native_bridge = Path('flutter/lib/core/native_bridge.dart').read_text()
+          auth = Path('flutter/lib/screens/auth_screen.dart').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
           assert '.get(source, headers: authHeaders)' in api
           assert 'await NativeBridge.deviceName()' in api
           assert "'User-Agent': 'TaleemPKAndroid/3.9'" in api
           assert api.count("'client': 'TaleemPK Android app'") >= 2
           assert api.count("'tz_offset':") >= 2 and api.count("'tz_name':") >= 2
-          assert 'pollTicks % 8' in chat
+          assert 'pollTicks % 12' in chat
           assert 'Duration(milliseconds: immediate ? 60 : delayMs)' in chat
           assert 'Future<void> _syncAfterSend() async' in chat
           assert chat.count('await _syncAfterSend();') >= 4
@@ -125,6 +130,10 @@ jobs:
           assert 'Widget _recordingBar()' in chat
           assert 'Future<void> _sendText()' in chat
           assert 'bool get _chatBlocked' in chat
+          assert 'createPositionStream(' in chat
+          assert 'progressTimer = Timer.periodic' in chat
+          assert 'livePosition.inMilliseconds > streamedPosition.inMilliseconds' in chat
+          assert 'fresh.length < 60' in chat and 'older.length < 60' in chat
           assert 'rootNavigator: true' in conv
           assert '_verificationColor(ProfileData p)' in profile
           assert "tooltip: 'Sign out'" in profile
@@ -136,6 +145,11 @@ jobs:
           assert 'The website API is older than this app.' in security
           assert 'Sign out of this device' in security
           assert 'network/IP area' in security
+          assert 'Secure sign-in storage timed out on this phone.' in api
+          assert 'Future<BootstrapData> _bootstrapAfterAuth() async' in state
+          assert 'Sign-in could not be completed on this phone.' in state
+          assert 'Sign-in could not finish on this phone.' in auth
+          assert ".timeout(const Duration(seconds: 2))" in native_bridge
           assert 'await api.clearToken();' in state
           assert 'Verify your TaleemPK profile' in verification
           assert 'CNIC / B-Form / Passport number *' in verification
@@ -143,6 +157,7 @@ jobs:
           assert '_VerificationStep' in verification and 'AB1234567' in verification
           assert 'Enter your teaching role or designation.' in verification
           assert 'PageRoute<T> premiumRoute<T>' in common
+          assert 'transitionDuration: const Duration(milliseconds: 135)' in common
           assert 'Something needs attention' in common
           assert 'Your learning space is ready' in home
           assert "'Practice', 'Quick quiz'" in home
@@ -162,20 +177,20 @@ jobs:
           assert 'verification_status' in social and 'verification_apply' in social
           assert 'portrait_story' in native
           assert 'deviceName()' in native
-          assert 'version: 3.9.0+390' in pubspec
-          print('v3.9 deep regression audit passed')
+          assert 'version: 4.0.0+400' in pubspec
+          print('v4.0 deep regression audit passed')
           PY
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v3.9.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.0.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v3.9.0-APKs
+          name: TaleemPK-v4.0.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v3.9.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.0.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
