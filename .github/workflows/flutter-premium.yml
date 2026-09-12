@@ -78,7 +78,7 @@ jobs:
         run: python3 tools/v42b_runner.py
       - name: Apply v4.3 chat stability and draft recovery
         working-directory: .
-        run: python3 tools/v43_chat_stability.py
+        run: python3 tools/v43b_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
