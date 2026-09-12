@@ -56,12 +56,9 @@ w(path, text)
 '''
 source = source[:start] + replacement + source[end:]
 
-# Replace the original compact assertion block with explicit diagnostics below.
-# Match only the stable prefix because comments may have minor punctuation edits.
-validation_start = source.find('# Final generated-source checks')
-if validation_start < 0:
-    # Fallback to the first final readback variable used by the original block.
-    validation_start = source.find("chat = r('flutter/lib/screens/chat_screen.dart')")
+# Replace the original compact assertion/readback block with explicit
+# diagnostics below. The original block starts at its first final readback.
+validation_start = source.find("api = r('flutter/lib/core/api_client.dart')")
 if validation_start < 0:
     raise RuntimeError('v3.9b final validation block missing')
 source = source[:validation_start] + "print('TaleemPK v3.9 transform generation finished')\n"
