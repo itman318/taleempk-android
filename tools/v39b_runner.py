@@ -57,11 +57,13 @@ w(path, text)
 source = source[:start] + replacement + source[end:]
 
 # Replace the original compact assertion block with explicit diagnostics below.
-# This makes CI failures identify the exact generated feature that is missing.
-validation_marker = '# Final generated-source checks.\n'
-validation_start = source.find(validation_marker)
+# Match only the stable prefix because comments may have minor punctuation edits.
+validation_start = source.find('# Final generated-source checks')
 if validation_start < 0:
-    raise RuntimeError('v3.9b final validation marker missing')
+    # Fallback to the first final readback variable used by the original block.
+    validation_start = source.find("chat = r('flutter/lib/screens/chat_screen.dart')")
+if validation_start < 0:
+    raise RuntimeError('v3.9b final validation block missing')
 source = source[:validation_start] + "print('TaleemPK v3.9 transform generation finished')\n"
 
 exec(
