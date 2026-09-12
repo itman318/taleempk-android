@@ -85,7 +85,7 @@ jobs:
         run: python3 tools/v43b_runner.py
       - name: Apply v4.4 realtime WebSocket and FCM push
         working-directory: .
-        run: python3 tools/v44_realtime_push.py
+        run: python3 tools/v44c_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
