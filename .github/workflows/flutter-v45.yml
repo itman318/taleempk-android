@@ -80,7 +80,7 @@ jobs:
         run: python3 tools/v44c_runner.py
       - name: Apply v4.5 profile, connections and attachment polish
         working-directory: .
-        run: python3 tools/v45b_runner.py
+        run: python3 tools/v45c_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -127,6 +127,7 @@ jobs:
           assert 'class _ProfileConnectionsScreen extends StatefulWidget' in profile
           assert "_openConnections(p, 'followers')" in profile
           assert "_openConnections(p, 'following')" in profile
+          assert 'Color _verificationColor(ProfileData p)' in profile
           assert 'profileConnections(' in social_api
           assert "value: _bool(s['show_connections'], true)" in security
           assert 'mobile_profile_privacy' in mobile
@@ -135,6 +136,7 @@ jobs:
           assert "'View once'" in chat
           assert "'Photos & images'" in chat
           assert "'Document or file'" in chat
+          assert "title: 'Create poll'" in chat and '_createPoll();' in chat
           assert 'bottomSheetTheme: const BottomSheetThemeData(' in theme
           assert 'version: 4.5.0+450' in pubspec
           print('v4.5 deep regression audit passed')
