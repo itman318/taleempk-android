@@ -1,0 +1,44 @@
+name: TaleemPK Live API Probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [flutter-premium-v2]
+    paths:
+      - '.github/workflows/live-api-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe health endpoint
+        shell: bash
+        run: |
+          set -o pipefail
+          echo '=== HEALTH ==='
+          curl -sS -D /tmp/health.headers -o /tmp/health.body --max-time 20 'https://taleempk.online/api/mobile.php?action=health' || true
+          cat /tmp/health.headers || true
+          echo '--- body ---'
+          head -c 3000 /tmp/health.body || true
+          echo
+      - name: Probe login envelope with dummy account
+        shell: bash
+        run: |
+          set -o pipefail
+          echo '=== LOGIN PROBE ==='
+          curl -sS -D /tmp/login.headers -o /tmp/login.body --max-time 20 \
+            -H 'Accept: application/json' \
+            -H 'X-Requested-With: XMLHttpRequest' \
+            --data-urlencode 'action=login' \
+            --data-urlencode 'identifier=__taleempk_probe__' \
+            --data-urlencode 'password=not-a-real-password-92741' \
+            --data-urlencode 'device=GitHub API probe · Android' \
+            'https://taleempk.online/api/mobile.php' || true
+          cat /tmp/login.headers || true
+          echo '--- body ---'
+          head -c 3000 /tmp/login.body || true
+          echo
