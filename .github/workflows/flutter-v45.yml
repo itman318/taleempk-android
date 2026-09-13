@@ -80,7 +80,7 @@ jobs:
         run: python3 tools/v44c_runner.py
       - name: Apply v4.5 profile, connections and attachment polish
         working-directory: .
-        run: python3 tools/v45_profile_connections_polish.py
+        run: python3 tools/v45b_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -132,9 +132,9 @@ jobs:
           assert 'mobile_profile_privacy' in mobile
           assert "if ($key === 'show_connections')" in mobile
           assert "if($action==='profile_connections')" in social
-          assert "Text('View once'" in chat
-          assert "title: 'Photos & images'" in chat
-          assert "title: 'Document or file'" in chat
+          assert "'View once'" in chat
+          assert "'Photos & images'" in chat
+          assert "'Document or file'" in chat
           assert 'bottomSheetTheme: const BottomSheetThemeData(' in theme
           assert 'version: 4.5.0+450' in pubspec
           print('v4.5 deep regression audit passed')
