@@ -40,7 +40,7 @@ jobs:
           python3 tools/v42b_runner.py
           python3 tools/v43b_runner.py
           python3 tools/v44c_runner.py
-          python3 tools/v45b_runner.py
+          python3 tools/v45c_runner.py
       - name: Verify PHP syntax
         run: |
           php -l backend/api/mobile.php
