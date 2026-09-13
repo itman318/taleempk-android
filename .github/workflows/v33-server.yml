@@ -1,0 +1,66 @@
+name: Package TaleemPK v3.7 Server API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [flutter-premium-v2]
+    paths:
+      - 'tools/v31_finalize.py'
+      - 'tools/run_v32.py'
+      - 'tools/v32_upgrade.py'
+      - 'tools/v33_final.py'
+      - 'tools/v34_chat_runtime.py'
+      - 'tools/v35b_profile_media_polish.py'
+      - 'tools/v35c_cleanup.py'
+      - 'tools/v36_ui_navigation_polish.py'
+      - 'tools/v36b_splash_fix.py'
+      - 'tools/v37_chat_identity_polish.py'
+      - 'tools/v37b_chat_identity_polish.py'
+      - '.github/workflows/v33-server.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate v3.7 backend
+        run: |
+          python3 tools/v31_finalize.py
+          python3 tools/run_v32.py
+          python3 tools/v33_final.py
+          python3 tools/v34_chat_runtime.py
+          python3 tools/v35b_profile_media_polish.py
+          python3 tools/v35c_cleanup.py
+          python3 tools/v36_ui_navigation_polish.py
+          python3 tools/v36b_splash_fix.py
+          python3 tools/v37b_chat_identity_polish.py
+      - name: PHP syntax audit
+        run: |
+          php -l backend/api/mobile.php
+          php -l backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_e2ee_v32.php
+      - name: Sign-in identity regression audit
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          mobile = Path('backend/api/mobile.php').read_text()
+          assert 'TaleemPKApp/3.7' in mobile
+          assert 'HTTP_USER_AGENT' in mobile
+          assert '$safeDevice' in mobile
+          print('v3.7 server identity audit passed')
+          PY
+      - name: Prepare deploy package
+        run: |
+          mkdir -p dist/api
+          cp backend/api/mobile.php dist/api/mobile.php
+          cp backend/api/mobile_social_v31.php dist/api/mobile_social_v31.php
+          cp backend/api/mobile_e2ee_v32.php dist/api/mobile_e2ee_v32.php
+          printf '%s\n' 'TaleemPK v3.7 server API' 'Upload the api folder to your TaleemPK website root, replacing matching files.' 'This update improves Android sign-in device/browser identification used by security alerts.' > dist/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v3.7.0-Server-API
+          path: dist
+          if-no-files-found: error

@@ -1,0 +1,204 @@
+name: Build TaleemPK Flutter APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'flutter/**'
+      - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
+      - 'tools/**'
+      - '.github/workflows/flutter-premium.yml'
+  push:
+    branches: [main, flutter-premium-v2]
+    paths:
+      - 'flutter/**'
+      - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
+      - 'tools/**'
+      - '.github/workflows/flutter-premium.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v4
+      - name: Finalize v3.1 source
+        working-directory: .
+        run: python3 tools/v31_finalize.py
+      - name: Apply v3.2 messaging and E2EE upgrade
+        working-directory: .
+        run: python3 tools/run_v32.py
+      - name: Apply v3.3 media, device and performance hotfix
+        working-directory: .
+        run: python3 tools/v33_final.py
+      - name: Apply v3.4 adaptive chat runtime
+        working-directory: .
+        run: python3 tools/v34_chat_runtime.py
+      - name: Apply v3.5 profile and media polish
+        working-directory: .
+        run: python3 tools/v35b_profile_media_polish.py
+      - name: Clean legacy v3.5 analyzer code
+        working-directory: .
+        run: python3 tools/v35c_cleanup.py
+      - name: Apply v3.6 UI and navigation polish
+        working-directory: .
+        run: python3 tools/v36_ui_navigation_polish.py
+      - name: Fix v3.6 splash class boundary
+        working-directory: .
+        run: python3 tools/v36b_splash_fix.py
+      - name: Apply v3.7 chat and identity polish
+        working-directory: .
+        run: python3 tools/v37b_chat_identity_polish.py
+      - name: Clean v3.7 mention analyzer warnings
+        working-directory: .
+        run: python3 tools/v37c_analyzer_cleanup.py
+      - name: Apply corrected v3.8 messenger, security and verification polish
+        working-directory: .
+        run: python3 tools/v38b_boundary_fix.py
+      - name: Apply corrected v3.9 identity, speed and verification polish
+        working-directory: .
+        run: python3 tools/v39b_runner.py
+      - name: Apply v4.0 audio, login and performance hardening
+        working-directory: .
+        run: python3 tools/v40_runner.py
+      - name: Clean legacy v4 analyzer code
+        working-directory: .
+        run: python3 tools/v40_cleanup.py
+      - name: Apply v4.1 reply, media and view-once fixes
+        working-directory: .
+        run: python3 tools/v41b_runner.py
+      - name: Apply v4.2 login, privacy and view-once hardening
+        working-directory: .
+        run: python3 tools/v42b_runner.py
+      - name: Apply v4.3 chat stability and draft recovery
+        working-directory: .
+        run: python3 tools/v43b_runner.py
+      - name: Apply v4.4 realtime WebSocket and FCM push
+        working-directory: .
+        run: python3 tools/v44c_runner.py
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - name: PHP syntax check mobile APIs
+        working-directory: .
+        run: |
+          php -l flutter/backend/api/mobile.php
+          php -l backend/api/mobile.php
+          php -l flutter/backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_e2ee_v32.php
+          php -l flutter/backend/api/mobile_realtime_push_v44.php
+          php -l backend/api/mobile_realtime_push_v44.php
+      - name: Realtime gateway syntax check
+        working-directory: .
+        run: node --check realtime/server.mjs
+      - name: Deep regression audit
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          api = Path('flutter/lib/core/api_client.dart').read_text()
+          state = Path('flutter/lib/core/app_state.dart').read_text()
+          chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
+          calls = Path('flutter/lib/screens/call_screen.dart').read_text()
+          profile = Path('flutter/lib/screens/profile_screen.dart').read_text()
+          verification = Path('flutter/lib/screens/verification_screen.dart').read_text()
+          common = Path('flutter/lib/widgets/common.dart').read_text()
+          mobile = Path('backend/api/mobile.php').read_text()
+          push_module = Path('backend/api/mobile_realtime_push_v44.php').read_text()
+          realtime = Path('flutter/lib/core/realtime_service.dart').read_text()
+          push = Path('flutter/lib/core/push_service.dart').read_text()
+          native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
+          manifest = Path('flutter/android/app/src/main/AndroidManifest.xml').read_text()
+          native_bridge = Path('flutter/lib/core/native_bridge.dart').read_text()
+          auth = Path('flutter/lib/screens/auth_screen.dart').read_text()
+          pubspec = Path('flutter/pubspec.yaml').read_text()
+          assert '.get(source, headers: authHeaders)' in api
+          assert 'await NativeBridge.deviceName()' in api
+          assert '_attachmentCache' not in api
+          assert 'pollTicks % 12' in chat
+          assert 'Future<void> _syncAfterSend() async' in chat
+          assert chat.count('await _syncAfterSend();') >= 4
+          assert 'recordingPaused = true;' in chat and 'await recorder.resume();' in chat
+          assert 'createPositionStream(' in chat and 'progressTimer = Timer.periodic' in chat
+          assert 'livePosition.inMilliseconds > streamedPosition.inMilliseconds' in chat
+          assert "label: 'Pen'" in chat and "label: 'Highlight'" in chat and "label: 'Hide'" in chat
+          assert "'story': '9:16'" in chat and 'portrait_story' in native
+          assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
+          assert '_processOutgoingPhoto' not in chat
+          assert '_compatTokenKey' in api and '_authRequestWithRetry' in api
+          assert 'SharedPreferences.getInstance()' in api
+          assert '_recoverBootstrapInBackground' in state and 'stats: const Stats()' in state
+          assert 'Sign-in could not finish on this phone.' in state
+          assert 'Sign-in could not finish on this phone.' in auth
+          assert ".timeout(const Duration(seconds: 2))" in native_bridge
+          assert 'maximumSize: const Size(double.infinity, 44)' in profile
+          assert 'Verify your TaleemPK profile' in verification
+          assert 'PageRoute<T> premiumRoute<T>' in common
+          assert chat.count('Future<void> _jumpToMessage(') == 1
+          assert 'onTap: () => _jumpToMessage(r.id)' in chat
+          assert 'Icons.arrow_upward_rounded' in chat
+          assert 'SecureChatImage(' in chat and 'View once photo' in chat
+          assert 'send directly in chat' in chat
+          assert 'bool viewOnce = false' in chat
+          assert '_prepareViewOnceFile' in chat and 'once__' in chat
+          assert 'voicePreviewViewOnce' in chat and 'Send as view once' in chat
+          assert "label: Text('Once')" in chat
+          assert 'setSecureScreen(bool enabled)' in native_bridge
+          assert 'WindowManager.LayoutParams.FLAG_SECURE' in native
+          assert 'await NativeBridge.setSecureScreen(true)' in chat
+          assert '_setSecureViewOnce(true)' in chat and '_setSecureViewOnce(false)' in chat
+          assert 'markViewOnceConsumed' in api
+          assert "if ($action === 'mark_view_once')" in mobile
+          assert "UPDATE messages SET status='deleted'" in mobile
+          assert '@unlink($file)' in mobile
+          assert "String get _draftKey => 'chat_draft_${widget.conversation.id}'" in chat
+          assert 'Timer? draftDebounce;' in chat and 'Duration(milliseconds: 350)' in chat
+          assert 'bool composerHasText = false;' in chat
+          assert 'reply = currentReply;' in chat and '_reviewQueuedMessage' in chat
+          assert 'enabled: !widget.conversation.isGroup' in chat
+          assert 'View once is available in direct chats only.' in chat
+          assert 'await remoteRenderer.initialize();\n    if (!mounted) return;' in calls
+          assert 'final api = AppScope.of(context).api;\n    try {\n      final state = await api.callState(' in calls
+          assert 'WebSocketChannel.connect' in realtime
+          assert 'RealtimeService.instance.subscribe(widget.conversation.id)' in chat
+          assert 'RealtimeService.instance.publish' in api
+          assert 'FirebaseMessaging.instance' in push
+          assert 'PushService.instance.bind' in state
+          assert "'action': 'register_push'" in api
+          assert "if ($action === 'push_chat')" in push_module
+          assert 'https://fcm.googleapis.com/v1/projects/' in push_module
+          assert 'mobile_realtime_push_v44.php' in mobile
+          assert 'POST_NOTIFICATIONS' in manifest
+          assert 'version: 4.4.0+440' in pubspec
+          print('v4.4 deep regression audit passed')
+          PY
+      - name: Build universal APK
+        run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
+      - name: Preserve universal APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.4.0-Universal.apk
+      - name: Build smaller per-ABI APKs
+        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v4.4.0-APKs
+          path: |
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.4.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
+          if-no-files-found: error

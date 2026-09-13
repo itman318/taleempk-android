@@ -1,0 +1,158 @@
+name: Build TaleemPK Flutter v4.5 APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [flutter-premium-v2]
+    paths:
+      - 'flutter/**'
+      - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
+      - 'tools/**'
+      - '.github/workflows/flutter-v45.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v4
+      - name: Finalize v3.1 source
+        working-directory: .
+        run: python3 tools/v31_finalize.py
+      - name: Apply v3.2 messaging and E2EE upgrade
+        working-directory: .
+        run: python3 tools/run_v32.py
+      - name: Apply v3.3 media, device and performance hotfix
+        working-directory: .
+        run: python3 tools/v33_final.py
+      - name: Apply v3.4 adaptive chat runtime
+        working-directory: .
+        run: python3 tools/v34_chat_runtime.py
+      - name: Apply v3.5 profile and media polish
+        working-directory: .
+        run: python3 tools/v35b_profile_media_polish.py
+      - name: Clean legacy v3.5 analyzer code
+        working-directory: .
+        run: python3 tools/v35c_cleanup.py
+      - name: Apply v3.6 UI and navigation polish
+        working-directory: .
+        run: python3 tools/v36_ui_navigation_polish.py
+      - name: Fix v3.6 splash class boundary
+        working-directory: .
+        run: python3 tools/v36b_splash_fix.py
+      - name: Apply v3.7 chat and identity polish
+        working-directory: .
+        run: python3 tools/v37b_chat_identity_polish.py
+      - name: Clean v3.7 mention analyzer warnings
+        working-directory: .
+        run: python3 tools/v37c_analyzer_cleanup.py
+      - name: Apply corrected v3.8 messenger, security and verification polish
+        working-directory: .
+        run: python3 tools/v38b_boundary_fix.py
+      - name: Apply corrected v3.9 identity, speed and verification polish
+        working-directory: .
+        run: python3 tools/v39b_runner.py
+      - name: Apply v4.0 audio, login and performance hardening
+        working-directory: .
+        run: python3 tools/v40_runner.py
+      - name: Clean legacy v4 analyzer code
+        working-directory: .
+        run: python3 tools/v40_cleanup.py
+      - name: Apply v4.1 reply, media and view-once fixes
+        working-directory: .
+        run: python3 tools/v41b_runner.py
+      - name: Apply v4.2 login, privacy and view-once hardening
+        working-directory: .
+        run: python3 tools/v42b_runner.py
+      - name: Apply v4.3 chat stability and draft recovery
+        working-directory: .
+        run: python3 tools/v43b_runner.py
+      - name: Apply v4.4 realtime WebSocket and FCM push
+        working-directory: .
+        run: python3 tools/v44c_runner.py
+      - name: Apply v4.5 profile, connections and attachment polish
+        working-directory: .
+        run: python3 tools/v45c_runner.py
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+      - name: PHP syntax check mobile APIs
+        working-directory: .
+        run: |
+          php -l flutter/backend/api/mobile.php
+          php -l backend/api/mobile.php
+          php -l flutter/backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_e2ee_v32.php
+          php -l flutter/backend/api/mobile_realtime_push_v44.php
+          php -l backend/api/mobile_realtime_push_v44.php
+      - name: Realtime gateway syntax check
+        working-directory: .
+        run: node --check realtime/server.mjs
+      - name: Deep v4.5 regression audit
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          api = Path('flutter/lib/core/api_client.dart').read_text()
+          social_api = Path('flutter/lib/core/social_api.dart').read_text()
+          chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
+          profile = Path('flutter/lib/screens/profile_screen.dart').read_text()
+          security = Path('flutter/lib/screens/security_screen.dart').read_text()
+          mobile = Path('backend/api/mobile.php').read_text()
+          social = Path('backend/api/mobile_social_v31.php').read_text()
+          realtime = Path('flutter/lib/core/realtime_service.dart').read_text()
+          push = Path('flutter/lib/core/push_service.dart').read_text()
+          native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
+          pubspec = Path('flutter/pubspec.yaml').read_text()
+          theme = Path('flutter/lib/core/theme.dart').read_text()
+          assert '_compatTokenKey' in api and '_authRequestWithRetry' in api
+          assert 'RealtimeService.instance.publish' in api
+          assert 'WebSocketChannel.connect' in realtime
+          assert 'FirebaseMessaging.instance' in push
+          assert 'WindowManager.LayoutParams.FLAG_SECURE' in native
+          assert '_prepareViewOnceFile' in chat and 'voicePreviewViewOnce' in chat
+          assert 'class _ProfileConnectionsScreen extends StatefulWidget' in profile
+          assert "_openConnections(p, 'followers')" in profile
+          assert "_openConnections(p, 'following')" in profile
+          assert 'Color _verificationColor(ProfileData p)' in profile
+          assert 'profileConnections(' in social_api
+          assert "value: _bool(s['show_connections'], true)" in security
+          assert 'mobile_profile_privacy' in mobile
+          assert "if ($key === 'show_connections')" in mobile
+          assert "if($action==='profile_connections')" in social
+          assert "'View once'" in chat
+          assert "'Photos & images'" in chat
+          assert "'Document or file'" in chat
+          assert "title: 'Create poll'" in chat and '_createPoll();' in chat
+          assert 'bottomSheetTheme: const BottomSheetThemeData(' in theme
+          assert 'version: 4.5.0+450' in pubspec
+          print('v4.5 deep regression audit passed')
+          PY
+      - name: Build universal APK
+        run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
+      - name: Preserve universal APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.5.0-Universal.apk
+      - name: Build smaller per-ABI APKs
+        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v4.5.0-APKs
+          path: |
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.5.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
+          if-no-files-found: error

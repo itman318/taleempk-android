@@ -1,0 +1,85 @@
+name: Package TaleemPK v4.5 Server Update
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [flutter-premium-v2]
+    paths:
+      - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
+      - 'tools/**'
+      - '.github/workflows/v45-server-package.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate final v4.5 server sources
+        run: |
+          python3 tools/v31_finalize.py
+          python3 tools/run_v32.py
+          python3 tools/v33_final.py
+          python3 tools/v34_chat_runtime.py
+          python3 tools/v35b_profile_media_polish.py
+          python3 tools/v35c_cleanup.py
+          python3 tools/v36_ui_navigation_polish.py
+          python3 tools/v36b_splash_fix.py
+          python3 tools/v37b_chat_identity_polish.py
+          python3 tools/v37c_analyzer_cleanup.py
+          python3 tools/v38b_boundary_fix.py
+          python3 tools/v39b_runner.py
+          python3 tools/v40_runner.py
+          python3 tools/v40_cleanup.py
+          python3 tools/v41b_runner.py
+          python3 tools/v42b_runner.py
+          python3 tools/v43b_runner.py
+          python3 tools/v44c_runner.py
+          python3 tools/v45c_runner.py
+      - name: Verify PHP syntax
+        run: |
+          php -l backend/api/mobile.php
+          php -l backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_e2ee_v32.php
+          php -l backend/api/mobile_realtime_push_v44.php
+      - name: Verify realtime gateway syntax
+        run: node --check realtime/server.mjs
+      - name: Verify v4.5 privacy and connections actions
+        run: |
+          grep -q "show_connections" backend/api/mobile.php
+          grep -q "mobile_profile_privacy" backend/api/mobile.php
+          grep -q "profile_connections" backend/api/mobile_social_v31.php
+          grep -q "mobile_profile_privacy" backend/api/mobile_social_v31.php
+          grep -q "mobile_realtime_push_v44.php" backend/api/mobile.php
+      - name: Prepare server update
+        run: |
+          mkdir -p TaleemPK-v4.5.0-Server-Update/api
+          mkdir -p TaleemPK-v4.5.0-Server-Update/realtime
+          cp backend/api/mobile.php TaleemPK-v4.5.0-Server-Update/api/mobile.php
+          cp backend/api/mobile_social_v31.php TaleemPK-v4.5.0-Server-Update/api/mobile_social_v31.php
+          cp backend/api/mobile_e2ee_v32.php TaleemPK-v4.5.0-Server-Update/api/mobile_e2ee_v32.php
+          cp backend/api/mobile_realtime_push_v44.php TaleemPK-v4.5.0-Server-Update/api/mobile_realtime_push_v44.php
+          cp realtime/package.json TaleemPK-v4.5.0-Server-Update/realtime/package.json
+          cp realtime/server.mjs TaleemPK-v4.5.0-Server-Update/realtime/server.mjs
+          cp realtime/README.md TaleemPK-v4.5.0-Server-Update/realtime/README.md
+          cp render.yaml TaleemPK-v4.5.0-Server-Update/render.yaml
+          cat > TaleemPK-v4.5.0-Server-Update/README.txt <<'EOF'
+          TaleemPK v4.5 server update
+
+          Upload all files from api/ into your website public_html/api/ and overwrite the matching files.
+          This update adds privacy-aware Followers/Following lists and keeps the v4.4 realtime/push API.
+
+          The mobile_profile_privacy table is created automatically when the new connection visibility setting is first used.
+
+          realtime/ and render.yaml are the optional v4.4 WebSocket gateway files. Existing v4.4 realtime deployments do not need to be recreated if already working.
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v4.5.0-Server-Update
+          path: TaleemPK-v4.5.0-Server-Update/
+          if-no-files-found: error

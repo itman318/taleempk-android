@@ -1,0 +1,47 @@
+name: Package TaleemPK v3.2.1 Server API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [flutter-premium-v2]
+    paths:
+      - '.github/workflows/v32-server.yml'
+      - 'tools/**'
+      - 'backend/api/**'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Finalize v3.1 source
+        run: python3 tools/v31_finalize.py
+      - name: Apply v3.2.1 messaging, media and device polish
+        run: python3 tools/run_v32.py
+      - name: PHP syntax audit
+        run: |
+          php -l backend/api/mobile.php
+          php -l backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_e2ee_v32.php
+      - name: Prepare deployment bundle
+        run: |
+          mkdir -p server-out/api
+          cp backend/api/mobile.php server-out/api/mobile.php
+          cp backend/api/mobile_social_v31.php server-out/api/mobile_social_v31.php
+          cp backend/api/mobile_e2ee_v32.php server-out/api/mobile_e2ee_v32.php
+          cat > server-out/DEPLOY-v3.2.1.txt <<'EOF'
+          TaleemPK v3.2.1 native server API
+
+          Upload the three files inside api/ to your TaleemPK website /api directory.
+          This release refreshes real Android device labels and adds attachment
+          download compatibility while retaining v3.2 E2EE/social API support.
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v3.2.1-Server-API
+          path: server-out/**
+          if-no-files-found: error
