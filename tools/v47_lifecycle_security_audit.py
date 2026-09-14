@@ -260,6 +260,241 @@ text = text.replace(old, new, 1)
 write(path, text)
 
 
+# Close the remaining analyzer-reported lifecycle and flow-control paths.
+path = 'flutter/lib/screens/chat_screen.dart'
+text = read(path)
+text = text.replace(
+"""        if (velocity.abs() > 280)
+          setState(
+            () => reply = ReplyPreview(
+              id: m.id,
+              sender: m.sender,
+              text: m.content.isNotEmpty
+                  ? m.content
+                  : (m.voiceSeconds > 0
+                        ? 'Voice message'
+                        : m.attachmentName ?? 'Attachment'),
+            ),
+          );
+""",
+"""        if (velocity.abs() > 280) {
+          setState(
+            () => reply = ReplyPreview(
+              id: m.id,
+              sender: m.sender,
+              text: m.content.isNotEmpty
+                  ? m.content
+                  : (m.voiceSeconds > 0
+                        ? 'Voice message'
+                        : m.attachmentName ?? 'Attachment'),
+            ),
+          );
+        }
+""",
+)
+text = text.replace(
+"""    var selected = 0;
+    final send = await showModalBottomSheet<bool>(
+""",
+"""    if (!mounted) return;
+    var selected = 0;
+    final send = await showModalBottomSheet<bool>(
+""",
+    1,
+)
+text = text.replace(
+"""    if (!await source.exists()) {
+      showMessage(context, 'This photo is no longer available.');
+""",
+"""    if (!await source.exists()) {
+      if (mounted) {
+        showMessage(context, 'This photo is no longer available.');
+      }
+""",
+    1,
+)
+text = text.replace(
+"""    final edited = await showModalBottomSheet<String?>(
+      context: context,
+""",
+"""    if (!mounted) return null;
+    final edited = await showModalBottomSheet<String?>(
+      context: context,
+""",
+    1,
+)
+text = text.replace(
+"""    if (!await recorder.hasPermission()) {
+      if (mounted)
+        showMessage(
+          context,
+          'Microphone permission is needed for voice notes.',
+        );
+""",
+"""    if (!await recorder.hasPermission()) {
+      if (mounted) {
+        showMessage(
+          context,
+          'Microphone permission is needed for voice notes.',
+        );
+      }
+""",
+    1,
+)
+text = text.replace(
+"""    await recorder.cancel();
+    if (mounted)
+      setState(() {
+        recording = false;
+        recordingPaused = false;
+        recordSeconds = 0;
+        voiceLevels.clear();
+      });
+""",
+"""    await recorder.cancel();
+    if (mounted) {
+      setState(() {
+        recording = false;
+        recordingPaused = false;
+        recordSeconds = 0;
+        voiceLevels.clear();
+      });
+    }
+""",
+    1,
+)
+text = text.replace(
+"""                          if (sheet.mounted) Navigator.pop(sheet);
+                          if (mounted) Navigator.pop(context);
+""",
+"""                          if (sheet.mounted) Navigator.pop(sheet);
+                          if (mounted) Navigator.pop(this.context);
+""",
+    1,
+)
+text = text.replace(
+"""        title: value,
+      );
+      showMessage(context, 'Group renamed.');
+      return value;
+    } catch (e) {
+      showMessage(context, apiMessage(e));
+      return null;
+""",
+"""        title: value,
+      );
+      if (!mounted) return null;
+      showMessage(context, 'Group renamed.');
+      return value;
+    } catch (e) {
+      if (mounted) {
+        showMessage(context, apiMessage(e));
+      }
+      return null;
+""",
+    1,
+)
+text = text.replace(
+"""        userId: selected,
+      );
+      showMessage(context, 'Member added.');
+    } catch (e) {
+      showMessage(context, apiMessage(e));
+""",
+"""        userId: selected,
+      );
+      if (!mounted) return;
+      showMessage(context, 'Member added.');
+    } catch (e) {
+      if (mounted) {
+        showMessage(context, apiMessage(e));
+      }
+""",
+    1,
+)
+text = text.replace(
+"""      selectedIds.clear();
+      setState(() {});
+      showMessage(context,
+""",
+"""      if (!mounted) return;
+      selectedIds.clear();
+      setState(() {});
+      showMessage(context,
+""",
+    1,
+)
+text = text.replace(
+"""        for (final point in stroke.points.skip(1)) path.lineTo(point.dx, point.dy);
+""",
+"""        for (final point in stroke.points.skip(1)) {
+          path.lineTo(point.dx, point.dy);
+        }
+""",
+    1,
+)
+write(path, text)
+
+
+path = 'flutter/lib/screens/conversations_screen.dart'
+text = read(path)
+text = text.replace(
+"""    if (chat == null || !mounted) {
+      showMessage(context, 'That conversation is no longer available.');
+      return;
+    }
+""",
+"""    if (!mounted) return;
+    if (chat == null) {
+      showMessage(context, 'That conversation is no longer available.');
+      return;
+    }
+""",
+    1,
+)
+write(path, text)
+
+
+path = 'flutter/lib/screens/module_screen.dart'
+text = read(path)
+text = text.replace(
+"""      } catch (e) {
+        showMessage(context, apiMessage(e));
+      }
+""",
+"""      } catch (e) {
+        if (mounted) {
+          showMessage(context, apiMessage(e));
+        }
+      }
+""",
+    3,
+)
+write(path, text)
+
+
+path = 'flutter/lib/screens/verification_screen.dart'
+text = read(path)
+text = text.replace(
+"""                            if (sheet.mounted) {
+                              Navigator.pop(sheet);
+                              showMessage(context, message);
+                            }
+                            await _load();
+""",
+"""                            if (sheet.mounted) {
+                              Navigator.pop(sheet);
+                            }
+                            if (mounted) {
+                              showMessage(context, message);
+                            }
+                            await _load();
+""",
+    1,
+)
+write(path, text)
+
+
 path = 'flutter/pubspec.yaml'
 text = read(path)
 text = re.sub(r'^version:\s*[^\n]+', 'version: 4.7.0+470', text, count=1, flags=re.M)
