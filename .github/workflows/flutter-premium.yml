@@ -113,7 +113,8 @@ jobs:
           assert 'Future<void> _syncAfterSend() async' in chat
           assert 'voicePreviewViewOnce' in chat and '_prepareViewOnceFile' in chat
           assert "String get _draftKey => 'chat_draft_${widget.conversation.id}'" in chat
-          assert 'enabled: !widget.conversation.isGroup' in chat
+          assert 'sending || widget.conversation.isGroup' in chat
+          assert 'voicePreviewViewOnce && !widget.conversation.isGroup' in chat
           assert "title: 'Create poll'" in chat
           assert 'await remoteRenderer.initialize();\n    if (!mounted) return;' in calls
           assert 'WebSocketChannel.connect' in realtime
