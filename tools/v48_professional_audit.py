@@ -347,8 +347,8 @@ path = 'flutter/lib/screens/call_screen.dart'
 text = read(path)
 text = once(
     text,
-    '  bool muted = false, cameraOff = false, ending = false;',
-    '  bool muted = false, cameraOff = false, ending = false, pollBusy = false;',
+    '  bool muted = false, cameraOff = false, speakerOn = false, ending = false;',
+    '  bool muted = false, cameraOff = false, speakerOn = false, ending = false, pollBusy = false;',
     'call polling state',
 )
 start_pos, start_end = block_bounds(text, '  Future<void> _start() async {')
