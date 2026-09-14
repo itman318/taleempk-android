@@ -173,8 +173,10 @@ jobs:
             if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
           done
           exit 1
-      - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.8.0-Universal.apk
+      - name: Preserve universal APK outside Flutter build outputs
+        run: |
+          mkdir -p release-artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v4.8.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: |
           for attempt in 1 2 3; do
@@ -182,12 +184,17 @@ jobs:
             if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
           done
           exit 1
+      - name: Collect and verify all APKs
+        run: |
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-artifacts/
+          test -s release-artifacts/TaleemPK-v4.8.0-Universal.apk
+          test -s release-artifacts/app-arm64-v8a-release.apk
+          test -s release-artifacts/app-armeabi-v7a-release.apk
+          test -s release-artifacts/app-x86_64-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: TaleemPK-v4.8.0-APKs
-          path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.7.0-Universal.apk
-            flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-            flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-            flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
+          path: flutter/release-artifacts/*.apk
           if-no-files-found: error
