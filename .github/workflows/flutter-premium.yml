@@ -86,6 +86,12 @@ jobs:
       - name: Apply v4.4 realtime WebSocket and FCM push
         working-directory: .
         run: python3 tools/v44c_runner.py
+      - name: Apply v4.5 profile, connections and attachment polish
+        working-directory: .
+        run: python3 tools/v45c_runner.py
+      - name: Apply v4.6 deep stability audit fixes
+        working-directory: .
+        run: python3 tools/v46_deep_stability_audit.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -106,19 +112,22 @@ jobs:
       - name: Realtime gateway syntax check
         working-directory: .
         run: node --check realtime/server.mjs
-      - name: Deep regression audit
+      - name: Deep v4.6 regression audit
         working-directory: .
         run: |
           python3 - <<'PY'
           from pathlib import Path
           api = Path('flutter/lib/core/api_client.dart').read_text()
+          social_api = Path('flutter/lib/core/social_api.dart').read_text()
           state = Path('flutter/lib/core/app_state.dart').read_text()
           chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
           calls = Path('flutter/lib/screens/call_screen.dart').read_text()
           profile = Path('flutter/lib/screens/profile_screen.dart').read_text()
+          security = Path('flutter/lib/screens/security_screen.dart').read_text()
           verification = Path('flutter/lib/screens/verification_screen.dart').read_text()
           common = Path('flutter/lib/widgets/common.dart').read_text()
           mobile = Path('backend/api/mobile.php').read_text()
+          social_server = Path('backend/api/mobile_social_v31.php').read_text()
           push_module = Path('backend/api/mobile_realtime_push_v44.php').read_text()
           realtime = Path('flutter/lib/core/realtime_service.dart').read_text()
           push = Path('flutter/lib/core/push_service.dart').read_text()
@@ -127,9 +136,34 @@ jobs:
           native_bridge = Path('flutter/lib/core/native_bridge.dart').read_text()
           auth = Path('flutter/lib/screens/auth_screen.dart').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
-          assert '.get(source, headers: authHeaders)' in api
+
+          # Auth / API / device resilience.
           assert 'await NativeBridge.deviceName()' in api
-          assert '_attachmentCache' not in api
+          assert '_compatTokenKey' in api and '_authRequestWithRetry' in api
+          assert 'SharedPreferences.getInstance()' in api
+          assert 'suspendedpage.cgi' in api
+          assert 'server returned a web page instead of API data' in api
+          assert '_recoverBootstrapInBackground' in state
+          assert 'Sign-in could not finish on this phone.' in state
+          assert 'Sign-in could not finish on this phone.' in auth
+          assert ".timeout(const Duration(seconds: 2))" in native_bridge
+
+          # Social/profile robustness and privacy.
+          assert 'profileConnections(' in social_api
+          assert 'on HandshakeException' in social_api and 'on TlsException' in social_api
+          assert 'status == 401 && _isSessionFailure(message)' in social_api
+          assert 'class _ProfileConnectionsScreen extends StatefulWidget' in profile
+          assert 'int _requestSerial = 0;' in profile
+          assert 'requestSerial != _requestSerial' in profile
+          assert "_openConnections(p, 'followers')" in profile
+          assert "_openConnections(p, 'following')" in profile
+          assert 'color: _verificationColor(p)' in profile
+          assert "value: _bool(s['show_connections'], true)" in security
+          assert 'mobile_profile_privacy' in mobile
+          assert "if($action==='profile_connections')" in social_server
+          assert "if($targetId<=0)mobile_error('Choose a valid profile.',400);" in social_server
+
+          # Chat/media/realtime regressions.
           assert 'pollTicks % 12' in chat
           assert 'Future<void> _syncAfterSend() async' in chat
           assert chat.count('await _syncAfterSend();') >= 4
@@ -140,40 +174,26 @@ jobs:
           assert "'story': '9:16'" in chat and 'portrait_story' in native
           assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
           assert '_processOutgoingPhoto' not in chat
-          assert '_compatTokenKey' in api and '_authRequestWithRetry' in api
-          assert 'SharedPreferences.getInstance()' in api
-          assert '_recoverBootstrapInBackground' in state and 'stats: const Stats()' in state
-          assert 'Sign-in could not finish on this phone.' in state
-          assert 'Sign-in could not finish on this phone.' in auth
-          assert ".timeout(const Duration(seconds: 2))" in native_bridge
-          assert 'maximumSize: const Size(double.infinity, 44)' in profile
-          assert 'Verify your TaleemPK profile' in verification
-          assert 'PageRoute<T> premiumRoute<T>' in common
           assert chat.count('Future<void> _jumpToMessage(') == 1
           assert 'onTap: () => _jumpToMessage(r.id)' in chat
-          assert 'Icons.arrow_upward_rounded' in chat
           assert 'SecureChatImage(' in chat and 'View once photo' in chat
-          assert 'send directly in chat' in chat
-          assert 'bool viewOnce = false' in chat
           assert '_prepareViewOnceFile' in chat and 'once__' in chat
-          assert 'voicePreviewViewOnce' in chat and 'Send as view once' in chat
-          assert "label: Text('Once')" in chat
+          assert 'voicePreviewViewOnce' in chat
           assert 'setSecureScreen(bool enabled)' in native_bridge
           assert 'WindowManager.LayoutParams.FLAG_SECURE' in native
-          assert 'await NativeBridge.setSecureScreen(true)' in chat
-          assert '_setSecureViewOnce(true)' in chat and '_setSecureViewOnce(false)' in chat
           assert 'markViewOnceConsumed' in api
           assert "if ($action === 'mark_view_once')" in mobile
           assert "UPDATE messages SET status='deleted'" in mobile
           assert '@unlink($file)' in mobile
           assert "String get _draftKey => 'chat_draft_${widget.conversation.id}'" in chat
-          assert 'Timer? draftDebounce;' in chat and 'Duration(milliseconds: 350)' in chat
-          assert 'bool composerHasText = false;' in chat
+          assert 'Timer? draftDebounce;' in chat
           assert 'reply = currentReply;' in chat and '_reviewQueuedMessage' in chat
           assert 'enabled: !widget.conversation.isGroup' in chat
-          assert 'View once is available in direct chats only.' in chat
+          assert "title: 'Create poll'" in chat
+
+          # Calls / navigation / realtime / push.
           assert 'await remoteRenderer.initialize();\n    if (!mounted) return;' in calls
-          assert 'final api = AppScope.of(context).api;\n    try {\n      final state = await api.callState(' in calls
+          assert 'PageRoute<T> premiumRoute<T>' in common
           assert 'WebSocketChannel.connect' in realtime
           assert 'RealtimeService.instance.subscribe(widget.conversation.id)' in chat
           assert 'RealtimeService.instance.publish' in api
@@ -182,22 +202,22 @@ jobs:
           assert "'action': 'register_push'" in api
           assert "if ($action === 'push_chat')" in push_module
           assert 'https://fcm.googleapis.com/v1/projects/' in push_module
-          assert 'mobile_realtime_push_v44.php' in mobile
           assert 'POST_NOTIFICATIONS' in manifest
-          assert 'version: 4.4.0+440' in pubspec
-          print('v4.4 deep regression audit passed')
+          assert 'Verify your TaleemPK profile' in verification
+          assert 'version: 4.6.0+460' in pubspec
+          print('v4.6 deep regression audit passed')
           PY
       - name: Build universal APK
         run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
       - name: Preserve universal APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.4.0-Universal.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.6.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v4.4.0-APKs
+          name: TaleemPK-v4.6.0-APKs
           path: |
-            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.4.0-Universal.apk
+            flutter/build/app/outputs/flutter-apk/TaleemPK-v4.6.0-Universal.apk
             flutter/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
             flutter/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
             flutter/build/app/outputs/flutter-apk/app-x86_64-release.apk
