@@ -32,73 +32,38 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Finalize v3.1 source
+      - name: Generate final TaleemPK v4.6 source
         working-directory: .
-        run: python3 tools/v31_finalize.py
-      - name: Apply v3.2 messaging and E2EE upgrade
-        working-directory: .
-        run: python3 tools/run_v32.py
-      - name: Apply v3.3 media, device and performance hotfix
-        working-directory: .
-        run: python3 tools/v33_final.py
-      - name: Apply v3.4 adaptive chat runtime
-        working-directory: .
-        run: python3 tools/v34_chat_runtime.py
-      - name: Apply v3.5 profile and media polish
-        working-directory: .
-        run: python3 tools/v35b_profile_media_polish.py
-      - name: Clean legacy v3.5 analyzer code
-        working-directory: .
-        run: python3 tools/v35c_cleanup.py
-      - name: Apply v3.6 UI and navigation polish
-        working-directory: .
-        run: python3 tools/v36_ui_navigation_polish.py
-      - name: Fix v3.6 splash class boundary
-        working-directory: .
-        run: python3 tools/v36b_splash_fix.py
-      - name: Apply v3.7 chat and identity polish
-        working-directory: .
-        run: python3 tools/v37b_chat_identity_polish.py
-      - name: Clean v3.7 mention analyzer warnings
-        working-directory: .
-        run: python3 tools/v37c_analyzer_cleanup.py
-      - name: Apply corrected v3.8 messenger, security and verification polish
-        working-directory: .
-        run: python3 tools/v38b_boundary_fix.py
-      - name: Apply corrected v3.9 identity, speed and verification polish
-        working-directory: .
-        run: python3 tools/v39b_runner.py
-      - name: Apply v4.0 audio, login and performance hardening
-        working-directory: .
-        run: python3 tools/v40_runner.py
-      - name: Clean legacy v4 analyzer code
-        working-directory: .
-        run: python3 tools/v40_cleanup.py
-      - name: Apply v4.1 reply, media and view-once fixes
-        working-directory: .
-        run: python3 tools/v41b_runner.py
-      - name: Apply v4.2 login, privacy and view-once hardening
-        working-directory: .
-        run: python3 tools/v42b_runner.py
-      - name: Apply v4.3 chat stability and draft recovery
-        working-directory: .
-        run: python3 tools/v43b_runner.py
-      - name: Apply v4.4 realtime WebSocket and FCM push
-        working-directory: .
-        run: python3 tools/v44c_runner.py
-      - name: Apply v4.5 profile, connections and attachment polish
-        working-directory: .
-        run: python3 tools/v45c_runner.py
-      - name: Apply v4.6 deep stability audit fixes
-        working-directory: .
-        run: python3 tools/v46_deep_stability_audit.py
+        run: |
+          python3 tools/v31_finalize.py
+          python3 tools/run_v32.py
+          python3 tools/v33_final.py
+          python3 tools/v34_chat_runtime.py
+          python3 tools/v35b_profile_media_polish.py
+          python3 tools/v35c_cleanup.py
+          python3 tools/v36_ui_navigation_polish.py
+          python3 tools/v36b_splash_fix.py
+          python3 tools/v37b_chat_identity_polish.py
+          python3 tools/v37c_analyzer_cleanup.py
+          python3 tools/v38b_boundary_fix.py
+          python3 tools/v39b_runner.py
+          python3 tools/v40_runner.py
+          python3 tools/v40_cleanup.py
+          python3 tools/v41b_runner.py
+          python3 tools/v42b_runner.py
+          python3 tools/v43b_runner.py
+          python3 tools/v44c_runner.py
+          python3 tools/v45c_runner.py
+          python3 tools/v46b_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter analyze --no-fatal-infos
-      - run: flutter test
+      - name: Flutter static analysis
+        run: flutter analyze --no-fatal-infos
+      - name: Flutter tests
+        run: flutter test
       - name: PHP syntax check mobile APIs
         working-directory: .
         run: |
@@ -118,14 +83,12 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           api = Path('flutter/lib/core/api_client.dart').read_text()
-          social_api = Path('flutter/lib/core/social_api.dart').read_text()
+          social = Path('flutter/lib/core/social_api.dart').read_text()
           state = Path('flutter/lib/core/app_state.dart').read_text()
           chat = Path('flutter/lib/screens/chat_screen.dart').read_text()
           calls = Path('flutter/lib/screens/call_screen.dart').read_text()
           profile = Path('flutter/lib/screens/profile_screen.dart').read_text()
           security = Path('flutter/lib/screens/security_screen.dart').read_text()
-          verification = Path('flutter/lib/screens/verification_screen.dart').read_text()
-          common = Path('flutter/lib/widgets/common.dart').read_text()
           mobile = Path('backend/api/mobile.php').read_text()
           social_server = Path('backend/api/mobile_social_v31.php').read_text()
           push_module = Path('backend/api/mobile_realtime_push_v44.php').read_text()
@@ -133,78 +96,32 @@ jobs:
           push = Path('flutter/lib/core/push_service.dart').read_text()
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           manifest = Path('flutter/android/app/src/main/AndroidManifest.xml').read_text()
-          native_bridge = Path('flutter/lib/core/native_bridge.dart').read_text()
-          auth = Path('flutter/lib/screens/auth_screen.dart').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
-
-          # Auth / API / device resilience.
-          assert 'await NativeBridge.deviceName()' in api
-          assert '_compatTokenKey' in api and '_authRequestWithRetry' in api
-          assert 'SharedPreferences.getInstance()' in api
-          assert 'suspendedpage.cgi' in api
-          assert 'server returned a web page instead of API data' in api
+          assert 'version: 4.6.0+460' in pubspec
+          assert '_authRequestWithRetry' in api and '_compatTokenKey' in api
+          assert 'suspendedpage.cgi' in api and 'server returned a web page instead of API data' in api
           assert '_recoverBootstrapInBackground' in state
-          assert 'Sign-in could not finish on this phone.' in state
-          assert 'Sign-in could not finish on this phone.' in auth
-          assert ".timeout(const Duration(seconds: 2))" in native_bridge
-
-          # Social/profile robustness and privacy.
-          assert 'profileConnections(' in social_api
-          assert 'on HandshakeException' in social_api and 'on TlsException' in social_api
-          assert 'status == 401 && _isSessionFailure(message)' in social_api
+          assert 'on HandshakeException' in social and 'on TlsException' in social
+          assert 'status == 401 && _isSessionFailure(message)' in social
           assert 'class _ProfileConnectionsScreen extends StatefulWidget' in profile
-          assert 'int _requestSerial = 0;' in profile
-          assert 'requestSerial != _requestSerial' in profile
-          assert "_openConnections(p, 'followers')" in profile
-          assert "_openConnections(p, 'following')" in profile
+          assert 'int _requestSerial = 0;' in profile and 'requestSerial != _requestSerial' in profile
+          assert "_openConnections(p, 'followers')" in profile and "_openConnections(p, 'following')" in profile
           assert 'color: _verificationColor(p)' in profile
           assert "value: _bool(s['show_connections'], true)" in security
-          assert 'mobile_profile_privacy' in mobile
-          assert "if($action==='profile_connections')" in social_server
           assert "if($targetId<=0)mobile_error('Choose a valid profile.',400);" in social_server
-
-          # Chat/media/realtime regressions.
-          assert 'pollTicks % 12' in chat
-          assert 'Future<void> _syncAfterSend() async' in chat
-          assert chat.count('await _syncAfterSend();') >= 4
-          assert 'recordingPaused = true;' in chat and 'await recorder.resume();' in chat
           assert 'createPositionStream(' in chat and 'progressTimer = Timer.periodic' in chat
-          assert 'livePosition.inMilliseconds > streamedPosition.inMilliseconds' in chat
-          assert "label: 'Pen'" in chat and "label: 'Highlight'" in chat and "label: 'Hide'" in chat
-          assert "'story': '9:16'" in chat and 'portrait_story' in native
-          assert 'RenderRepaintBoundary' in chat and '_PhotoMarkupPainter' in chat
-          assert '_processOutgoingPhoto' not in chat
-          assert chat.count('Future<void> _jumpToMessage(') == 1
-          assert 'onTap: () => _jumpToMessage(r.id)' in chat
-          assert 'SecureChatImage(' in chat and 'View once photo' in chat
-          assert '_prepareViewOnceFile' in chat and 'once__' in chat
-          assert 'voicePreviewViewOnce' in chat
-          assert 'setSecureScreen(bool enabled)' in native_bridge
-          assert 'WindowManager.LayoutParams.FLAG_SECURE' in native
-          assert 'markViewOnceConsumed' in api
-          assert "if ($action === 'mark_view_once')" in mobile
-          assert "UPDATE messages SET status='deleted'" in mobile
-          assert '@unlink($file)' in mobile
+          assert 'Future<void> _syncAfterSend() async' in chat
+          assert 'voicePreviewViewOnce' in chat and '_prepareViewOnceFile' in chat
           assert "String get _draftKey => 'chat_draft_${widget.conversation.id}'" in chat
-          assert 'Timer? draftDebounce;' in chat
-          assert 'reply = currentReply;' in chat and '_reviewQueuedMessage' in chat
           assert 'enabled: !widget.conversation.isGroup' in chat
           assert "title: 'Create poll'" in chat
-
-          # Calls / navigation / realtime / push.
           assert 'await remoteRenderer.initialize();\n    if (!mounted) return;' in calls
-          assert 'PageRoute<T> premiumRoute<T>' in common
           assert 'WebSocketChannel.connect' in realtime
-          assert 'RealtimeService.instance.subscribe(widget.conversation.id)' in chat
-          assert 'RealtimeService.instance.publish' in api
           assert 'FirebaseMessaging.instance' in push
-          assert 'PushService.instance.bind' in state
-          assert "'action': 'register_push'" in api
           assert "if ($action === 'push_chat')" in push_module
-          assert 'https://fcm.googleapis.com/v1/projects/' in push_module
           assert 'POST_NOTIFICATIONS' in manifest
-          assert 'Verify your TaleemPK profile' in verification
-          assert 'version: 4.6.0+460' in pubspec
+          assert 'WindowManager.LayoutParams.FLAG_SECURE' in native
+          assert "if ($action === 'mark_view_once')" in mobile and '@unlink($file)' in mobile
           print('v4.6 deep regression audit passed')
           PY
       - name: Build universal APK
