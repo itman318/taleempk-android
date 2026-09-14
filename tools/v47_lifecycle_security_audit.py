@@ -228,7 +228,7 @@ write(path, text)
 path = 'flutter/lib/screens/verification_screen.dart'
 text = read(path)
 text = text.replace(
-"""                      onPick(result?.files.single.path);
+"""                      onPick(result?.path);
 """,
 """                      if (!context.mounted) return;
                       onPick(result?.files.single.path);
