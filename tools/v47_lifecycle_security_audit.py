@@ -231,7 +231,7 @@ text = text.replace(
 """                      onPick(result?.path);
 """,
 """                      if (!context.mounted) return;
-                      onPick(result?.files.single.path);
+                      onPick(result?.path);
 """,
 )
 write(path, text)

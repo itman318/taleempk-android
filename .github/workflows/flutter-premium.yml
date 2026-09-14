@@ -20,6 +20,10 @@ on:
       - 'tools/**'
       - '.github/workflows/flutter-premium.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -62,7 +66,31 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Flutter static analysis
-        run: flutter analyze
+        id: analyze
+        continue-on-error: true
+        run: flutter analyze 2>&1 | tee analyzer.log
+      - name: Show analyzer failure context
+        if: steps.analyze.outcome == 'failure'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          log = Path('analyzer.log').read_text(errors='replace')
+          seen = set()
+          for file, line in re.findall(r'• (lib/[^:]+\.dart):(\d+):\d+ •', log):
+              key = (file, int(line))
+              if key in seen:
+                  continue
+              seen.add(key)
+              lines = Path(file).read_text(errors='replace').splitlines()
+              number = int(line)
+              print(f'--- {file}:{number} ---')
+              for index in range(max(1, number - 5), min(len(lines), number + 5) + 1):
+                  print(f'{index}: {lines[index - 1]}')
+          PY
+      - name: Enforce clean analyzer
+        if: steps.analyze.outcome == 'failure'
+        run: exit 1
       - name: Flutter tests
         run: flutter test
       - name: PHP syntax check mobile APIs
