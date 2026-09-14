@@ -292,57 +292,15 @@ text = once(text, old_message, new_message, 'single visible snackbar')
 write(path, text)
 
 
-# Remove the always-visible phantom notification dot and improve dark contrast.
+# Remove the always-visible phantom notification dot. The generated dashboard
+# already supplies its tooltip and theme-aware contrast.
 path = 'flutter/lib/screens/home_screen.dart'
 text = read(path)
 text = once(
     text,
-    """          IconButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const ModuleScreen(module: 'notifications'),
-              ),
-            ),
-            icon: const Badge(child: Icon(Icons.notifications_none_rounded)),
-          ),""",
-    """          IconButton(
-            tooltip: 'Notifications',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const ModuleScreen(module: 'notifications'),
-              ),
-            ),
-            icon: const Icon(Icons.notifications_none_rounded),
-          ),""",
+    "icon: const Badge(child: Icon(Icons.notifications_none_rounded, size: 21)),",
+    "icon: const Icon(Icons.notifications_none_rounded, size: 21),",
     'notification icon',
-)
-text = once(
-    text,
-    """                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.muted,
-                      ),""",
-    """                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),""",
-    'shortcut subtitle contrast',
-)
-text = once(
-    text,
-    """              const Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 15,
-                color: AppColors.muted,
-              ),""",
-    """              Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 15,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),""",
-    'shortcut arrow contrast',
 )
 write(path, text)
 
@@ -458,7 +416,7 @@ assert "FlutterSecureStorage(aOptions: AndroidOptions())" in outbox
 assert 'await prefs.remove(_legacyKey);' in outbox
 assert 'Theme.of(context).colorScheme.onSurface' in theme
 assert 'messenger.hideCurrentSnackBar();' in common
-assert "tooltip: 'Notifications'" in home and 'const Badge(' not in home
+assert "icon: const Icon(Icons.notifications_none_rounded, size: 21)" in home
 assert 'SchedulerBinding.instance.lifecycleState' in shell
 assert 'const Duration(seconds: 15)' in shell
 assert 'pollBusy = true;' in calls and 'pollBusy = false;' in calls
