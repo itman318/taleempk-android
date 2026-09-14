@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: taleempk-realtime
+    runtime: node
+    rootDir: realtime
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: TALEEMPK_REALTIME_SECRET
+        sync: false

@@ -1,0 +1,31 @@
+name: studyhub_flutter
+description: Premium native Flutter client for TaleemPK.
+publish_to: none
+version: 3.0.0+300
+
+environment:
+  sdk: '>=3.9.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  flutter_secure_storage: ^11.0.0
+  shared_preferences: ^2.5.5
+  cached_network_image: ^4.0.0
+  image_picker: ^1.2.3
+  image: ^4.5.4
+  file_picker: ^12.2.0
+  record: ^7.1.1
+  just_audio: ^0.10.6
+  path_provider: ^2.1.5
+  url_launcher: ^6.3.2
+  flutter_webrtc: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
