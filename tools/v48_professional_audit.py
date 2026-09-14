@@ -281,32 +281,6 @@ text = once(
     'border: Border.all(\n                color: Theme.of(context).colorScheme.surface,\n                width: 2.5,\n              ),',
     'dark-aware online ring',
 )
-text = once(
-    text,
-    """          const Icon(
-            Icons.wifi_tethering_error_rounded,
-            size: 48,
-            color: AppColors.muted,
-          ),""",
-    """          Icon(
-            Icons.wifi_tethering_error_rounded,
-            size: 48,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),""",
-    'error icon contrast',
-)
-text = once(
-    text,
-    "style: const TextStyle(color: AppColors.muted),",
-    "style: TextStyle(\n              color: Theme.of(context).colorScheme.onSurfaceVariant,\n            ),",
-    'error text contrast',
-)
-text = once(
-    text,
-    "style: const TextStyle(color: AppColors.muted),",
-    "style: TextStyle(\n              color: Theme.of(context).colorScheme.onSurfaceVariant,\n            ),",
-    'empty text contrast',
-)
 old_message = """void showMessage(BuildContext context, String text) =>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));"""
 new_message = """void showMessage(BuildContext context, String text) {
