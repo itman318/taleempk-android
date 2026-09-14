@@ -36,7 +36,7 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Generate final TaleemPK v4.6 source
+      - name: Generate final TaleemPK v4.7 source
         working-directory: .
         run: |
           python3 tools/v31_finalize.py
@@ -159,11 +159,21 @@ jobs:
           print('v4.7 deep regression audit passed')
           PY
       - name: Build universal APK
-        run: flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
+        run: |
+          for attempt in 1 2 3; do
+            flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal && exit 0
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
+          done
+          exit 1
       - name: Preserve universal APK
         run: cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/TaleemPK-v4.7.0-Universal.apk
       - name: Build smaller per-ABI APKs
-        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
+        run: |
+          for attempt in 1 2 3; do
+            flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split && exit 0
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
+          done
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: TaleemPK-v4.7.0-APKs

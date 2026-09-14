@@ -436,6 +436,25 @@ text = text.replace(
 write(path, text)
 
 
+path = 'flutter/lib/screens/chat_screen.dart'
+text = read(path)
+text = text.replace(
+"""      for (final message in chosen) {
+        await _appState.api.forwardMessage(message.id, target.id);
+      }
+      selectedIds.clear();
+""",
+"""      for (final message in chosen) {
+        await _appState.api.forwardMessage(message.id, target.id);
+      }
+      if (!mounted) return;
+      selectedIds.clear();
+""",
+    1,
+)
+write(path, text)
+
+
 path = 'flutter/lib/screens/conversations_screen.dart'
 text = read(path)
 text = text.replace(
