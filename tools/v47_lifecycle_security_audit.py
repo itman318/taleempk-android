@@ -101,7 +101,7 @@ states = {
     'flutter/lib/screens/module_screen.dart':
         'class _ModuleScreenState extends State<ModuleScreen> {',
     'flutter/lib/screens/profile_screen.dart':
-        'class _ProfileScreenState extends State<ProfileScreen> {',
+        'class _ProfileViewState extends State<_ProfileView>',
     'flutter/lib/screens/quiz_screen.dart':
         'class _QuizScreenState extends State<QuizScreen> {',
     'flutter/lib/screens/verification_screen.dart':
