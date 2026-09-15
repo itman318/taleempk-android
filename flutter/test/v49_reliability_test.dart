@@ -8,10 +8,12 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:studyhub_flutter/core/api_client.dart';
+import 'package:studyhub_flutter/core/app_state.dart';
 import 'package:studyhub_flutter/core/outbox.dart';
 import 'package:studyhub_flutter/core/social_api.dart';
 import 'package:studyhub_flutter/widgets/profile_identity.dart';
 import 'package:studyhub_flutter/widgets/common.dart';
+import 'package:studyhub_flutter/screens/security_screen.dart';
 
 class SessionClient extends ApiClient {
   String? session = 'viewer-a';
@@ -21,6 +23,17 @@ class SessionClient extends ApiClient {
   Map<String, String> get authHeaders => {'Accept': 'application/json'};
   @override
   Future<void> clearToken() async => session = null;
+}
+
+class SecurityClient extends ApiClient {
+  @override
+  Future<Map<String, dynamic>> securitySnapshot() async => {
+    'settings': <String, dynamic>{}, 'sessions': <Map<String, dynamic>>[],
+  };
+  @override
+  Future<List<Map<String, dynamic>>> blockedUsers() async => [
+    {'id': 5, 'name': 'Blocked member', 'username': 'blocked_member'},
+  ];
 }
 
 void main() {
@@ -70,6 +83,20 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: UserAvatar(name: '  👩🏽‍🏫 Teacher', url: '')));
     expect(find.text('👩🏽‍🏫'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('security page fetches blocked users rather than claiming none', (tester) async {
+    final state = AppState(SecurityClient());
+    await tester.pumpWidget(AppScope(state: state,
+      child: const MaterialApp(home: SecurityScreen())));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Blocked member'), 300,
+      scrollable: find.byType(Scrollable).first);
+    expect(find.text('Blocked member'), findsOneWidget);
+    expect(find.text('You have not blocked anyone.'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    state.dispose();
   });
 
   test('social validation errors preserve server message and status', () async {

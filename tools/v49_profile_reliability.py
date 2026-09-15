@@ -245,5 +245,99 @@ patch('flutter/lib/core/app_state.dart', [
     }'''),
 ])
 
+patch('flutter/lib/screens/security_screen.dart', [
+    ('''  Future<void> _load() async {
+''', '''  Future<void> _load() async {
+    if (!mounted) return;
+'''),
+    ('''        sessions = result[1] as List<Map<String, dynamic>>;
+      }
+    } catch (e) {''', '''        sessions = result[1] as List<Map<String, dynamic>>;
+      }
+      blocked = await api.blockedUsers();
+    } catch (e) {'''),
+    ('Upload the TaleemPK v3.8 server update to public_html/api/',
+     "Upload the matching server API files to your domain's active document root".replace("'", "\\'")),
+    ('''                      onPressed: saving ? null : () async {
+                        final id = int.tryParse('${user['id'] ?? 0}') ?? 0;
+                        if (id <= 0) return;
+                        try { await AppScope.of(context).api.toggleBlock(id); await _load(); }
+                        catch (e) { if (mounted) showMessage(context, apiMessage(e)); }
+                      },''', '''                      onPressed: saving ? null : () => _unblockUser(
+                        int.tryParse('${user['id'] ?? 0}') ?? 0,
+                      ),'''),
+    ('  Widget _sessionsCard() => Card(', '''  Future<void> _unblockUser(int id) async {
+    if (!mounted || saving || id <= 0) return;
+    final api = AppScope.of(context).api;
+    setState(() => saving = true);
+    try {
+      await api.toggleBlock(id);
+      if (mounted) await _load();
+    } catch (e) {
+      if (mounted) showMessage(context, apiMessage(e));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Widget _sessionsCard() => Card('''),
+])
+
+patch('flutter/lib/screens/feed_screen.dart', [
+    ('  int before = 0;', '  int before = 0;\n  int _feedSerial = 0;'),
+    ('''  Future<void> _refresh() async {
+''', '''  Future<void> _refresh() async {
+    if (!mounted) return;
+    final serial = ++_feedSerial;
+    loadingMore = false;
+'''),
+    ('''      final page = await social.feed(tab: tab, subject: subject);
+      if (!mounted) return;''', '''      final page = await social.feed(tab: tab, subject: subject);
+      if (!mounted || serial != _feedSerial) return;'''),
+    ('if (mounted) setState(() => error = apiMessage(e));',
+     'if (mounted && serial == _feedSerial) setState(() => error = apiMessage(e));'),
+    ('if (mounted) setState(() => loading = false);',
+     'if (mounted && serial == _feedSerial) setState(() => loading = false);'),
+    ('    if (loadingMore || !hasMore) return;',
+     '    if (!mounted || loading || loadingMore || !hasMore) return;\n    final serial = _feedSerial;'),
+    ('''      final page = await social.feed(tab: tab, subject: subject, before: before);
+      if (!mounted) return;''', '''      final page = await social.feed(tab: tab, subject: subject, before: before);
+      if (!mounted || serial != _feedSerial) return;'''),
+    ('if (mounted) setState(() => loadingMore = false);',
+     'if (mounted && serial == _feedSerial) setState(() => loadingMore = false);'),
+])
+
+patch('flutter/lib/screens/conversations_screen.dart', [
+    ("import 'package:flutter/material.dart';", "import 'package:flutter/material.dart';\nimport 'package:flutter/scheduler.dart';"),
+    ('  Timer? refreshTimer;', '  Timer? refreshTimer;\n  int _inboxSerial = 0;'),
+    ('''  Future<void> _load() async {
+''', '''  Future<void> _load() async {
+    if (!mounted) return;
+    final serial = ++_inboxSerial;
+'''),
+    ('''      all = await _appState.api.conversations(
+        archived: archivedMode,
+      );
+    } catch (e) {
+      error = apiMessage(e);
+    }
+    if (mounted) setState(() => loading = false);''', '''      final fresh = await _appState.api.conversations(archived: archivedMode);
+      if (!mounted || serial != _inboxSerial) return;
+      all = fresh;
+    } catch (e) {
+      if (!mounted || serial != _inboxSerial) return;
+      error = apiMessage(e);
+    }
+    if (mounted && serial == _inboxSerial) setState(() => loading = false);'''),
+    ('''    if (!mounted || loading || silentRefreshing) return;
+    silentRefreshing = true;''', '''    if (!mounted || loading || silentRefreshing ||
+        SchedulerBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+    final serial = _inboxSerial;
+    final archived = archivedMode;
+    silentRefreshing = true;'''),
+    ('''      if (mounted && _conversationSignature(fresh) != _conversationSignature(all)) {''', '''      if (mounted && !loading && serial == _inboxSerial && archived == archivedMode &&
+          _conversationSignature(fresh) != _conversationSignature(all)) {'''),
+])
+
 patch('flutter/pubspec.yaml', [('version: 4.8.0+480', 'version: 4.9.0+490')])
 print('TaleemPK v4.9 profile, account isolation and request reliability fixes applied')
