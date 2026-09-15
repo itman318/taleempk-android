@@ -71,6 +71,11 @@ patch('flutter/lib/screens/profile_screen.dart', [
       );
     }
 '''),
+    ('''    final has = p.verified || p.subjects.isNotEmpty || p.qualification.isNotEmpty || p.institute.isNotEmpty || p.degree.isNotEmpty;
+    if (!has) return const SizedBox.shrink();''', '''    final hasDetails = p.subjects.isNotEmpty || p.qualification.isNotEmpty ||
+        p.institute.isNotEmpty || p.degree.isNotEmpty || p.experience > 0 || p.acceptingStudents;
+    if (!p.verified && !hasDetails) return const SizedBox.shrink();'''),
+    ('                const Divider(height: 22),', '                if (hasDetails) const Divider(height: 22),'),
 ])
 
 # Cache only within one API client and one signed-in session. Profile data
@@ -331,7 +336,9 @@ patch('flutter/lib/screens/conversations_screen.dart', [
     if (mounted && serial == _inboxSerial) setState(() => loading = false);'''),
     ('''    if (!mounted || loading || silentRefreshing) return;
     silentRefreshing = true;''', '''    if (!mounted || loading || silentRefreshing ||
-        SchedulerBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+        SchedulerBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
     final serial = _inboxSerial;
     final archived = archivedMode;
     silentRefreshing = true;'''),
