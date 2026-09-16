@@ -27,7 +27,8 @@ class _AttachmentSheetState extends State<AttachmentSheet> {
                 Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)), const SizedBox(height: 3),
                 Text(description, style: TextStyle(fontSize: 12, color: c.onSurfaceVariant, height: 1.4))])),
               const SizedBox(width: 8), Icon(Icons.chevron_right_rounded, color: c.onSurfaceVariant)])))));
-    return SingleChildScrollView(padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.paddingOf(context).bottom + 24),
+    return Material(color: c.surface, borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      clipBehavior: Clip.antiAlias, child: SingleChildScrollView(padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.paddingOf(context).bottom + 24),
       child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Center(child: Container(width: 36, height: 4, decoration: BoxDecoration(color: c.outlineVariant,
           borderRadius: BorderRadius.circular(4)))), const SizedBox(height: 16),
@@ -42,9 +43,9 @@ class _AttachmentSheetState extends State<AttachmentSheet> {
           option(AttachmentKind.poll, Icons.poll_outlined, 'Create poll', 'Ask your chat a question', const Color(0xFF8960BC))],
         if (!widget.isGroup) SwitchListTile.adaptive(contentPadding: EdgeInsets.zero,
           value: once, onChanged: (v) => setState(() => once = v),
-          secondary: Icon(Icons.looks_one_outlined, color: c.primary),
+          secondary: Icon(Icons.visibility_outlined, color: c.primary),
           title: const Text('View once', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
           subtitle: const Text('For a photo that can be opened once.', style: TextStyle(fontSize: 12))),
-      ]));
+      ])));
   }
 }

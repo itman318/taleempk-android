@@ -37,6 +37,10 @@ class EmailClient extends ApiClient {
     return pending?.future ?? Future.value('Code sent.');
   }
 }
+Future<void> tapUi(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder); await tester.pump(const Duration(milliseconds: 300));
+  await tester.tap(finder); await tester.pump(); await tester.pump(const Duration(milliseconds: 600));
+}
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
@@ -66,11 +70,11 @@ void main() {
     await tester.pumpWidget(AppScope(state: app, child: MaterialApp(theme: studyHubTheme(), home: const AuthScreen())));
     await tester.enterText(helpers.field('Email or username'), 'student');
     await tester.enterText(helpers.field('Password'), 'password');
-    await helpers.tapVisible(tester, find.text('Sign in'));
+    await tapUi(tester, find.text('Sign in'));
     expect(find.byType(EmailVerificationSheet), findsOneWidget);
     expect(helpers.field('Email verification code'), findsOneWidget);
     expect(api.token, isNull);
-    await helpers.tapVisible(tester, find.text('Verify email'));
+    await tapUi(tester, find.text('Verify email'));
     expect(api.calls, 0);
     api.pending = Completer<String>();
     await tester.enterText(helpers.field('Email verification code'), '123456');
@@ -86,20 +90,20 @@ void main() {
     final api = EmailClient();
     final app = AppState(api);
     await tester.pumpWidget(AppScope(state: app, child: MaterialApp(theme: studyHubTheme(), home: const AuthScreen())));
-    await helpers.tapVisible(tester, find.text('New here? Create an account'));
+    await tapUi(tester, find.text('New here? Create an account'));
     await tester.enterText(helpers.field('Full name'), 'Ayesha Khan');
     await tester.enterText(helpers.field('Username'), 'student');
-    await helpers.tapVisible(tester, find.text('Continue'));
+    await tapUi(tester, find.text('Continue'));
     await tester.enterText(helpers.field('Email address'), 'student@example.com');
-    await helpers.tapVisible(tester, helpers.field('Date of birth'));
-    await helpers.tapVisible(tester, find.text('OK'));
-    await helpers.tapVisible(tester, find.text('Continue'));
+    await tapUi(tester, helpers.field('Date of birth'));
+    await tapUi(tester, find.text('OK'));
+    await tapUi(tester, find.text('Continue'));
     await tester.enterText(helpers.field('Password'), 'GoodPassword123!');
     await tester.testTextInput.receiveAction(TextInputAction.next);
     await tester.pumpAndSettle(); expect(api.registrations, 0);
     await tester.enterText(helpers.field('Confirm password'), 'GoodPassword123!');
     expect(api.registrations, 0);
-    await helpers.tapVisible(tester, find.text('Create account'));
+    await tapUi(tester, find.text('Create account'));
     expect(api.registrations, 1); expect(find.byType(EmailVerificationSheet), findsOneWidget);
     await tester.pumpWidget(const SizedBox()); app.dispose();
   });
@@ -107,7 +111,7 @@ void main() {
     final api = EmailClient();
     await tester.pumpWidget(MaterialApp(theme: studyHubTheme(), home: Scaffold(body: EmailVerificationSheet(
       api: api, identifier: 'student', password: 'password'))));
-    await helpers.tapVisible(tester, find.text('Resend code'));
+    await tapUi(tester, find.text('Resend code'));
     expect(api.calls, 1); expect(api.codeSent, isNull); expect(find.text('Resend in 60s'), findsOneWidget);
     api.pending = Completer<String>();
     await tester.enterText(helpers.field('Email verification code'), '111111');
@@ -147,7 +151,7 @@ void main() {
     await tester.runAsync(() async {
       final recorder = ui.PictureRecorder();
       final drawing = Canvas(recorder)..drawColor(Colors.red, BlendMode.src);
-      drawing.drawRect(const Rect.fromLTWH(40, 0, 40, 60), Paint()..color=Colors.blue);
+      drawing.drawRect(const Rect.fromLTWH(40, 0, 40, 60), Paint()..color=const Color(0xFF0000FF));
       final picture = recorder.endRecording(); final source = await picture.toImage(80,60); picture.dispose();
       final cropped = await cropPixels(source, cropSelection(const Offset(1,1), const Offset(.5,0)));
       expect(cropped.width,40); expect(cropped.height,60);
@@ -164,10 +168,10 @@ void main() {
         final paths = await Navigator.push<List<String>>(context, MaterialPageRoute(builder: (_) => MediaPreviewScreen(paths:[path])));
         if (paths != null) sends++;
       })))));
-    await helpers.tapVisible(tester,find.text('Pick'));
+    await tapUi(tester,find.text('Pick'));
     expect(sends,0); expect(find.text('Edit / Crop'),findsOneWidget);
-    await helpers.tapVisible(tester,find.text('Send 1')); expect(sends,1);
-    await helpers.tapVisible(tester,find.text('Pick'));
+    await tapUi(tester,find.text('Send 1')); expect(sends,1);
+    await tapUi(tester,find.text('Pick'));
     await tester.tap(find.byTooltip('Cancel sending')); await tester.pumpAndSettle(); expect(sends,1);
     await tester.pumpWidget(const SizedBox()); await temp.delete(recursive:true);
   });

@@ -15,7 +15,7 @@ class HomeScreen extends StatelessWidget {
     final shortcuts = state.bootstrap!.shortcuts.where((s) => !['feed.php', 'chat.php'].contains(s.route)).toList();
     final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: PremiumAppBar(title: 'Your learning space', subtitle: 'TALEEMPK', actions: [
+      appBar: PremiumAppBar(title: 'Learn & grow', subtitle: 'TALEEMPK', actions: [
         IconButton.filledTonal(tooltip: 'Notifications', onPressed: () => _open(context, 'notifications'),
           icon: const Icon(Icons.notifications_none_rounded)), const SizedBox(width: 12)]),
       body: RefreshIndicator(onRefresh: state.refreshSession,
@@ -36,22 +36,19 @@ class HomeScreen extends StatelessWidget {
                           Icon(Icons.verified_rounded, size: 18, color: Color(0xFF80E5EC)))]),
                       Text('@${user.username}', maxLines: 1, overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: Color(0xFFD7E2FF), fontSize: 12))]))]),
-                  const SizedBox(height: 25),
-                  const Text('Make room for\nyour next big idea.', style: TextStyle(color: Colors.white,
-                    fontSize: 27, height: 1.18, fontWeight: FontWeight.w800, letterSpacing: -.6)),
-                  const SizedBox(height: 10),
-                  const Text('A little practice. A clear plan. A step forward.',
-                    style: TextStyle(color: Color(0xFFE0E7FF), fontSize: 13, height: 1.5)),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 20),
+                  const Text('Your next step.', style: TextStyle(color: Colors.white,
+                    fontSize: 24, height: 1.2, fontWeight: FontWeight.w800, letterSpacing: -.4)),
+                  const SizedBox(height: 14),
                   FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC8F4DD),
                     foregroundColor: const Color(0xFF123A32)), onPressed: () => _open(context, 'study'),
-                    icon: const Icon(Icons.arrow_forward_rounded, size: 19), label: const Text('Open study dashboard')),
+                    icon: const Icon(Icons.arrow_forward_rounded, size: 19), label: const Text('Study dashboard')),
                 ])),
               const SizedBox(height: 24),
-              Text('Start something good', style: Theme.of(context).textTheme.titleLarge),
+              Text('Quick start', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 12),
               LayoutBuilder(builder: (context, box) {
-                final narrow = box.maxWidth < 340 || MediaQuery.textScalerOf(context).scale(1) > 1.3;
+                final narrow = box.maxWidth < 300 || MediaQuery.textScalerOf(context).scale(1) > 1.45;
                 final items = [
                   _quick(context, 'Practice a quiz', 'Build your confidence', Icons.quiz_outlined, 'quizzes', const Color(0xFF4664D9)),
                   _quick(context, 'Plan your study', 'Give your goals a place', Icons.event_note_outlined, 'planner', const Color(0xFF278273))];

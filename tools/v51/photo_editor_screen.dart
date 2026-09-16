@@ -17,7 +17,7 @@ Future<ui.Image> cropPixels(ui.Image image, Rect selection) async {
   final recorder = ui.PictureRecorder();
   Canvas(recorder).drawImageRect(image, Rect.fromLTWH(r.left * image.width, r.top * image.height,
     r.width * image.width, r.height * image.height), Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-    Paint()..filterQuality = FilterQuality.high);
+    Paint()..filterQuality = FilterQuality.none);
   final picture = recorder.endRecording();
   try { return await picture.toImage(width, height); } finally { picture.dispose(); }
 }
@@ -103,7 +103,18 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
     ui.Image? result;
     try {
       result = await _flatten();
-      final bytes = await result.toByteData(format: ui.ImageByteFormat.png);
+      var bytes = await result.toByteData(format: ui.ImageByteFormat.png);
+      // Keep even noisy/transparent images within the website's default 10 MB limit.
+      if (bytes != null && bytes.lengthInBytes > 8 * 1024 * 1024) {
+        final scale = math.min(1.0, 1536 / math.max(result.width, result.height));
+        final w = (result.width * scale).round(), h = (result.height * scale).round();
+        final recorder = ui.PictureRecorder();
+        Canvas(recorder).drawImageRect(result, Rect.fromLTWH(0, 0, result.width.toDouble(), result.height.toDouble()),
+          Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()), Paint()..filterQuality = FilterQuality.high);
+        final picture = recorder.endRecording();
+        final smaller = await picture.toImage(w, h); picture.dispose();
+        try { bytes = await smaller.toByteData(format: ui.ImageByteFormat.png); } finally { smaller.dispose(); }
+      }
       if (bytes == null) throw StateError('No image data');
       final folder = await Directory.systemTemp.createTemp('taleempk_edit_');
       final file = File('${folder.path}/edited.png');
