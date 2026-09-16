@@ -45,17 +45,18 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
   @override
   void dispose() { photo?.dispose(); for (final i in history) { i.dispose(); } super.dispose(); }
   Future<void> _load() async {
+    ui.ImmutableBuffer? buffer; ui.ImageDescriptor? descriptor; ui.Codec? codec;
     try {
-      final buffer = await ui.ImmutableBuffer.fromUint8List(await File(widget.path).readAsBytes());
-      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      buffer = await ui.ImmutableBuffer.fromUint8List(await File(widget.path).readAsBytes());
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
       final scale = math.min(1.0, 2048 / math.max(descriptor.width, descriptor.height));
-      final codec = await descriptor.instantiateCodec(targetWidth: (descriptor.width * scale).round(),
+      codec = await descriptor.instantiateCodec(targetWidth: (descriptor.width * scale).round(),
         targetHeight: (descriptor.height * scale).round());
       final frame = await codec.getNextFrame();
-      codec.dispose(); descriptor.dispose(); buffer.dispose();
       if (!mounted) { frame.image.dispose(); return; }
       setState(() { photo = frame.image; busy = false; error = null; });
     } catch (_) { if (mounted) setState(() { busy = false; error = 'This photo could not be opened.'; }); }
+    finally { codec?.dispose(); descriptor?.dispose(); buffer?.dispose(); }
   }
   void _replace(ui.Image value, {ui.Image? before}) {
     if (!mounted) { value.dispose(); before?.dispose(); return; }

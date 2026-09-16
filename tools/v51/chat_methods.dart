@@ -30,7 +30,7 @@
     final paths = <String>[];
     for (final path in initialPaths.toSet()) {
       final file = File(path);
-      if (await file.exists() && await file.length() > 256) paths.add(path);
+      if (await file.exists() && await file.length() > 0) paths.add(path);
       if (paths.length == (viewOnce ? 1 : 20)) break;
     }
     if (!mounted) return;

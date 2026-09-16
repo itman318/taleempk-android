@@ -25,7 +25,8 @@ class ApiClient {''')
 replace(api,'  Future<String> register({','  Future<RegistrationResult> register({')
 replace(api,"    return '${data['message'] ?? 'Account created successfully.'}';", "    return RegistrationResult('${data['message'] ?? 'Account created successfully.'}',\n      data['needs_email_verification'] == true, data['needs_review'] == true);")
 replace(api, "    int voiceSeconds = 0,", "    int voiceSeconds = 0,\n    bool viewOnce = false,")
-replace(api, "    final fields = <String, String>{", '''    if (viewOnce && encrypted) {
+replace(api, "  }) async {\n    final fields = <String, String>{", '''  }) async {
+    if (viewOnce && encrypted) {
       final capabilities = await _request({'action': 'media_capabilities'});
       if (capabilities['encrypted_view_once'] != true) {
         throw const ApiException('Update the website API before sending view once photos.');
@@ -84,9 +85,9 @@ part=part.replace('      var uploadPath = originalPath;', '      var uploadPath 
 part=part.replace('        await _appState.api.sendFile(', '''        var content = '';
         if (e2eeState.enabled) {
           final sealed = await e2ee.encryptFile(widget.conversation, uploadPath,
-            originalName: uploadPath.split(Platform.pathSeparator).last, mime: _mimeForPath(originalPath));
+            originalName: uploadPath.split(Platform.pathSeparator).last, mime: _mimeForPath(originalPath), content: 'Photo');
           encryptedPath = sealed.path;
-          content = await e2ee.encryptText(widget.conversation, 'Photo');
+          content = sealed.ciphertext;
         }
         await _appState.api.sendFile(''')
 part=part.replace('          uploadPath,', '''          encryptedPath ?? uploadPath,
@@ -104,6 +105,27 @@ part=s[a:b].replace('  Future<void> _unlockEncryptedMessage(ChatMessage message)
 part=part.rstrip();assert part.endswith('  }');part=part[:-3]+'  });\n\n'
 s=s[:a]+part+s[b:]
 chat.write_text(s)
+# Carry the same group epoch as the file key, even if the group rekeys mid-send.
+e2ee=root/'flutter/lib/core/e2ee_service.dart'
+replace(e2ee,'required this.mime});', "required this.mime, this.ciphertext = ''});")
+replace(e2ee,'  final String path, name, mime;', '  final String path, name, mime;\n  final String ciphertext;')
+text=e2ee.read_text();a=text.index('  Future<E2eeFileResult> encryptFile(');b=text.index('  Future<E2eeFileResult> decryptFile(',a)
+part=text[a:b]
+part=part.replace('    required String mime,', "    required String mime,\n    String content = '',")
+part=part.replace('    String key;', '    String key;\n    var epoch = 0;')
+part=part.replace("      final epoch = _int(state['epoch']);", "      epoch = _int(state['epoch']);")
+part=part.replace('    return E2eeFileResult(', """    var packet = '';
+    if (content.isNotEmpty) {
+      packet = await _sealText(key, content);
+      if (epoch > 0) {
+        final pieces = packet.split('.');
+        if (pieces.length != 3) throw const ApiException('Encryption failed.');
+        packet = 'g1.$epoch.${pieces[1]}.${pieces[2]}';
+      }
+    }
+    return E2eeFileResult(
+      ciphertext: packet,""")
+e2ee.write_text(text[:a]+part+text[b:])
 for folder in ['backend/api','flutter/backend/api']:
     target=root/folder/'mobile.php'
     replace(target,"if ($action === 'login') {", "require_once __DIR__ . '/mobile_email_v51.php';\n\nif ($action === 'login') {")
