@@ -354,7 +354,7 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
         allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'pdf']);
       if (!mounted || result == null) return; // Cancelling must preserve the selected file.
       final path = result.path;
-      if (path.isEmpty) { setState(() => error = 'Couldn’t open this file. Choose a downloaded copy.'); return; }
+      if (path == null || path.isEmpty) { setState(() => error = 'Couldn’t open this file. Choose a downloaded copy.'); return; }
       final bytes = await File(path).length();
       if (!mounted) return;
       final problem = FormRules.document(path, bytes);

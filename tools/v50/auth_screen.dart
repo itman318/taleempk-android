@@ -102,7 +102,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   List<Widget> _registrationFields() {
-    if (step == 0) return [
+    if (step == 0) { return [
       Text('I’m joining as', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 12),
       RoleSelector(value: role, onChanged: busy ? null : (v) => setState(() => role = v)),
@@ -111,8 +111,8 @@ class _AuthScreenState extends State<AuthScreen> {
         autofill: const [AutofillHints.name], capitalization: TextCapitalization.words),
       _field(username, 'Username', Icons.alternate_email, validator: FormRules.username,
         helper: '3–30 letters, numbers or underscores', autofill: const [AutofillHints.newUsername]),
-    ];
-    if (step == 1) return [
+    ]; }
+    if (step == 1) { return [
       _field(email, 'Email address', Icons.mail_outline, validator: FormRules.email,
         type: TextInputType.emailAddress, autofill: const [AutofillHints.email]),
       _field(phone, 'Phone (if required)', Icons.phone_outlined,
@@ -125,7 +125,7 @@ class _AuthScreenState extends State<AuthScreen> {
           prefixIcon: Icon(Icons.calendar_today_outlined), suffixIcon: Icon(Icons.expand_more)))),
       const FormNotice('Use an email you can access for verification and account recovery.'),
       const SizedBox(height: 12),
-    ];
+    ]; }
     return [
       const FormNotice('Use at least 10 characters. Avoid common passwords and personal details.',
         icon: Icons.lock_outline_rounded),
