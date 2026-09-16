@@ -18,9 +18,15 @@ import 'package:studyhub_flutter/screens/photo_editor_screen.dart';
 import 'v50_forms_test.dart' as helpers;
 
 class EmailClient extends ApiClient {
-  int calls = 0;
+  int calls = 0, registrations = 0;
   String? codeSent;
   Completer<String>? pending;
+  @override
+  Future<RegistrationResult> register({required String role, required String name, required String username,
+    required String email, required String phone, required String dob, required String password}) async {
+    registrations++;
+    return const RegistrationResult('Account created.', true, false);
+  }
   @override
   Future<AuthResult> login(String identifier, String password) async =>
     const AuthResult(needsEmailVerification: true, email: 'student@example.com');
@@ -74,6 +80,27 @@ void main() {
     api.pending!.complete('Email confirmed.'); await tester.pumpAndSettle();
     expect(find.text('Email verified. Sign in to continue.'), findsOneWidget);
     expect(api.token, isNull);
+    await tester.pumpWidget(const SizedBox()); app.dispose();
+  });
+  testWidgets('signup requires Create account and immediately offers email confirmation', (tester) async {
+    final api = EmailClient();
+    final app = AppState(api);
+    await tester.pumpWidget(AppScope(state: app, child: MaterialApp(theme: studyHubTheme(), home: const AuthScreen())));
+    await helpers.tapVisible(tester, find.text('New here? Create an account'));
+    await tester.enterText(helpers.field('Full name'), 'Ayesha Khan');
+    await tester.enterText(helpers.field('Username'), 'student');
+    await helpers.tapVisible(tester, find.text('Continue'));
+    await tester.enterText(helpers.field('Email address'), 'student@example.com');
+    await helpers.tapVisible(tester, helpers.field('Date of birth'));
+    await helpers.tapVisible(tester, find.text('OK'));
+    await helpers.tapVisible(tester, find.text('Continue'));
+    await tester.enterText(helpers.field('Password'), 'GoodPassword123!');
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle(); expect(api.registrations, 0);
+    await tester.enterText(helpers.field('Confirm password'), 'GoodPassword123!');
+    expect(api.registrations, 0);
+    await helpers.tapVisible(tester, find.text('Create account'));
+    expect(api.registrations, 1); expect(find.byType(EmailVerificationSheet), findsOneWidget);
     await tester.pumpWidget(const SizedBox()); app.dispose();
   });
   testWidgets('resend cooldown and server error keep the code form usable', (tester) async {

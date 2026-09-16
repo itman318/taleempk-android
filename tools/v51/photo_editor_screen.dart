@@ -57,9 +57,9 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
       setState(() { photo = frame.image; busy = false; error = null; });
     } catch (_) { if (mounted) setState(() { busy = false; error = 'This photo could not be opened.'; }); }
   }
-  void _replace(ui.Image value) {
-    if (!mounted) { value.dispose(); return; }
-    if (photo != null) history.add(photo!);
+  void _replace(ui.Image value, {ui.Image? before}) {
+    if (!mounted) { value.dispose(); before?.dispose(); return; }
+    if (photo != null) { history.add(before ?? photo!); if (before != null) photo!.dispose(); }
     while (history.length > 2) { history.removeAt(0).dispose(); }
     setState(() { photo = value; strokes.clear(); brightness = 0; contrast = 1; tool = 'none'; crop = const Rect.fromLTWH(.1, .1, .8, .8); });
   }
@@ -91,7 +91,7 @@ class _PhotoEditorScreenState extends State<PhotoEditorScreen> {
           action == 'rotate' ? source.width : source.height);
         picture.dispose();
       }
-      _replace(result);
+      _replace(result, before: source.clone());
     } catch (_) { if (mounted) setState(() => error = 'Could not apply the edit. Try a larger crop.'); }
     finally { source?.dispose(); if (mounted) setState(() => busy = false); }
   }

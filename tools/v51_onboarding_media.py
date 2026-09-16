@@ -24,6 +24,15 @@ replace(api,'class ApiClient {', '''class RegistrationResult {
 class ApiClient {''')
 replace(api,'  Future<String> register({','  Future<RegistrationResult> register({')
 replace(api,"    return '${data['message'] ?? 'Account created successfully.'}';", "    return RegistrationResult('${data['message'] ?? 'Account created successfully.'}',\n      data['needs_email_verification'] == true, data['needs_review'] == true);")
+replace(api, "    int voiceSeconds = 0,", "    int voiceSeconds = 0,\n    bool viewOnce = false,")
+replace(api, "    final fields = <String, String>{", '''    if (viewOnce && encrypted) {
+      final capabilities = await _request({'action': 'media_capabilities'});
+      if (capabilities['encrypted_view_once'] != true) {
+        throw const ApiException('Update the website API before sending view once photos.');
+      }
+    }
+    final fields = <String, String>{''')
+replace(api, "      if (encrypted) 'enc_att': '1',", "      if (encrypted) 'enc_att': '1',\n      if (viewOnce) 'view_once': '1',")
 replace(api,'  Future<BootstrapData> bootstrap()', '''  Future<String> confirmEmail({required String identifier, required String password, String? code}) async {
     final data = await _request({
       'action': code == null ? 'resend_email_code' : 'verify_email',
@@ -69,6 +78,31 @@ part=part.rstrip()
 assert part.endswith('  }')
 part=part[:-3]+'  });\n\n'
 s=s[:a]+part+s[b:]
+a=s.index('  Future<void> _uploadManyImages('); b=s.index('  Future<void> _upload(String path)', a)
+part=s[a:b]
+part=part.replace('      var uploadPath = originalPath;', '      var uploadPath = originalPath;\n      String? encryptedPath;')
+part=part.replace('        await _appState.api.sendFile(', '''        var content = '';
+        if (e2eeState.enabled) {
+          final sealed = await e2ee.encryptFile(widget.conversation, uploadPath,
+            originalName: uploadPath.split(Platform.pathSeparator).last, mime: _mimeForPath(originalPath));
+          encryptedPath = sealed.path;
+          content = await e2ee.encryptText(widget.conversation, 'Photo');
+        }
+        await _appState.api.sendFile(''')
+part=part.replace('          uploadPath,', '''          encryptedPath ?? uploadPath,
+          encrypted: encryptedPath != null,
+          content: content,
+          viewOnce: viewOnce,''')
+part=part.replace('      } finally {', '''      } finally {
+        if (encryptedPath != null) { try { await File(encryptedPath).delete(); } catch (_) {} }''')
+part=part.replace('    setState(() {\n      sending = true;', '    if (!mounted) return;\n    setState(() {\n      sending = true;')
+s=s[:a]+part+s[b:]
+# Prevent concurrent decryptions from replacing the same message attachment repeatedly.
+a=s.index('  Future<void> _unlockEncryptedMessage(');b=s.index('  Future<void> _encryptionInfo()',a)
+part=s[a:b].replace('  Future<void> _unlockEncryptedMessage(ChatMessage message) async {',
+    '  final _decryptingAttachment = SingleFlight();\n  Future<void> _unlockEncryptedMessage(ChatMessage message) => _decryptingAttachment.run(() async {')
+part=part.rstrip();assert part.endswith('  }');part=part[:-3]+'  });\n\n'
+s=s[:a]+part+s[b:]
 chat.write_text(s)
 for folder in ['backend/api','flutter/backend/api']:
     target=root/folder/'mobile.php'
@@ -81,6 +115,8 @@ for folder in ['backend/api','flutter/backend/api']:
     }
     if ($u['status'] !== 'active') { mobile_error((string) ($u['status_reason'] ?: 'This account is not active.'), 403); }"""
     replace(target,old,new)
+    replace(target, "$u = mobile_user();\n$uid = (int) $u['id'];", "$u = mobile_user();\nif ($action === 'media_capabilities') { mobile_out(['encrypted_view_once' => true]); }\n$uid = (int) $u['id'];")
+    (root/folder/'chat_send.php').write_text((source/'chat_send.php').read_text())
     (root/folder/'mobile_email_v51.php').write_text((source/'mobile_email_v51.php').read_text())
 replace(root/'flutter/pubspec.yaml','version: 5.0.0+500','version: 5.1.0+510')
 print('v5.1 email verification, home, attachments and image editor applied')
