@@ -71,11 +71,13 @@ void main() {
     final root = Platform.environment['FLUTTER_ROOT'] ??
       File(Platform.resolvedExecutable).parent.parent.parent.parent.parent.path;
     final directory = '$root/bin/cache/artifacts/material_fonts';
-    final text = FontLoader('sans');
-    for (final font in ['Roboto-Regular.ttf', 'Roboto-Bold.ttf']) {
-      text.addFont(File('$directory/$font').readAsBytes().then((v) => ByteData.sublistView(v)));
+    for (final family in ['sans', 'Roboto']) {
+      final text = FontLoader(family);
+      for (final font in ['Roboto-Regular.ttf', 'Roboto-Bold.ttf']) {
+        text.addFont(File('$directory/$font').readAsBytes().then((v) => ByteData.sublistView(v)));
+      }
+      await text.load();
     }
-    await text.load();
     final icons = FontLoader('MaterialIcons')..addFont(File('$directory/MaterialIcons-Regular.otf')
       .readAsBytes().then((v) => ByteData.sublistView(v)));
     await icons.load();

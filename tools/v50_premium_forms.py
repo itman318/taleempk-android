@@ -33,10 +33,11 @@ text = text.replace('    fontFamily:', '''    appBarTheme: AppBarTheme(
       foregroundColor: scheme.onSurface,
       surfaceTintColor: Colors.transparent,
       scrolledUnderElevation: 0,
-      titleTextStyle: TextStyle(color: scheme.onSurface, fontSize: 20, fontWeight: FontWeight.w800),
+      titleTextStyle: TextStyle(fontFamily: 'sans', color: scheme.onSurface, fontSize: 20, fontWeight: FontWeight.w800),
     ),
     progressIndicatorTheme: ProgressIndicatorThemeData(color: scheme.primary),
     fontFamily:''')
+text = text.replace('textStyle: const TextStyle(', "textStyle: const TextStyle(fontFamily: 'sans', ")
 theme.write_text(text)
 spec = root / 'flutter/pubspec.yaml'
 version = spec.read_text()
