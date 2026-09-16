@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:studyhub_flutter/core/api_client.dart';
 import 'package:studyhub_flutter/core/app_state.dart';
@@ -25,6 +26,9 @@ class ReviewClient extends SocialApi {
   int submissions = 0;
   Map<String, String>? submitted;
   final response = Completer<String>();
+  @override
+  Future<VerificationState> verificationStatus() async => VerificationState(
+    emailVerified: true, verified: false, canApply: true, application: application('info'));
   @override
   Future<String> submitVerification({required Map<String, String> fields,
     String? idDocument, String? proofDocument, String? extraDocument,
@@ -61,6 +65,21 @@ VerificationApplication application(String status) => VerificationApplication.fr
 });
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async {
+    // Widget tests otherwise use Ahem boxes, which cannot validate typography.
+    final root = Platform.environment['FLUTTER_ROOT'] ??
+      File(Platform.resolvedExecutable).parent.parent.parent.parent.parent.path;
+    final directory = '$root/bin/cache/artifacts/material_fonts';
+    final text = FontLoader('sans');
+    for (final font in ['Roboto-Regular.ttf', 'Roboto-Bold.ttf']) {
+      text.addFont(File('$directory/$font').readAsBytes().then((v) => ByteData.sublistView(v)));
+    }
+    await text.load();
+    final icons = FontLoader('MaterialIcons')..addFont(File('$directory/MaterialIcons-Regular.otf')
+      .readAsBytes().then((v) => ByteData.sublistView(v)));
+    await icons.load();
+  });
   test('registration validation follows server rules without blocking old login passwords', () {
     expect(FormRules.username('bad name'), isNotNull);
     expect(FormRules.username('ayesha_123'), isNull);
@@ -184,6 +203,25 @@ void main() {
         expect(find.text('Add your identity document and proof of role to continue.'), findsOneWidget);
         expect(api.submissions, 0);
       }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final dark in [false, true]) {
+    testWidgets('verification dashboard adapts to dark=$dark and enlarged text', (tester) async {
+      tester.view.physicalSize = const Size(390, 940);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize); addTearDown(tester.view.resetDevicePixelRatio);
+      final boundary = GlobalKey();
+      await tester.pumpWidget(MaterialApp(theme: dark ? studyHubDarkTheme() : studyHubTheme(),
+        builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(
+          textScaler: const TextScaler.linear(1.3)), child: RepaintBoundary(key: boundary, child: child!)),
+        home: VerificationScreen(social: ReviewClient())));
+      await tester.pumpAndSettle();
+      expect(find.text('More information needed'), findsOneWidget);
+      await preview(tester, boundary, dark ? 'verification-dashboard-dark' : 'verification-dashboard-light');
+      await tester.ensureVisible(find.text('Update application'));
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     });
   }

@@ -11,13 +11,14 @@ import '../widgets/form_components.dart';
 import 'home_shell.dart';
 
 class VerificationScreen extends StatefulWidget {
-  const VerificationScreen({super.key});
+  const VerificationScreen({super.key, this.social});
+  final SocialApi? social;
   @override
   State<VerificationScreen> createState() => _VerificationScreenState();
 }
 
 class _VerificationScreenState extends State<VerificationScreen> {
-  late final social = SocialApi(AppScope.of(context).api);
+  late final social = widget.social ?? SocialApi(AppScope.of(context).api);
   VerificationState? state;
   bool loading = true, withdrawing = false;
   String? error;

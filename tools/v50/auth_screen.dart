@@ -19,6 +19,7 @@ class _AuthScreenState extends State<AuthScreen> {
   String? notice;
   bool failed = false;
   final formKey = GlobalKey<FormState>();
+  final scroll = ScrollController();
   final identifier = TextEditingController(), password = TextEditingController(),
       confirm = TextEditingController(), name = TextEditingController(),
       username = TextEditingController(), email = TextEditingController(),
@@ -30,6 +31,7 @@ class _AuthScreenState extends State<AuthScreen> {
     for (final c in [identifier, password, confirm, name, username, email, phone, dob]) {
       c.dispose();
     }
+    scroll.dispose();
     super.dispose();
   }
 
@@ -38,7 +40,7 @@ class _AuthScreenState extends State<AuthScreen> {
     final colors = Theme.of(context).colorScheme;
     return Scaffold(body: Stack(children: [
       const ExcludeSemantics(child: _StudyBackdrop()),
-      SafeArea(child: Center(child: SingleChildScrollView(
+      SafeArea(child: Center(child: SingleChildScrollView(controller: scroll,
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
         child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 480),
@@ -180,6 +182,13 @@ class _AuthScreenState extends State<AuthScreen> {
   void _changeStep(int value) {
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() { step = value; notice = null; });
+    _showTop();
+  }
+
+  void _showTop() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && scroll.hasClients) scroll.jumpTo(0);
+    });
   }
 
   Future<void> _next() async {
@@ -209,7 +218,7 @@ class _AuthScreenState extends State<AuthScreen> {
     } catch (_) {
       if (mounted) setState(() { notice = 'We couldn’t complete this request. Check your connection and try again.'; failed = true; });
     } finally {
-      if (mounted) setState(() => busy = false);
+      if (mounted) { setState(() => busy = false); if (notice != null) _showTop(); }
     }
   }
 
