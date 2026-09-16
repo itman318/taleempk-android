@@ -257,20 +257,20 @@ class _VerificationApplicationScreenState extends State<VerificationApplicationS
       _field(name, 'Full name', validator: FormRules.name, max: 120),
       _field(identity, 'CNIC / B-Form number', validator: FormRules.identity,
         keyboard: TextInputType.number, max: 20, helper: '13 digits, with or without hyphens'),
-      _field(org, kind == 'institute' ? 'Institute name' : 'School / organisation${kind == 'student' ? ' (optional)' : ''}',
+      _field(org, kind == 'institute' ? 'Institute name' : kind == 'student' ? 'School (optional)' : 'Organisation',
         validator: kind == 'student' ? null : (v) => (v ?? '').trim().isEmpty ? 'Enter your organisation name.' : null, max: 160),
       if (kind != 'student') ...[
-        _field(title, 'Role / designation (optional)', max: 120),
+        _field(title, 'Role (optional)', max: 120),
         _field(website, 'Website (optional)', keyboard: TextInputType.url, validator: FormRules.website, max: 200),
       ],
       if (kind == 'teacher') ...[
         _field(subjects, 'Subjects (optional)', max: 255),
-        _field(experience, 'Years of experience (optional)', keyboard: TextInputType.number,
+        _field(experience, 'Experience (years)', keyboard: TextInputType.number, helper: 'Optional · 0–60 years',
           validator: (v) => (v ?? '').isEmpty ? null : int.tryParse(v!) == null ||
             int.parse(v) < 0 || int.parse(v) > 60 ? 'Enter a number from 0 to 60.' : null, max: 2),
       ],
       _field(phone, 'Contact phone (optional)', keyboard: TextInputType.phone, max: 30),
-      _field(notes, 'Anything the reviewer should know? (optional)', max: 2000, lines: 3),
+      _field(notes, 'Notes (optional)', helper: 'Add anything that may help the reviewer.', max: 2000, lines: 3),
     ]));
 
   Widget _field(TextEditingController controller, String label, {
