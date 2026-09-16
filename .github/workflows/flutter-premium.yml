@@ -36,7 +36,7 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Generate final TaleemPK v4.9 source
+      - name: Generate final TaleemPK v5.0 source
         working-directory: .
         run: |
           python3 tools/v31_finalize.py
@@ -62,6 +62,7 @@ jobs:
           python3 tools/v47_lifecycle_security_audit.py
           python3 tools/v48_professional_audit.py
           python3 tools/v49_profile_reliability.py
+          python3 tools/v50_premium_forms.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -97,6 +98,13 @@ jobs:
         run: exit 1
       - name: Flutter tests
         run: flutter test
+      - name: Preserve form previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v5.0-Form-Previews
+          path: flutter/build/previews/*.png
+          if-no-files-found: ignore
       - name: PHP syntax check mobile APIs
         working-directory: .
         run: |
@@ -130,7 +138,7 @@ jobs:
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           manifest = Path('flutter/android/app/src/main/AndroidManifest.xml').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
-          assert 'version: 4.9.0+490' in pubspec
+          assert 'version: 5.0.0+500' in pubspec
           assert '_authRequestWithRetry' in api and '_compatTokenKey' in api
           assert 'suspendedpage.cgi' in api and 'server returned a web page instead of API data' in api
           assert '_recoverBootstrapInBackground' in state
@@ -180,7 +188,7 @@ jobs:
       - name: Preserve universal APK outside Flutter build outputs
         run: |
           mkdir -p release-artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v4.9.0-Universal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.0.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: |
           for attempt in 1 2 3; do
@@ -193,12 +201,12 @@ jobs:
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-artifacts/
-          test -s release-artifacts/TaleemPK-v4.9.0-Universal.apk
+          test -s release-artifacts/TaleemPK-v5.0.0-Universal.apk
           test -s release-artifacts/app-arm64-v8a-release.apk
           test -s release-artifacts/app-armeabi-v7a-release.apk
           test -s release-artifacts/app-x86_64-release.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v4.9.0-APKs
+          name: TaleemPK-v5.0.0-APKs
           path: flutter/release-artifacts/*.apk
           if-no-files-found: error
