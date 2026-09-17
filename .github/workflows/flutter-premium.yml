@@ -66,6 +66,7 @@ jobs:
           python3 tools/v51_onboarding_media.py
           python3 tools/v52_preflight.py
           python3 tools/v52_notifications.py
+          python3 tools/v53_messaging_search.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -91,25 +92,29 @@ jobs:
       - name: Realtime gateway syntax check
         working-directory: .
         run: node --check realtime/server.mjs
-      - name: v5.3 notification regression audit
+      - name: v5.3 regression audit
         working-directory: .
         run: |
           python3 - <<'PY'
           from pathlib import Path
           api=Path('flutter/lib/core/api_client.dart').read_text()
           shell=Path('flutter/lib/screens/home_shell.dart').read_text()
+          home=Path('flutter/lib/screens/home_screen.dart').read_text()
+          search=Path('flutter/lib/screens/global_search_screen.dart').read_text()
+          push=Path('flutter/lib/core/push_service.dart').read_text()
           module=Path('flutter/lib/screens/module_screen.dart').read_text()
           native=Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           bridge=Path('flutter/lib/core/native_bridge.dart').read_text()
           backend=Path('backend/api/mobile.php').read_text()
-          assert 'markAllNotificationsRead' in api
-          assert 'read_all_notifications' in backend
-          assert 'target_type,target_id' in backend
-          assert "Text('Read all')" in module
-          assert 'consumeNotificationPayload' in bridge
-          assert 'pendingNotificationPayload' in native and 'onNewIntent' in native
+          assert 'markAllNotificationsRead' in api and 'read_all_notifications' in backend
+          assert 'target_type,target_id' in backend and "Text('Read all')" in module
+          assert 'consumeNotificationPayload' in bridge and 'pendingNotificationPayload' in native and 'onNewIntent' in native
           assert '_consumeNotificationTap' in shell
-          print('v5.3 notification regression audit passed')
+          assert 'globalSearch' in api and 'global_search' in backend and 'Search anything on TaleemPK' in search
+          assert 'acknowledgeDelivered' in api and 'ack_delivery' in backend and 'mobile_message_delivery' in backend
+          assert 'conversationTaps' in push and 'initialConversationId' in Path('flutter/lib/screens/conversations_screen.dart').read_text()
+          assert 'viewOnce' in api and 'markViewOnceConsumed' in api
+          print('v5.3 search, delivery, view-once, push and notification audit passed')
           PY
       - name: Build universal APK
         run: |
