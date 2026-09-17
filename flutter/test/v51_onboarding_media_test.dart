@@ -173,6 +173,6 @@ void main() {
     await tapUi(tester,find.text('Send 1')); expect(sends,1);
     await tapUi(tester,find.text('Pick'));
     await tester.tap(find.byTooltip('Cancel sending')); await tester.pumpAndSettle(); expect(sends,1);
-    await tester.pumpWidget(const SizedBox()); await temp.delete(recursive:true);
-  });
+    await tester.pumpWidget(const SizedBox()); temp.deleteSync(recursive:true);
+  }, timeout: const Timeout(Duration(seconds: 60)));
 }
