@@ -64,6 +64,7 @@ jobs:
           python3 tools/v49_profile_reliability.py
           python3 tools/v50_premium_forms.py
           python3 tools/v51_onboarding_media.py
+          python3 tools/v52_preflight.py
           python3 tools/v52_notifications.py
       - uses: subosito/flutter-action@v2
         with:
