@@ -68,6 +68,7 @@ jobs:
           python3 tools/v52_notifications.py
           python3 tools/v53_messaging_search.py
           python3 tools/v53b_lint_fix.py
+          python3 tools/v53c_php_module_fix.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -82,6 +83,8 @@ jobs:
         run: |
           php -l flutter/backend/api/mobile.php
           php -l backend/api/mobile.php
+          php -l flutter/backend/api/mobile_v53.php
+          php -l backend/api/mobile_v53.php
           php -l backend/api/mobile_email_v51.php
           php -l backend/api/chat_send.php
           php tools/v51/email_test.php
@@ -106,7 +109,7 @@ jobs:
           module=Path('flutter/lib/screens/module_screen.dart').read_text()
           native=Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           bridge=Path('flutter/lib/core/native_bridge.dart').read_text()
-          backend=Path('backend/api/mobile.php').read_text()
+          backend=Path('backend/api/mobile.php').read_text()+Path('backend/api/mobile_v53.php').read_text()
           assert 'markAllNotificationsRead' in api and 'read_all_notifications' in backend
           assert 'target_type,target_id' in backend and "Text('Read all')" in module
           assert 'consumeNotificationPayload' in bridge and 'pendingNotificationPayload' in native and 'onNewIntent' in native
