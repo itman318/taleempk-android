@@ -36,7 +36,7 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Generate final TaleemPK v5.3 source
+      - name: Generate final TaleemPK v5.3.1 source
         working-directory: .
         run: |
           python3 tools/v31_finalize.py
@@ -97,7 +97,7 @@ jobs:
       - name: Realtime gateway syntax check
         working-directory: .
         run: node --check realtime/server.mjs
-      - name: v5.3 regression audit
+      - name: v5.3.1 regression audit
         working-directory: .
         run: |
           python3 - <<'PY'
@@ -116,6 +116,7 @@ jobs:
           native=Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           bridge=Path('flutter/lib/core/native_bridge.dart').read_text()
           backend=Path('backend/api/mobile.php').read_text()+Path('backend/api/mobile_v53.php').read_text()
+          pubspec=Path('flutter/pubspec.yaml').read_text()
           assert 'markAllNotificationsRead' in api and 'read_all_notifications' in backend
           assert 'target_type,target_id' in backend and "Text('Read all')" in module
           assert 'consumeNotificationPayload' in bridge and 'pendingNotificationPayload' in native and 'onNewIntent' in native
@@ -125,17 +126,19 @@ jobs:
           assert "tooltip: 'Notifications'" in home
           assert 'acknowledgeDelivered' in api and 'ack_delivery' in backend and 'mobile_message_delivery' in backend
           assert 'acknowledgeDelivered(fresh.where((m) => !m.mine)' in chat
-          assert '(m.read || m.delivered) ? Icons.done_all_rounded' in chat
+          assert 'm.delivered ? Icons.done_all_rounded : Icons.check_rounded' in chat
+          assert 'color: m.read ? const Color(0xFF75E9FF) : Colors.white70' in chat
           assert 'bool read, delivered;' in models and "delivered: _bool(j['delivered'])" in models
           assert 'conversationTaps' in push and 'initialConversationId' in Path('flutter/lib/screens/conversations_screen.dart').read_text()
           assert 'await Firebase.initializeApp();' in push and 'api.pushConfig()' not in push
           assert 'taleemPkFirebaseBackgroundHandler' in push and 'PushService.installBackgroundHandler();' in main
-          assert 'com.google.firebase.messaging.default_notification_channel_id' in manifest
+          assert 'com.google.firebase.messaging.default_notification_channel_id' in manifest and 'taleempk_messages' in manifest
           assert 'mobile_v44_push_relay_send' in relay and 'TALEEMPK_PUSH_SECRET' in relay
           assert 'viewOnce' in api and 'markViewOnceConsumed' in api
           assert "if ($action === 'mark_view_once')" in backend and "UPDATE messages SET status='deleted'" in backend
           assert 'separatorBuilder:(_,__)' not in search
-          print('v5.3 UI, search, delivery, view-once, push and notification audit passed')
+          assert 'version: 5.3.1+531' in pubspec
+          print('v5.3.1 UI, search, delivery, view-once, push and notification audit passed')
           PY
       - name: Build universal APK
         run: |
