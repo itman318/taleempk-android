@@ -36,9 +36,8 @@ source = '\n'.join(
 code = compile(source, str(script_path), 'exec')
 exec(code, {'__name__': '__main__', '__file__': str(script_path)})
 
-# Normalize ChatMessage delivered state. Some earlier chat generators already
-# add a separate final bool delivered field; collapse it into the mutable read
-# state declaration so there is exactly one delivered member and CI can verify it.
+# Normalize ChatMessage delivered state to exactly one mutable field. Earlier
+# transforms can put delivered in a standalone or grouped bool declaration.
 models_path = ROOT / 'flutter/lib/core/models.dart'
 models = models_path.read_text(encoding='utf-8')
 chat_start = models.find('class ChatMessage {')
@@ -46,19 +45,39 @@ chat_end = models.find('\nclass ChatPresence {', chat_start)
 if chat_start < 0 or chat_end < 0:
     raise RuntimeError('v5.3.1 ChatMessage model boundary missing')
 chunk = models[chat_start:chat_end]
+
+# Constructor must expose delivered once.
 if 'this.delivered' not in chunk:
     marker = '    this.linkPreview,\n  });'
     if marker not in chunk:
         raise RuntimeError('v5.3.1 ChatMessage constructor anchor missing')
     chunk = chunk.replace(marker, '    this.linkPreview,\n    this.delivered = false,\n  });', 1)
 
-# Remove a standalone existing delivered declaration before normalizing read.
-chunk = re.sub(r'^\s*(?:final\s+)?bool\s+delivered;\s*\n', '', chunk, flags=re.M)
-if 'bool read, delivered;' not in chunk:
-    marker = '  bool read;'
-    if marker not in chunk:
-        raise RuntimeError('v5.3.1 ChatMessage read field anchor missing')
-    chunk = chunk.replace(marker, '  bool read, delivered;', 1)
+# Work only on field declarations (between constructor and factory), so parser
+# and constructor references are never accidentally altered.
+ctor_end = chunk.find('  });')
+factory_start = chunk.find('  factory ChatMessage.fromJson')
+if ctor_end < 0 or factory_start < 0 or factory_start <= ctor_end:
+    raise RuntimeError('v5.3.1 ChatMessage field boundary missing')
+ctor_end += len('  });')
+fields = chunk[ctor_end:factory_start]
+
+# Remove delivered from every possible bool declaration shape, including:
+#   bool delivered;
+#   final bool mine, delivered;
+#   final bool delivered, mine;
+#   multiline comma lists.
+fields = re.sub(r'(?m)^\s*(?:final\s+)?bool\s+delivered\s*;\s*\n?', '', fields)
+fields = re.sub(r'\bdelivered\s*,\s*', '', fields)
+fields = re.sub(r',\s*\bdelivered\b(?=\s*;)', '', fields)
+
+# There must be exactly one delivered field and it remains mutable alongside read.
+if '  bool read;' not in fields:
+    raise RuntimeError('v5.3.1 ChatMessage read field anchor missing')
+fields = fields.replace('  bool read;', '  bool read, delivered;', 1)
+chunk = chunk[:ctor_end] + fields + chunk[factory_start:]
+
+# Parser must hydrate delivered once.
 if "delivered: _bool(j['delivered'])" not in chunk:
     marker = "    read: _bool(j['read']),"
     if marker not in chunk:
@@ -118,8 +137,8 @@ if 'm.delivered ? Icons.done_all_rounded : Icons.check_rounded' not in chat:
     raise RuntimeError('v5.3.1 delivered double-tick rendering missing')
 if 'color: m.read ? const Color(0xFF75E9FF) : Colors.white70' not in chat:
     raise RuntimeError('v5.3.1 read/delivered tick color semantics missing')
-if 'bool read, delivered;' not in models or "delivered: _bool(j['delivered'])" not in models:
-    raise RuntimeError('v5.3.1 delivered message model missing')
+if models.count('bool read, delivered;') != 1 or "delivered: _bool(j['delivered'])" not in models:
+    raise RuntimeError('v5.3.1 delivered message model missing or duplicated')
 if 'mobile_message_delivery md' not in mobile or "'delivered'=>$mine" not in mobile:
     raise RuntimeError('v5.3.1 delivered status missing from message API')
 if 'ack_delivery' not in mobile_v53 or 'mobile_message_delivery' not in mobile_v53:
