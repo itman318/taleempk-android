@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-START = "\n/* TaleemPK v5.3: cross-app search + actual recipient delivery receipts. */"
+START = r"\n/* TaleemPK v5.3: cross-app search + actual recipient delivery receipts. */"
 NEXT = "require_once __DIR__ . '/mobile_realtime_push_v44.php';"
 
 MODULE = r'''<?php
