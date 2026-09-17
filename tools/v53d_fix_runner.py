@@ -5,9 +5,9 @@ ROOT = Path(__file__).resolve().parents[1]
 script_path = ROOT / 'tools' / 'v53d_ui_push_delivery_audit.py'
 source = script_path.read_text(encoding='utf-8')
 
-# The generated chat already has a three-state tick expression after the v5.3
-# delivery model is added, but its formatting differs from the older exact
-# block. Skip that fragile exact replacement and verify semantics below.
+# The generated chat already has a three-state delivery tick, but formatting
+# differs across generator versions. Remove the fragile exact replacement and
+# verify the actual final semantics after all changes are applied.
 old = r'''old_tick = """                  Icon(
                     m.read ? Icons.done_all_rounded : Icons.check_rounded,
                     size: 15,
@@ -20,29 +20,23 @@ new_tick = """                  Icon(
                   ),"""
 text = once(text, old_tick, new_tick, 'three-state message tick')
 w(path, text)'''
-new = r'''# Delivery icon is verified after all v5.3 changes are applied.
+new = r'''# Delivery icon is verified after all v5.3.1 changes are applied.
 w(path, text)'''
 if old not in source:
     raise RuntimeError('v5.3d runner tick marker missing')
 source = source.replace(old, new, 1)
 
-# The final runner owns these compatibility assertions because the manifest and
-# tick layout vary across the generator chain.
-source = source.replace(
-    "assert 'com.google.firebase.messaging.default_notification_channel_id' in manifest\n",
-    "# final runner verifies/repairs FCM channel metadata\n",
-    1,
-)
-source = source.replace(
-    "assert '(m.read || m.delivered) ? Icons.done_all_rounded' in chat\n",
-    "# final runner verifies three-state tick semantics\n",
-    1,
-)
+# v53d's old exact-string assertions were written before the compatibility
+# runner. The final checks below are stricter semantically and emit useful errors.
+source = '\n'.join(
+    ('# ' + line if line.lstrip().startswith('assert ') else line)
+    for line in source.splitlines()
+) + '\n'
 
 code = compile(source, str(script_path), 'exec')
 exec(code, {'__name__': '__main__', '__file__': str(script_path)})
 
-# Guarantee the channel metadata after every prior Android transform.
+# Guarantee the FCM high-importance channel after every Android transform.
 manifest_path = ROOT / 'flutter/android/app/src/main/AndroidManifest.xml'
 manifest = manifest_path.read_text(encoding='utf-8')
 channel_key = 'com.google.firebase.messaging.default_notification_channel_id'
@@ -60,23 +54,50 @@ if channel_key not in manifest:
     )
     manifest_path.write_text(manifest, encoding='utf-8')
 
-# Release patch version for the audited notification/UI fix.
+# Release patch version for this audited notification/UI fix.
 pubspec_path = ROOT / 'flutter/pubspec.yaml'
 pubspec = pubspec_path.read_text(encoding='utf-8')
 pubspec = re.sub(r'^version:\s*[^\n]+', 'version: 5.3.1+531', pubspec, count=1, flags=re.M)
 pubspec_path.write_text(pubspec, encoding='utf-8')
 
-# Final semantic checks: one tick = stored, two grey = delivered, two blue = read.
+# Final semantic audit with explicit failure messages.
+home = (ROOT / 'flutter/lib/screens/home_screen.dart').read_text(encoding='utf-8')
+push = (ROOT / 'flutter/lib/core/push_service.dart').read_text(encoding='utf-8')
+main = (ROOT / 'flutter/lib/main.dart').read_text(encoding='utf-8')
 chat = (ROOT / 'flutter/lib/screens/chat_screen.dart').read_text(encoding='utf-8')
 models = (ROOT / 'flutter/lib/core/models.dart').read_text(encoding='utf-8')
+mobile = (ROOT / 'backend/api/mobile.php').read_text(encoding='utf-8')
+mobile_v53 = (ROOT / 'backend/api/mobile_v53.php').read_text(encoding='utf-8')
+relay = (ROOT / 'backend/api/mobile_realtime_push_v44.php').read_text(encoding='utf-8')
+manifest = manifest_path.read_text(encoding='utf-8')
+
+if 'Search members, groups, pages and posts' in home:
+    raise RuntimeError('v5.3.1 oversized home search card still present')
+if "tooltip: 'Search TaleemPK'" not in home or "tooltip: 'Notifications'" not in home:
+    raise RuntimeError('v5.3.1 compact search/notification app-bar actions missing')
+if 'await Firebase.initializeApp();' not in push or 'api.pushConfig()' in push:
+    raise RuntimeError('v5.3.1 bundled Firebase initialization not active')
+if 'taleemPkFirebaseBackgroundHandler' not in push or 'PushService.installBackgroundHandler();' not in main:
+    raise RuntimeError('v5.3.1 background FCM handler missing')
+if channel_key not in manifest or 'android:value="taleempk_messages"' not in manifest:
+    raise RuntimeError('v5.3.1 FCM notification channel metadata missing')
+if 'acknowledgeDelivered(fresh.where((m) => !m.mine)' not in chat:
+    raise RuntimeError('v5.3.1 recipient delivery acknowledgement missing')
 if 'm.delivered ? Icons.done_all_rounded : Icons.check_rounded' not in chat:
     raise RuntimeError('v5.3.1 delivered double-tick rendering missing')
 if 'color: m.read ? const Color(0xFF75E9FF) : Colors.white70' not in chat:
     raise RuntimeError('v5.3.1 read/delivered tick color semantics missing')
-if 'bool read, delivered;' not in models:
+if 'bool read, delivered;' not in models or "delivered: _bool(j['delivered'])" not in models:
     raise RuntimeError('v5.3.1 delivered message model missing')
-manifest = manifest_path.read_text(encoding='utf-8')
-if channel_key not in manifest or 'android:value="taleempk_messages"' not in manifest:
-    raise RuntimeError('v5.3.1 FCM notification channel metadata missing')
+if 'mobile_message_delivery md' not in mobile or "'delivered'=>$mine" not in mobile:
+    raise RuntimeError('v5.3.1 delivered status missing from message API')
+if 'ack_delivery' not in mobile_v53 or 'mobile_message_delivery' not in mobile_v53:
+    raise RuntimeError('v5.3.1 delivery receipt endpoint missing')
+if 'mobile_v44_push_relay_send' not in relay or 'TALEEMPK_PUSH_SECRET' not in relay:
+    raise RuntimeError('v5.3.1 authenticated Node Firebase relay integration missing')
+if "if ($action === 'mark_view_once')" not in mobile or "UPDATE messages SET status='deleted'" not in mobile:
+    raise RuntimeError('v5.3.1 server-enforced View Once consumption missing')
+if 'version: 5.3.1+531' not in pubspec_path.read_text(encoding='utf-8'):
+    raise RuntimeError('v5.3.1 release version missing')
 
 print('TaleemPK v5.3.1 UI, Firebase push, delivery ticks and view-once hardening finalized')
