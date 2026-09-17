@@ -69,6 +69,7 @@ jobs:
           python3 tools/v53_messaging_search.py
           python3 tools/v53b_lint_fix.py
           python3 tools/v53c_php_module_fix.py
+          python3 tools/v53d_ui_push_delivery_audit.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -106,6 +107,11 @@ jobs:
           home=Path('flutter/lib/screens/home_screen.dart').read_text()
           search=Path('flutter/lib/screens/global_search_screen.dart').read_text()
           push=Path('flutter/lib/core/push_service.dart').read_text()
+          main=Path('flutter/lib/main.dart').read_text()
+          chat=Path('flutter/lib/screens/chat_screen.dart').read_text()
+          models=Path('flutter/lib/core/models.dart').read_text()
+          manifest=Path('flutter/android/app/src/main/AndroidManifest.xml').read_text()
+          relay=Path('backend/api/mobile_realtime_push_v44.php').read_text()
           module=Path('flutter/lib/screens/module_screen.dart').read_text()
           native=Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           bridge=Path('flutter/lib/core/native_bridge.dart').read_text()
@@ -115,11 +121,21 @@ jobs:
           assert 'consumeNotificationPayload' in bridge and 'pendingNotificationPayload' in native and 'onNewIntent' in native
           assert '_consumeNotificationTap' in shell
           assert 'globalSearch' in api and 'global_search' in backend and 'Search anything on TaleemPK' in search
+          assert 'Search members, groups, pages and posts' not in home and "tooltip: 'Search TaleemPK'" in home
+          assert "tooltip: 'Notifications'" in home
           assert 'acknowledgeDelivered' in api and 'ack_delivery' in backend and 'mobile_message_delivery' in backend
+          assert 'acknowledgeDelivered(fresh.where((m) => !m.mine)' in chat
+          assert '(m.read || m.delivered) ? Icons.done_all_rounded' in chat
+          assert 'bool read, delivered;' in models and "delivered: _bool(j['delivered'])" in models
           assert 'conversationTaps' in push and 'initialConversationId' in Path('flutter/lib/screens/conversations_screen.dart').read_text()
+          assert 'await Firebase.initializeApp();' in push and 'api.pushConfig()' not in push
+          assert 'taleemPkFirebaseBackgroundHandler' in push and 'PushService.installBackgroundHandler();' in main
+          assert 'com.google.firebase.messaging.default_notification_channel_id' in manifest
+          assert 'mobile_v44_push_relay_send' in relay and 'TALEEMPK_PUSH_SECRET' in relay
           assert 'viewOnce' in api and 'markViewOnceConsumed' in api
+          assert "if ($action === 'mark_view_once')" in backend and "UPDATE messages SET status='deleted'" in backend
           assert 'separatorBuilder:(_,__)' not in search
-          print('v5.3 search, delivery, view-once, push and notification audit passed')
+          print('v5.3 UI, search, delivery, view-once, push and notification audit passed')
           PY
       - name: Build universal APK
         run: |
@@ -127,7 +143,7 @@ jobs:
       - name: Preserve universal APK outside Flutter build outputs
         run: |
           mkdir -p release-artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.3.0-Universal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.3.1-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - name: Collect and verify all APKs
@@ -135,12 +151,12 @@ jobs:
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-artifacts/
-          test -s release-artifacts/TaleemPK-v5.3.0-Universal.apk
+          test -s release-artifacts/TaleemPK-v5.3.1-Universal.apk
           test -s release-artifacts/app-arm64-v8a-release.apk
           test -s release-artifacts/app-armeabi-v7a-release.apk
           test -s release-artifacts/app-x86_64-release.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v5.3.0-APKs
+          name: TaleemPK-v5.3.1-APKs
           path: flutter/release-artifacts/*.apk
           if-no-files-found: error
