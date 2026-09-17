@@ -1,0 +1,41 @@
+TaleemPK v5.1.0 — Android app + website API update
+
+1. WEBSITE UPDATE (required for email verification and encrypted view-once photos)
+   Back up your website's existing api folder first.
+   Open the actual taleempk.online document root in hosting File Manager — the
+   folder where the working install.php/index.php lives. Earlier screenshots
+   showed a separate taleempk.online folder, so do not assume public_html.
+   Upload the files inside Website-API-Update/api into that site's api folder,
+   replacing the matching files. Keep the api folder name and upload all files
+   together. Do not upload the whole package or private signing files to hosting.
+   Keep config, database, uploads and includes unchanged. Do not reinstall or
+   create a new database for this update.
+
+2. INSTALL THE APP
+   Extract this ZIP and open TaleemPK-v5.1.0-Final-Universal.apk on Android.
+   This APK includes arm64-v8a, armeabi-v7a and x86_64. It requires Android 7.0+.
+   It uses the same permanent release certificate as the v5.0.0 Final release.
+   Android still requires matching signing certificates for an in-place update;
+   older debug-signed builds have a different certificate. Do not remove an
+   existing app just to work around an installation error: local drafts and
+   encryption keys may be needed. Record the exact Android error first.
+
+3. WHAT CHANGED
+   - New learning Home page, responsive cards and dark-mode styling.
+   - Signup requires an explicit Create account tap; email-code entry opens next.
+   - Unverified login opens the same 6-digit verification form with resend/error states.
+   - Email confirmation does not bypass admin review, passwords or login 2FA.
+   - One attachment menu; gallery/camera opens a preview before anything is sent.
+   - Edit/Crop in preview; free crop, movable crop bounds, aspect presets,
+     rotate, flip, draw, opaque hide, brightness, contrast and undo.
+   - Fast repeated taps cannot stack photo viewers or attachment pickers.
+   - Batch photos respect enabled chat encryption, including the file's group key epoch.
+   - View-once media requires the server to accept consumption before displaying.
+
+4. EMAIL DELIVERY
+   The website still needs working SMTP/email settings to deliver messages.
+   Codes remain hashed, expire, and have attempt/resend limits. No verification
+   codes, passwords, tokens or release keys are included in this package.
+
+The APK cannot upload the website patch itself. Live hosting deployment and
+SMTP delivery require your hosting settings; they are not changed by this ZIP.

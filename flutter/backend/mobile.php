@@ -1,6 +1,6 @@
 <?php
 /**
- * TaleemPK native Android API v1.5.
+ * TaleemPK native Android API v1.6.
  *
  * Browser sessions are never exported to a phone. A successful native sign-in
  * receives a random bearer token; the database stores only its SHA-256 digest.
@@ -41,7 +41,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && post_body_was_too_large()) {
 
 function mobile_out(array $data = [], int $status = 200): void
 {
-    while (ob_get_level() > 0) { @ob_end_clean(); }
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['ok' => $status < 400, 'data' => $data], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -50,7 +49,6 @@ function mobile_out(array $data = [], int $status = 200): void
 
 function mobile_error(string $message, int $status = 400): void
 {
-    while (ob_get_level() > 0) { @ob_end_clean(); }
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['ok' => false, 'error' => $message], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -65,7 +63,14 @@ function mobile_bearer(): string
             if (strcasecmp((string) $k, 'Authorization') === 0) { $header = (string) $v; break; }
         }
     }
-    return preg_match('/^Bearer\s+([a-f0-9]{64})$/i', trim($header), $m) ? strtolower($m[1]) : '';
+    if (preg_match('/^Bearer\s+([a-f0-9]{64})$/i', trim($header), $m)) {
+        return strtolower($m[1]);
+    }
+    /* Apache/FastCGI configurations on some shared hosts remove Authorization
+       before PHP. Native authenticated POST requests therefore carry the same
+       token in the encrypted request body as a compatibility fallback. */
+    $fallback = strtolower(trim((string) ($_POST['access_token'] ?? '')));
+    return preg_match('/^[a-f0-9]{64}$/', $fallback) ? $fallback : '';
 }
 
 function mobile_user(): array
@@ -130,27 +135,6 @@ function mobile_finish_login(array $u, string $device): void
    misplaced or partially uploaded file. */
 if ($action === 'health') {
     mobile_out(['service' => 'TaleemPK mobile API', 'version' => defined('APP_VERSION') ? APP_VERSION : 'unknown']);
-}
-
-if ($action === 'forgot_password') {
-    if (!api_burst_limit('mobile_forgot_password', 3)) {
-        mobile_error('Too many reset requests from this connection. Wait a minute and try again.', 429);
-    }
-    $email = strtolower(trim((string) ($_POST['email'] ?? '')));
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        mobile_error('Enter a valid email address.');
-    }
-    $u = fetch_one('SELECT id, name, email, reset_expires FROM users WHERE email = ? LIMIT 1', [$email]);
-    $recent = $u && $u['reset_expires']
-        && strtotime((string) $u['reset_expires']) > time() + 6600;
-    if ($u && !$recent) {
-        $token = bin2hex(random_bytes(24));
-        q('UPDATE users SET reset_token = ?, reset_expires = DATE_ADD(NOW(), INTERVAL 2 HOUR) WHERE id = ?',
-          [hash('sha256', $token), $u['id']]);
-        [$subject, $html] = mail_msg_reset((string) $u['name'], url('reset.php?t=' . $token), 2);
-        queue_mail((string) $u['email'], $subject, $html, (string) $u['name'], 'reset');
-    }
-    mobile_out(['message' => 'If an account uses that email, a reset link is on its way. It works for two hours.']);
 }
 
 if ($action === 'register') {
@@ -307,242 +291,6 @@ if ($action === 'logout') {
 $u = mobile_user();
 $uid = (int) $u['id'];
 
-function mobile_privacy_snapshot(int $uid): array
-{
-    $row = fetch_one('SELECT profile_privacy,show_online,searchable,allow_dm,allow_comments,allow_calls,show_receipts,show_typing FROM users WHERE id=? LIMIT 1', [$uid]);
-    if (!$row) { mobile_error('This account is not available.', 404); }
-    return [
-        'profile_privacy' => (string) ($row['profile_privacy'] ?? 'public'),
-        'show_online' => (int) ($row['show_online'] ?? 1) === 1,
-        'searchable' => (int) ($row['searchable'] ?? 1) === 1,
-        'allow_dm' => (string) ($row['allow_dm'] ?? 'everyone'),
-        'allow_comments' => (string) ($row['allow_comments'] ?? 'everyone'),
-        'allow_calls' => (string) ($row['allow_calls'] ?? 'everyone'),
-        'show_receipts' => (int) ($row['show_receipts'] ?? 1) === 1,
-        'show_typing' => (int) ($row['show_typing'] ?? 1) === 1,
-    ];
-}
-
-if ($action === 'privacy_get') {
-    mobile_out(mobile_privacy_snapshot($uid));
-}
-
-if ($action === 'privacy_update') {
-    $key = strtolower(trim((string) ($_POST['key'] ?? '')));
-    $value = strtolower(trim((string) ($_POST['value'] ?? '')));
-    $choices = [
-        'profile_privacy' => ['public','members','private'],
-        'allow_dm' => ['everyone','following','nobody'],
-        'allow_comments' => ['everyone','followers','nobody'],
-        'allow_calls' => ['everyone','following','nobody'],
-    ];
-    $booleans = ['show_online','searchable','show_receipts','show_typing'];
-    if (isset($choices[$key])) {
-        if (!in_array($value, $choices[$key], true)) { mobile_error('That privacy option is not valid.'); }
-        q("UPDATE users SET {$key}=? WHERE id=?", [$value,$uid]);
-    } elseif (in_array($key, $booleans, true)) {
-        if (!in_array($value, ['0','1'], true)) { mobile_error('That privacy option is not valid.'); }
-        q("UPDATE users SET {$key}=? WHERE id=?", [(int)$value,$uid]);
-    } else {
-        mobile_error('That privacy setting is not supported.');
-    }
-    log_activity($uid, 'privacy_update', 'Updated ' . $key . ' from Android app');
-    mobile_out(mobile_privacy_snapshot($uid));
-}
-
-if ($action === 'sessions') {
-    $currentHash = hash('sha256', mobile_bearer());
-    $rows = fetch_all('SELECT token_hash,device_name,created_at,last_seen,expires_at FROM mobile_sessions WHERE user_id=? AND expires_at>NOW() ORDER BY created_at DESC LIMIT 20', [$uid]);
-    $sessions = array_map(static function(array $row) use ($currentHash): array {
-        return [
-            'session_id' => (string) $row['token_hash'],
-            'device' => (string) ($row['device_name'] ?: 'Mobile device'),
-            'created_at' => (string) ($row['created_at'] ?? ''),
-            'last_seen' => (string) ($row['last_seen'] ?? $row['created_at'] ?? ''),
-            'expires_at' => (string) ($row['expires_at'] ?? ''),
-            'current' => hash_equals($currentHash, (string) $row['token_hash']),
-        ];
-    }, $rows);
-    mobile_out(['sessions' => $sessions]);
-}
-
-if ($action === 'session_revoke') {
-    $sessionId = strtolower(trim((string) ($_POST['session_id'] ?? '')));
-    if (!preg_match('/^[a-f0-9]{64}$/', $sessionId)) { mobile_error('Choose a valid device session.'); }
-    $row = fetch_one('SELECT token_hash FROM mobile_sessions WHERE token_hash=? AND user_id=? LIMIT 1', [$sessionId,$uid]);
-    if (!$row) { mobile_error('That device session is no longer available.', 404); }
-    if (hash_equals(hash('sha256', mobile_bearer()), (string) $row['token_hash'])) {
-        mobile_error('Use Sign out to remove the current device.', 409);
-    }
-    delete_row('mobile_sessions', 'token_hash=? AND user_id=?', [$sessionId,$uid]);
-    log_activity($uid, 'mobile_session_revoked', 'Revoked a mobile session from Android app');
-    mobile_out(['revoked' => true]);
-}
-
-if ($action === 'change_password') {
-    $current = (string) ($_POST['current_password'] ?? '');
-    $next = (string) ($_POST['new_password'] ?? '');
-    if ($current === '' || $next === '') { mobile_error('Enter your current and new password.'); }
-    if (!password_verify($current, (string) ($u['password_hash'] ?? ''))) {
-        mobile_error('Your current password is not correct.', 401);
-    }
-    [$passwordOk, $passwordReason] = password_quality($next, [
-        'name' => (string) ($u['name'] ?? ''),
-        'username' => (string) ($u['username'] ?? ''),
-        'email' => (string) ($u['email'] ?? ''),
-    ]);
-    if (!$passwordOk) { mobile_error($passwordReason); }
-    if (password_verify($next, (string) ($u['password_hash'] ?? ''))) {
-        mobile_error('Choose a new password that is different from your current password.');
-    }
-    q('UPDATE users SET password_hash=? WHERE id=?', [password_hash($next, PASSWORD_DEFAULT),$uid]);
-    if ((int) ($_POST['sign_out_others'] ?? 1) === 1) {
-        $currentHash = hash('sha256', mobile_bearer());
-        q('DELETE FROM mobile_sessions WHERE user_id=? AND token_hash<>?', [$uid,$currentHash]);
-    }
-    log_activity($uid, 'password_changed_mobile', 'Password changed from Android app');
-    mobile_out(['message' => 'Password updated securely.']);
-}
-
-if ($action === 'quiz_start') {
-    require_feature('feature_quizzes');
-    $quizId = max(0, (int) ($_POST['quiz_id'] ?? 0));
-    $quiz = fetch_one('SELECT id,title,description,subject,time_limit,pass_percent,shuffle,show_answers,status,is_public,user_id FROM quizzes WHERE id=? LIMIT 1', [$quizId]);
-    if (!$quiz
-        || ($quiz['status'] !== 'approved' && !is_admin() && (int)$quiz['user_id'] !== $uid)
-        || ((int)$quiz['is_public'] !== 1 && !is_admin() && (int)$quiz['user_id'] !== $uid)) {
-        mobile_error('That quiz is not available.', 404);
-    }
-    $questions = fetch_all('SELECT id,question,image,option_a,option_b,option_c,option_d FROM quiz_questions WHERE quiz_id=? ORDER BY sort_order,id', [$quizId]);
-    if (!$questions) { mobile_error('This quiz has no questions yet.', 409); }
-    if ((int)$quiz['shuffle'] === 1) { shuffle($questions); }
-    $attemptId = insert_row('quiz_attempts', [
-        'quiz_id' => $quizId,
-        'user_id' => $uid,
-        'total' => count($questions),
-        'status' => 'in_progress',
-    ]);
-    $items = array_map(static function(array $q): array {
-        $options = [];
-        foreach (['a','b','c','d'] as $letter) {
-            $value = trim((string)($q['option_' . $letter] ?? ''));
-            if ($value !== '') { $options[$letter] = $value; }
-        }
-        return [
-            'id' => (int)$q['id'],
-            'question' => (string)$q['question'],
-            'image' => !empty($q['image']) ? upload_url((string)$q['image']) : null,
-            'options' => $options,
-        ];
-    }, $questions);
-    mobile_out([
-        'attempt_id' => (int)$attemptId,
-        'quiz_id' => $quizId,
-        'title' => (string)$quiz['title'],
-        'description' => (string)($quiz['description'] ?? ''),
-        'subject' => (string)($quiz['subject'] ?? ''),
-        'time_limit_seconds' => max(0, (int)$quiz['time_limit']) * 60,
-        'pass_percent' => (int)$quiz['pass_percent'],
-        'questions' => $items,
-    ]);
-}
-
-if ($action === 'quiz_submit') {
-    require_feature('feature_quizzes');
-    $attemptId = max(0, (int) ($_POST['attempt_id'] ?? 0));
-    $answersRaw = json_decode((string) ($_POST['answers'] ?? '{}'), true);
-    if (!is_array($answersRaw)) { $answersRaw = []; }
-    $attempt = fetch_one('SELECT a.*,q.title,q.pass_percent,q.show_answers,q.time_limit FROM quiz_attempts a JOIN quizzes q ON q.id=a.quiz_id WHERE a.id=? AND a.user_id=? LIMIT 1', [$attemptId,$uid]);
-    if (!$attempt) { mobile_error('That quiz attempt is not available.', 404); }
-    if ((string)$attempt['status'] !== 'in_progress') { mobile_error('This quiz attempt has already been submitted.', 409); }
-    $questions = fetch_all('SELECT id,question,option_a,option_b,option_c,option_d,correct_option,explanation FROM quiz_questions WHERE quiz_id=? ORDER BY sort_order,id', [(int)$attempt['quiz_id']]);
-    if (!$questions) { mobile_error('This quiz no longer has questions.', 409); }
-    $timeTaken = max(0, (int) ($_POST['time_taken'] ?? 0));
-    $maxTime = (int)$attempt['time_limit'] > 0 ? ((int)$attempt['time_limit'] * 60 + 30) : 86400;
-    $timeTaken = min($timeTaken, $maxTime);
-    $correct = 0; $wrong = 0; $skipped = 0; $answerRows = [];
-    foreach ($questions as $q) {
-        $key = (string)(int)$q['id'];
-        $selected = strtolower(trim((string)($answersRaw[$key] ?? '')));
-        if (!in_array($selected, ['a','b','c','d'], true)) {
-            $selected = null; $isCorrect = 0; $skipped++;
-        } else {
-            $isCorrect = $selected === (string)$q['correct_option'] ? 1 : 0;
-            if ($isCorrect) { $correct++; } else { $wrong++; }
-        }
-        $answerRows[] = [(int)$q['id'], $selected, $isCorrect];
-    }
-    $total = count($questions);
-    $percentage = $total > 0 ? round($correct / $total * 100, 2) : 0.0;
-    db_transaction(static function() use ($attemptId,$answerRows,$correct,$wrong,$skipped,$total,$percentage,$timeTaken,$attempt): void {
-        foreach ($answerRows as $answer) {
-            insert_row('quiz_answers', [
-                'attempt_id' => $attemptId,
-                'question_id' => $answer[0],
-                'selected' => $answer[1],
-                'is_correct' => $answer[2],
-            ]);
-        }
-        update_row('quiz_attempts', [
-            'score' => $correct,
-            'total' => $total,
-            'percentage' => $percentage,
-            'correct' => $correct,
-            'wrong' => $wrong,
-            'skipped' => $skipped,
-            'time_taken' => $timeTaken,
-            'status' => 'completed',
-            'completed_at' => date('Y-m-d H:i:s'),
-        ], 'id=? AND user_id=?', [$attemptId,(int)$attempt['user_id']]);
-        q('UPDATE quizzes SET attempts_count=attempts_count+1 WHERE id=?', [(int)$attempt['quiz_id']]);
-    });
-    $review = [];
-    if ((int)$attempt['show_answers'] === 1) {
-        foreach ($questions as $q) {
-            $selected = null; $isCorrect = false;
-            foreach ($answerRows as $answer) {
-                if ($answer[0] === (int)$q['id']) { $selected = $answer[1]; $isCorrect = $answer[2] === 1; break; }
-            }
-            $options = [];
-            foreach (['a','b','c','d'] as $letter) {
-                $value = trim((string)($q['option_' . $letter] ?? ''));
-                if ($value !== '') { $options[$letter] = $value; }
-            }
-            $review[] = [
-                'id' => (int)$q['id'],
-                'question' => (string)$q['question'],
-                'options' => $options,
-                'selected' => $selected,
-                'correct_option' => (string)$q['correct_option'],
-                'is_correct' => $isCorrect,
-                'explanation' => (string)($q['explanation'] ?? ''),
-            ];
-        }
-    }
-    mobile_out([
-        'attempt_id' => $attemptId,
-        'title' => (string)$attempt['title'],
-        'percentage' => $percentage,
-        'correct' => $correct,
-        'wrong' => $wrong,
-        'skipped' => $skipped,
-        'total' => $total,
-        'time_taken' => $timeTaken,
-        'pass_percent' => (int)$attempt['pass_percent'],
-        'passed' => $percentage >= (float)$attempt['pass_percent'],
-        'review' => $review,
-    ]);
-}
-
-/* Bridge the verified bearer identity into the mature browser mutation
-   handlers. The website bootstrap may already have cached current_user() as
-   guest before the bearer token is checked, so the companion auth.php patch
-   reads this explicit native identity before that cache. */
-$_SESSION['uid'] = $uid;
-$GLOBALS['NATIVE_API_USER'] = $u;
-$_SERVER['HTTP_X_REQUESTED_WITH'] = 'XMLHttpRequest';
-if (!defined('NATIVE_API_AUTHENTICATED')) { define('NATIVE_API_AUTHENTICATED', true); }
-
 /* Reuse the mature website chat handlers behind bearer authentication. Each
    handler still performs its own membership, feature, verification and abuse
    checks; only the browser-only CSRF check is bypassed for this authenticated
@@ -556,106 +304,14 @@ $nativeSharedHandlers = [
     'message_action' => 'chat_message.php',
     'manage_chat'    => 'chat_manage.php',
     'search_chat'    => 'chat_search.php',
-    'chat_date'      => 'chat_date.php',
-    'chat_group'     => 'chat_group.php',
-    'chat_vote'      => 'chat_vote.php',
-    'block_user'     => 'block.php',
-    'report_user'    => 'report.php',
-    'call'           => 'call.php',
     'create_post'    => 'post_create.php',
     'react_post'     => 'react.php',
     'create_comment' => 'comment_create.php',
-    'edit_comment'   => 'post_edit.php',
 ];
 if (isset($nativeSharedHandlers[$action])) {
+    $_SESSION['uid'] = $uid;
+    if (!defined('NATIVE_API_AUTHENTICATED')) { define('NATIVE_API_AUTHENTICATED', true); }
     require __DIR__ . '/' . $nativeSharedHandlers[$action];
-}
-
-if ($action === 'delete_comment') {
-    require_feature('feature_comments');
-    $id = (int) ($_POST['id'] ?? 0);
-    $c = fetch_one(
-        'SELECT c.*, p.user_id AS post_owner, p.type AS post_type, p.status AS post_status
-           FROM comments c JOIN posts p ON p.id=c.post_id WHERE c.id=?',
-        [$id]
-    );
-    if (!$c) { mobile_error('That comment no longer exists.', 404); }
-    if ((int) $c['user_id'] !== $uid && !mod_can('comments')) {
-        mobile_error('You can only delete your own comments.', 403);
-    }
-    db_transaction(static function () use ($id, $c): void {
-        delete_row('reactions', "target_type='comment' AND target_id=?", [$id]);
-        delete_row('notifications', "target_type='comment' AND target_id=?", [$id]);
-        q('UPDATE comments SET parent_id=NULL WHERE parent_id=?', [$id]);
-        delete_row('comments', 'id=?', [$id]);
-        if (($c['status'] ?? 'active') === 'active') {
-            q('UPDATE posts SET comments_count=GREATEST(comments_count-1,0) WHERE id=?', [$c['post_id']]);
-        }
-        if ((int) ($c['is_best_answer'] ?? 0) === 1) {
-            q('UPDATE posts SET is_solved=0 WHERE id=?', [$c['post_id']]);
-            remove_points_for_target((int) $c['user_id'], 'best_answer', 'comment', $id);
-        }
-        remove_points_for_target((int) $c['user_id'], 'comment', 'comment', $id);
-    });
-    mobile_out(['deleted' => true]);
-}
-
-if ($action === 'notification_peek') {
-    $latestChat = null;
-    $row = fetch_one(
-        "SELECT m.id,m.conversation_id,m.content,m.enc,m.attachment_name,m.voice_seconds,
-                sender.name AS from_name
-           FROM messages m
-           JOIN conversation_members cm
-             ON cm.conversation_id=m.conversation_id AND cm.user_id=?
-           JOIN users sender ON sender.id=m.sender_id
-          WHERE m.sender_id<>? AND m.status='sent'
-            AND m.id>COALESCE(cm.last_read_id,0)
-          ORDER BY m.id DESC LIMIT 1",
-        [$uid, $uid]
-    );
-    if ($row) {
-        if ((int) ($row['enc'] ?? 0) === 1) {
-            $text = 'Sent you an encrypted message';
-        } elseif ((int) ($row['voice_seconds'] ?? 0) > 0) {
-            $text = 'Sent a voice message';
-        } elseif (trim((string) ($row['content'] ?? '')) !== '') {
-            $text = excerpt((string) $row['content'], 90);
-        } elseif (trim((string) ($row['attachment_name'] ?? '')) !== '') {
-            $text = 'Sent a file';
-        } else {
-            $text = 'Sent you a message';
-        }
-        $latestChat = [
-            'id' => (int) $row['id'],
-            'from' => (string) $row['from_name'],
-            'text' => $text,
-            'conversation' => (int) $row['conversation_id'],
-        ];
-    }
-
-    $latestNotification = fetch_one(
-        "SELECT id,message,type,created_at FROM notifications
-          WHERE user_id=? AND is_read=0 AND type<>'message'
-          ORDER BY id DESC LIMIT 1",
-        [$uid]
-    );
-    mobile_out([
-        'chat_unread' => (int) fetch_col(
-            'SELECT COALESCE(SUM(unread_count),0) FROM conversation_members WHERE user_id=?',
-            [$uid]
-        ),
-        'notification_unread' => (int) fetch_col(
-            'SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0',
-            [$uid]
-        ),
-        'latest_chat' => $latestChat,
-        'latest_notification' => $latestNotification ? [
-            'id' => (int) $latestNotification['id'],
-            'message' => (string) $latestNotification['message'],
-            'type' => (string) $latestNotification['type'],
-        ] : null,
-    ]);
 }
 
 if ($action === 'bootstrap') {
@@ -742,15 +398,14 @@ if ($action === 'module') {
             'kind'=>'resource','done'=>false];
     } elseif ($key === 'quizzes') {
         require_feature('feature_quizzes'); $title = 'Quizzes'; $subtitle = 'Practice and test your knowledge';
-        $rows = fetch_all("SELECT q.id,q.slug,q.title,q.subject,q.class_grade,q.time_limit,q.attempts_count,
+        $rows = fetch_all("SELECT q.id,q.title,q.subject,q.class_grade,q.time_limit,q.attempts_count,
                            (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id=q.id) questions
                            FROM quizzes q WHERE q.status='approved' AND q.is_public=1
                            ORDER BY q.attempts_count DESC,q.id DESC LIMIT 60");
         foreach ($rows as $r) $items[] = ['id'=>(int)$r['id'],'title'=>$r['title'],
             'subtitle'=>(string)($r['subject']?:'General knowledge'),
             'meta'=>(int)$r['questions'].' questions'.((int)$r['time_limit']?' · '.(int)$r['time_limit'].' min':'').' · '.(int)$r['attempts_count'].' attempts',
-            'kind'=>'quiz','done'=>false,
-            'route'=>'quiz-take.php?s='.rawurlencode((string)$r['slug'])];
+            'kind'=>'quiz','done'=>false];
     } elseif ($key === 'groups') {
         require_feature('feature_groups'); $title = 'Study groups'; $subtitle = 'Learn together by subject';
         $rows = fetch_all("SELECT g.id,g.name,g.subject,g.level,g.members_count,gm.role
@@ -872,9 +527,8 @@ if ($action === 'create_ticket') {
 
 if ($action === 'conversations') {
     require_feature('feature_chat');
-    $archived = !empty($_POST['archived']) ? 1 : 0;
     $rows = fetch_all(
-        "SELECT c.id,c.type,c.title,c.avatar,c.last_message,c.last_activity,cm.unread_count,cm.is_muted,cm.is_archived,cm.role,
+        "SELECT c.id,c.type,c.title,c.avatar,c.last_message,c.last_activity,cm.unread_count,cm.is_muted,
                 (SELECT u2.name FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
                   WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_name,
                 (SELECT u2.avatar FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
@@ -882,29 +536,14 @@ if ($action === 'conversations') {
                 (SELECT u2.last_seen FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
                   WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_last_seen,
                 (SELECT u2.show_online FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
-                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_show_online,
-                (SELECT u2.id FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
-                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_id,
-                (SELECT u2.username FROM conversation_members cm2 JOIN users u2 ON u2.id=cm2.user_id
-                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_username
+                  WHERE cm2.conversation_id=c.id AND cm2.user_id<>? LIMIT 1) other_show_online
            FROM conversation_members cm JOIN conversations c ON c.id=cm.conversation_id
-          WHERE cm.user_id=? AND cm.is_archived=? ORDER BY c.last_activity DESC LIMIT 100",
-        [$uid,$uid,$uid,$uid,$uid,$uid,$uid,$archived]
+          WHERE cm.user_id=? AND cm.is_archived=0 ORDER BY c.last_activity DESC LIMIT 100",
+        [$uid,$uid,$uid,$uid,$uid]
     );
-    $items = array_map(static function(array $c) use ($uid): array {
+    $items = array_map(static function(array $c): array {
         $group = $c['type']==='group';
         $avatar = $group ? $c['avatar'] : $c['other_avatar'];
-        $otherId = (int)($c['other_id'] ?? 0);
-        $selfBlocked = !$group && $otherId > 0
-            ? (bool) fetch_one('SELECT id FROM blocks WHERE user_id=? AND blocked_id=? LIMIT 1', [$uid,$otherId])
-            : false;
-        $blockedByOther = !$group && $otherId > 0
-            ? (bool) fetch_one('SELECT id FROM blocks WHERE user_id=? AND blocked_id=? LIMIT 1', [$otherId,$uid])
-            : false;
-        $callsEnabled = !$group && $otherId > 0
-            && (int)setting('chat_calls',1)===1
-            && table_exists('calls');
-        $videoCallsEnabled = $callsEnabled && (int)setting('call_video',1)===1;
         $online = !$group && (int)($c['other_show_online'] ?? 0) === 1
             && !empty($c['other_last_seen']) && strtotime((string)$c['other_last_seen']) >= time() - 120;
         $status = $group ? 'Study group' : ($online ? 'Online now'
@@ -915,10 +554,6 @@ if ($action === 'conversations') {
             'avatar'=>$avatar ? upload_url($avatar) : null, 'last_message'=>(string)($c['last_message'] ?? ''),
             'last_activity'=>time_ago($c['last_activity']), 'unread'=>(int)$c['unread_count'], 'is_group'=>$group,
             'online'=>$online, 'status_text'=>$status, 'muted'=>(int)$c['is_muted']===1,
-            'archived'=>(int)$c['is_archived']===1, 'group_role'=>(string)($c['role'] ?? ''),
-            'other_id'=>$otherId, 'other_username'=>(string)($c['other_username'] ?? ''),
-            'self_blocked'=>$selfBlocked, 'blocked_by_other'=>$blockedByOther,
-            'calls_enabled'=>$callsEnabled, 'video_calls_enabled'=>$videoCallsEnabled,
         ];
     }, $rows);
     mobile_out(['conversations'=>$items]);
@@ -929,63 +564,39 @@ if ($action === 'presence') {
     $cid = (int)($_POST['conversation_id'] ?? 0);
     $member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
     if (!$member) mobile_error('That conversation is not yours.', 403);
-
-    /* Reading another person's presence must never mutate mine. The previous
-       mobile endpoint treated an omitted/empty kind as "clear my status", and
-       the Flutter poll used exactly that call every ~2 seconds. The app was
-       therefore erasing its own typing/recording flag as fast as it set it. */
-    $hasKind = array_key_exists('kind', $_POST);
-    $clear = !empty($_POST['clear']);
     $kind = strtolower(trim((string)($_POST['kind'] ?? '')));
     if (!in_array($kind, ['text','voice'], true)) $kind = '';
     $sharesTyping = (int)($u['show_typing'] ?? 1) === 1;
-
     try {
-        if ($clear) {
-            q('UPDATE conversation_members SET typing_at=NULL,typing_kind=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
-        } elseif ($hasKind && $sharesTyping && $kind !== '') {
+        if ($sharesTyping && $kind !== '') {
             q('UPDATE conversation_members SET typing_at=NOW(),typing_kind=? WHERE conversation_id=? AND user_id=?', [$kind,$cid,$uid]);
-        } elseif ($hasKind && !$sharesTyping) {
-            q('UPDATE conversation_members SET typing_at=NULL,typing_kind=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
+        } else {
+            q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
         }
-        $other = $sharesTyping ? fetch_one("SELECT cm.typing_kind,u.name FROM conversation_members cm
+        $other = fetch_one("SELECT cm.typing_kind,u.name FROM conversation_members cm
                              JOIN users u ON u.id=cm.user_id
-                            WHERE cm.conversation_id=? AND cm.user_id<>?
-                              AND COALESCE(u.show_typing,1)=1
-                              AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
-                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]) : null;
+                            WHERE cm.conversation_id=? AND cm.user_id<>? AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
+                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]);
     } catch (PDOException $e) {
-        if ($clear) {
-            q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
-        } elseif ($hasKind && $sharesTyping && $kind !== '') {
+        /* Graceful compatibility for a host where the schema migration has
+           not run yet. Typing still works; voice is displayed as typing until
+           the normal TaleemPK migrator adds typing_kind. */
+        if ($sharesTyping && $kind !== '') {
             q('UPDATE conversation_members SET typing_at=NOW() WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
-        } elseif ($hasKind && !$sharesTyping) {
+        } else {
             q('UPDATE conversation_members SET typing_at=NULL WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
         }
-        $other = $sharesTyping ? fetch_one("SELECT 'text' typing_kind,u.name FROM conversation_members cm
+        $other = fetch_one("SELECT 'text' typing_kind,u.name FROM conversation_members cm
                              JOIN users u ON u.id=cm.user_id
-                            WHERE cm.conversation_id=? AND cm.user_id<>?
-                              AND COALESCE(u.show_typing,1)=1
-                              AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
-                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]) : null;
+                            WHERE cm.conversation_id=? AND cm.user_id<>? AND cm.typing_at>=DATE_SUB(NOW(),INTERVAL 8 SECOND)
+                            ORDER BY cm.typing_at DESC LIMIT 1", [$cid,$uid]);
     }
     $readThrough = (int)fetch_col('SELECT COALESCE(MAX(last_read_id),0) FROM conversation_members WHERE conversation_id=? AND user_id<>?', [$cid,$uid]);
-    $playedIds = [];
-    if (table_exists('message_plays')) {
-        $playedRows = fetch_all("SELECT DISTINCT m.id
-                                   FROM messages m
-                                   JOIN message_plays mp ON mp.message_id=m.id
-                                  WHERE m.conversation_id=? AND m.sender_id=?
-                                    AND mp.user_id<>? AND m.voice_seconds>0
-                                  ORDER BY m.id DESC LIMIT 150", [$cid,$uid,$uid]);
-        $playedIds = array_map(static fn(array $r): int => (int)$r['id'], $playedRows);
-    }
     mobile_out([
         'active'=>(bool)$other,
         'kind'=>$other ? (string)($other['typing_kind'] ?: 'text') : '',
         'name'=>$other ? (string)$other['name'] : '',
         'read_through'=>$readThrough,
-        'played'=>$playedIds,
     ]);
 }
 
@@ -993,25 +604,19 @@ if ($action === 'messages') {
     require_feature('feature_chat');
     $cid = (int) ($_POST['conversation_id'] ?? 0);
     $afterId = max(0, (int)($_POST['after_id'] ?? 0));
-    $beforeId = max(0, (int)($_POST['before_id'] ?? 0));
-    $limit = max(20, min(100, (int)($_POST['limit'] ?? 80)));
-    if ($afterId > 0) $beforeId = 0;
     $member = fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?', [$cid,$uid]);
     if (!$member) { mobile_error('That conversation is not yours.', 403); }
     $rows = fetch_all(
         'SELECT m.*,u.name sender,ru.name reply_sender,rm.content reply_content,
                 rm.status reply_status,rm.voice_seconds reply_voice_seconds,rm.attachment_name reply_attachment_name,
-                EXISTS(SELECT 1 FROM message_stars s WHERE s.message_id=m.id AND s.user_id=?) starred,
-                EXISTS(SELECT 1 FROM message_plays mp WHERE mp.message_id=m.id AND mp.user_id=?) played_by_me,
-                EXISTS(SELECT 1 FROM message_plays mp2 WHERE mp2.message_id=m.id AND mp2.user_id<>m.sender_id) played_by_other
+                EXISTS(SELECT 1 FROM message_stars s WHERE s.message_id=m.id AND s.user_id=?) starred
            FROM messages m JOIN users u ON u.id=m.sender_id
            LEFT JOIN messages rm ON rm.id=m.reply_to_id
            LEFT JOIN users ru ON ru.id=rm.sender_id
           WHERE m.conversation_id=?
             AND (?=0 OR m.id>?)
-            AND (?=0 OR m.id<?)
             AND NOT EXISTS(SELECT 1 FROM message_hides h WHERE h.message_id=m.id AND h.user_id=?)
-          ORDER BY m.id DESC LIMIT '.$limit, [$uid,$uid,$cid,$afterId,$afterId,$beforeId,$beforeId,$uid]
+          ORDER BY m.id DESC LIMIT 150', [$uid,$cid,$afterId,$afterId,$uid]
     );
     $newest = $rows ? (int) $rows[0]['id'] : 0;
     if ($newest) {
@@ -1034,46 +639,7 @@ if ($action === 'messages') {
             ];
         }
     }
-    $pollMap = [];
-    if ($messageIds && table_exists('chat_polls')) {
-        $ph = implode(',', array_fill(0, count($messageIds), '?'));
-        $pollRows = fetch_all("SELECT id,message_id,question,multi,closed_at,created_by
-                                 FROM chat_polls WHERE message_id IN ($ph)", $messageIds);
-        if ($pollRows) {
-            $pollIds = array_map(static fn(array $p): int => (int)$p['id'], $pollRows);
-            $pp = implode(',', array_fill(0, count($pollIds), '?'));
-            $opts = fetch_all("SELECT id,poll_id,label FROM chat_poll_options
-                                WHERE poll_id IN ($pp) ORDER BY position,id", $pollIds);
-            $counts = fetch_all("SELECT poll_id,option_id,COUNT(*) n FROM chat_poll_votes
-                                  WHERE poll_id IN ($pp) GROUP BY poll_id,option_id", $pollIds);
-            $mineVotes = fetch_all("SELECT poll_id,option_id FROM chat_poll_votes
-                                     WHERE poll_id IN ($pp) AND user_id=?", array_merge($pollIds, [$uid]));
-            $voters = fetch_all("SELECT poll_id,COUNT(DISTINCT user_id) n FROM chat_poll_votes
-                                  WHERE poll_id IN ($pp) GROUP BY poll_id", $pollIds);
-            $optBy=[]; $countBy=[]; $mineBy=[]; $voterBy=[];
-            foreach ($opts as $o) $optBy[(int)$o['poll_id']][]=$o;
-            foreach ($counts as $r) $countBy[(int)$r['poll_id']][(int)$r['option_id']] = (int)$r['n'];
-            foreach ($mineVotes as $r) $mineBy[(int)$r['poll_id']][] = (int)$r['option_id'];
-            foreach ($voters as $r) $voterBy[(int)$r['poll_id']] = (int)$r['n'];
-            foreach ($pollRows as $p) {
-                $pid=(int)$p['id']; $options=[];
-                foreach ($optBy[$pid] ?? [] as $o) {
-                    $oid=(int)$o['id'];
-                    $options[]=[
-                        'id'=>$oid,'label'=>(string)$o['label'],
-                        'votes'=>$countBy[$pid][$oid] ?? 0,
-                        'mine'=>in_array($oid,$mineBy[$pid] ?? [],true),
-                    ];
-                }
-                $pollMap[(int)$p['message_id']] = [
-                    'id'=>$pid,'question'=>(string)$p['question'],'multi'=>(int)$p['multi']===1,
-                    'closed'=>!empty($p['closed_at']),'mine'=>(int)$p['created_by']===$uid,
-                    'voters'=>$voterBy[$pid] ?? 0,'options'=>$options,
-                ];
-            }
-        }
-    }
-    $items = array_reverse(array_map(static function(array $m) use ($uid, $otherReadThrough, $reactionMap, $pollMap): array {
+    $items = array_reverse(array_map(static function(array $m) use ($uid, $otherReadThrough, $reactionMap): array {
         $mine = (int)$m['sender_id']===$uid;
         $read = $mine && $otherReadThrough >= (int) $m['id'];
         $deleted = $m['status']==='deleted';
@@ -1091,27 +657,15 @@ if ($action === 'messages') {
             $reply = ['id'=>(int)$m['reply_to_id'], 'sender'=>(string)($m['reply_sender'] ?: 'Message'),
                 'text'=>mb_substr($replyText, 0, 120)];
         }
-        $encrypted = !$deleted && (int)($m['enc'] ?? 0)===1;
-        $preview = null;
-        if (!$encrypted && !$deleted && !empty($m['link_preview'])) {
-            $decoded = json_decode((string)$m['link_preview'], true);
-            if (is_array($decoded)) $preview = $decoded;
-        }
         return [
             'id'=>(int)$m['id'], 'sender_id'=>(int)$m['sender_id'], 'sender'=>$m['sender'],
-            'content'=>$deleted ? 'This message was deleted.'
-                : ($encrypted ? 'Encrypted message' : (string)($m['content'] ?? '')),
-            'encrypted'=>$encrypted, 'link_preview'=>$preview,
+            'content'=>$deleted ? 'This message was deleted.' : (string)($m['content'] ?? ''),
             'time'=>date('g:i A', strtotime($m['created_at'])), 'mine'=>$mine,
             'date_label'=>$dateLabel, 'deleted'=>$deleted, 'edited'=>!empty($m['edited_at']),
             'forwarded'=>!empty($m['forwarded_from']), 'starred'=>(bool)$m['starred'],
             'pinned'=>(int)($m['is_pinned'] ?? 0)===1,
             'can_edit'=>$mine && !$deleted && within_edit_window((string)$m['created_at']),
             'voice_seconds'=>$deleted ? 0 : (int)($m['voice_seconds'] ?? 0),
-            'voice_wave'=>$deleted ? '' : (string)($m['voice_wave'] ?? ''),
-            'played_by_me'=>(bool)($m['played_by_me'] ?? false),
-            'played_by_other'=>(bool)($m['played_by_other'] ?? false),
-            'poll'=>$deleted ? null : ($pollMap[(int)$m['id']] ?? null),
             'attachment_url'=>!$deleted && !empty($m['attachment']) ? url('api/mobile.php?action=file&id='.(int)$m['id']) : null,
             'attachment_name'=>$deleted ? null : ($m['attachment_name'] ?? null),
             'attachment_type'=>$deleted ? null : ($m['attachment_type'] ?? null), 'read'=>$read,
@@ -1121,71 +675,8 @@ if ($action === 'messages') {
     mobile_out(['messages'=>$items]);
 }
 
-if ($action === 'mark_voice_played') {
-    $mid = max(0, (int)($_POST['message_id'] ?? 0));
-    $m = fetch_one("SELECT m.id,m.sender_id,m.voice_seconds
-                      FROM messages m
-                      JOIN conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=?
-                     WHERE m.id=? AND m.status='sent' LIMIT 1", [$uid,$mid]);
-    if (!$m || (int)$m['voice_seconds']<=0 || (int)$m['sender_id']===$uid) {
-        mobile_error('That voice message is not available.', 404);
-    }
-    if (table_exists('message_plays') && (int)($u['show_receipts'] ?? 1)===1) {
-        q('INSERT IGNORE INTO message_plays (message_id,user_id) VALUES (?,?)', [$mid,$uid]);
-    }
-    mobile_out(['played'=>true]);
-}
-
-if ($action === 'pinned_messages') {
-    $cid=max(0,(int)($_POST['conversation_id'] ?? 0));
-    if (!fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=?',[$cid,$uid])) {
-        mobile_error('That conversation is not yours.',403);
-    }
-    $pins=fetch_all("SELECT m.id,m.content,m.voice_seconds,m.attachment_name,u.name sender
-                       FROM messages m JOIN users u ON u.id=m.sender_id
-                      WHERE m.conversation_id=? AND m.is_pinned=1 AND m.status='sent'
-                      ORDER BY m.id DESC LIMIT 5",[$cid]);
-    $out=array_map(static function(array $m): array {
-        $text=trim((string)$m['content']);
-        if ($text==='') $text=(int)$m['voice_seconds']>0 ? 'Voice message'
-            : (!empty($m['attachment_name']) ? (string)$m['attachment_name'] : 'Attachment');
-        return ['id'=>(int)$m['id'],'sender'=>(string)$m['sender'],'text'=>mb_substr($text,0,120)];
-    },$pins);
-    mobile_out(['pinned'=>$out]);
-}
-
-if ($action === 'people_search') {
-    $q=trim((string)($_POST['q'] ?? ''));
-    if (mb_strlen($q)<2) mobile_out(['people'=>[]]);
-    $like='%'.$q.'%';
-    $rows=fetch_all("SELECT id,name,username,avatar FROM users
-                      WHERE id<>? AND status='active' AND deleted_at IS NULL
-                        AND (name LIKE ? OR username LIKE ?)
-                      ORDER BY is_verified DESC,last_seen DESC LIMIT 25",[$uid,$like,$like]);
-    $out=array_map(static fn(array $r): array => [
-        'id'=>(int)$r['id'],'name'=>(string)$r['name'],'username'=>(string)$r['username'],
-        'avatar'=>!empty($r['avatar'])?upload_url((string)$r['avatar']):null,
-    ],$rows);
-    mobile_out(['people'=>$out]);
-}
-
-if ($action === 'group_members') {
-    $cid=max(0,(int)($_POST['conversation_id'] ?? 0));
-    $me=fetch_one("SELECT cm.role FROM conversation_members cm JOIN conversations c ON c.id=cm.conversation_id
-                    WHERE cm.conversation_id=? AND cm.user_id=? AND c.type='group' LIMIT 1",[$cid,$uid]);
-    if (!$me) mobile_error('That group is not available.',404);
-    $rows=fetch_all("SELECT u.id,u.name,u.username,u.avatar,cm.role
-                      FROM conversation_members cm JOIN users u ON u.id=cm.user_id
-                     WHERE cm.conversation_id=? ORDER BY cm.role='admin' DESC,cm.id",[$cid]);
-    $out=array_map(static fn(array $r): array => [
-        'id'=>(int)$r['id'],'name'=>(string)$r['name'],'username'=>(string)$r['username'],
-        'avatar'=>!empty($r['avatar'])?upload_url((string)$r['avatar']):null,'role'=>(string)$r['role'],
-    ],$rows);
-    mobile_out(['role'=>(string)$me['role'],'members'=>$out]);
-}
-
 if ($action === 'file') {
-    $id = max(0, (int) ($_GET['id'] ?? 0));
+    $id = max(0, (int) ($_POST['id'] ?? $_GET['id'] ?? 0));
     $m = fetch_one("SELECT m.attachment,m.attachment_name,m.attachment_type,m.conversation_id
                       FROM messages m JOIN conversation_members cm ON cm.conversation_id=m.conversation_id
                      WHERE m.id=? AND m.status='sent' AND cm.user_id=? LIMIT 1", [$id,$uid]);

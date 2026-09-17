@@ -1,0 +1,136 @@
+name: Build TaleemPK Flutter APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'flutter/**'
+      - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
+      - 'tools/**'
+      - '.github/workflows/flutter-premium.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'flutter/**'
+      - 'backend/**'
+      - 'realtime/**'
+      - 'render.yaml'
+      - 'tools/**'
+      - '.github/workflows/flutter-premium.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate final TaleemPK v5.2 source
+        working-directory: .
+        run: |
+          python3 tools/v31_finalize.py
+          python3 tools/run_v32.py
+          python3 tools/v33_final.py
+          python3 tools/v34_chat_runtime.py
+          python3 tools/v35b_profile_media_polish.py
+          python3 tools/v35c_cleanup.py
+          python3 tools/v36_ui_navigation_polish.py
+          python3 tools/v36b_splash_fix.py
+          python3 tools/v37b_chat_identity_polish.py
+          python3 tools/v37c_analyzer_cleanup.py
+          python3 tools/v38b_boundary_fix.py
+          python3 tools/v39b_runner.py
+          python3 tools/v40_runner.py
+          python3 tools/v40_cleanup.py
+          python3 tools/v41b_runner.py
+          python3 tools/v42b_runner.py
+          python3 tools/v43b_runner.py
+          python3 tools/v44c_runner.py
+          python3 tools/v45c_runner.py
+          python3 tools/v46b_runner.py
+          python3 tools/v47_lifecycle_security_audit.py
+          python3 tools/v48_professional_audit.py
+          python3 tools/v49_profile_reliability.py
+          python3 tools/v50_premium_forms.py
+          python3 tools/v51_onboarding_media.py
+          python3 tools/v52_preflight.py
+          python3 tools/v52_notifications.py
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Flutter static analysis
+        run: flutter analyze
+      - name: Flutter tests
+        run: flutter test
+      - name: PHP syntax check mobile APIs
+        working-directory: .
+        run: |
+          php -l flutter/backend/api/mobile.php
+          php -l backend/api/mobile.php
+          php -l backend/api/mobile_email_v51.php
+          php -l backend/api/chat_send.php
+          php tools/v51/email_test.php
+          php -l flutter/backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_social_v31.php
+          php -l backend/api/mobile_e2ee_v32.php
+          php -l flutter/backend/api/mobile_realtime_push_v44.php
+          php -l backend/api/mobile_realtime_push_v44.php
+      - name: Realtime gateway syntax check
+        working-directory: .
+        run: node --check realtime/server.mjs
+      - name: v5.2 notification regression audit
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          api=Path('flutter/lib/core/api_client.dart').read_text()
+          shell=Path('flutter/lib/screens/home_shell.dart').read_text()
+          module=Path('flutter/lib/screens/module_screen.dart').read_text()
+          native=Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
+          bridge=Path('flutter/lib/core/native_bridge.dart').read_text()
+          backend=Path('backend/api/mobile.php').read_text()
+          assert 'markAllNotificationsRead' in api
+          assert 'read_all_notifications' in backend
+          assert 'target_type,target_id' in backend
+          assert "Text('Read all')" in module
+          assert 'consumeNotificationPayload' in bridge
+          assert 'pendingNotificationPayload' in native and 'onNewIntent' in native
+          assert '_consumeNotificationTap' in shell
+          print('v5.2 notification regression audit passed')
+          PY
+      - name: Build universal APK
+        run: |
+          flutter build apk --release --obfuscate --split-debug-info=build/symbols-universal
+      - name: Preserve universal APK outside Flutter build outputs
+        run: |
+          mkdir -p release-artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.2.0-Universal.apk
+      - name: Build smaller per-ABI APKs
+        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
+      - name: Collect and verify all APKs
+        run: |
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-artifacts/
+          test -s release-artifacts/TaleemPK-v5.2.0-Universal.apk
+          test -s release-artifacts/app-arm64-v8a-release.apk
+          test -s release-artifacts/app-armeabi-v7a-release.apk
+          test -s release-artifacts/app-x86_64-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v5.2.0-APKs
+          path: flutter/release-artifacts/*.apk
+          if-no-files-found: error
