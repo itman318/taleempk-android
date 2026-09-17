@@ -67,6 +67,7 @@ jobs:
           python3 tools/v52_preflight.py
           python3 tools/v52_notifications.py
           python3 tools/v53_messaging_search.py
+          python3 tools/v53b_lint_fix.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -114,6 +115,7 @@ jobs:
           assert 'acknowledgeDelivered' in api and 'ack_delivery' in backend and 'mobile_message_delivery' in backend
           assert 'conversationTaps' in push and 'initialConversationId' in Path('flutter/lib/screens/conversations_screen.dart').read_text()
           assert 'viewOnce' in api and 'markViewOnceConsumed' in api
+          assert 'separatorBuilder:(_,__)' not in search
           print('v5.3 search, delivery, view-once, push and notification audit passed')
           PY
       - name: Build universal APK
