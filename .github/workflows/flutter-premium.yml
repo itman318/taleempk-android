@@ -69,7 +69,7 @@ jobs:
           python3 tools/v53_messaging_search.py
           python3 tools/v53b_lint_fix.py
           python3 tools/v53c_php_module_fix.py
-          python3 tools/v53d_ui_push_delivery_audit.py
+          python3 tools/v53d_fix_runner.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
