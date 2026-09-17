@@ -36,6 +36,33 @@ source = '\n'.join(
 code = compile(source, str(script_path), 'exec')
 exec(code, {'__name__': '__main__', '__file__': str(script_path)})
 
+# Guarantee ChatMessage has the delivered state even if an older generator
+# already changed the constructor shape and made v53d's exact field patch skip.
+models_path = ROOT / 'flutter/lib/core/models.dart'
+models = models_path.read_text(encoding='utf-8')
+chat_start = models.find('class ChatMessage {')
+chat_end = models.find('\nclass ChatPresence {', chat_start)
+if chat_start < 0 or chat_end < 0:
+    raise RuntimeError('v5.3.1 ChatMessage model boundary missing')
+chunk = models[chat_start:chat_end]
+if 'this.delivered' not in chunk:
+    marker = '    this.linkPreview,\n  });'
+    if marker not in chunk:
+        raise RuntimeError('v5.3.1 ChatMessage constructor anchor missing')
+    chunk = chunk.replace(marker, '    this.linkPreview,\n    this.delivered = false,\n  });', 1)
+if 'bool delivered;' not in chunk and 'bool read, delivered;' not in chunk:
+    marker = '  bool read;'
+    if marker not in chunk:
+        raise RuntimeError('v5.3.1 ChatMessage read field anchor missing')
+    chunk = chunk.replace(marker, '  bool read;\n  bool delivered;', 1)
+if "delivered: _bool(j['delivered'])" not in chunk:
+    marker = "    read: _bool(j['read']),"
+    if marker not in chunk:
+        raise RuntimeError('v5.3.1 ChatMessage read parser anchor missing')
+    chunk = chunk.replace(marker, marker + "\n    delivered: _bool(j['delivered']),", 1)
+models = models[:chat_start] + chunk + models[chat_end:]
+models_path.write_text(models, encoding='utf-8')
+
 # Guarantee the FCM high-importance channel after every Android transform.
 manifest_path = ROOT / 'flutter/android/app/src/main/AndroidManifest.xml'
 manifest = manifest_path.read_text(encoding='utf-8')
@@ -65,7 +92,7 @@ home = (ROOT / 'flutter/lib/screens/home_screen.dart').read_text(encoding='utf-8
 push = (ROOT / 'flutter/lib/core/push_service.dart').read_text(encoding='utf-8')
 main = (ROOT / 'flutter/lib/main.dart').read_text(encoding='utf-8')
 chat = (ROOT / 'flutter/lib/screens/chat_screen.dart').read_text(encoding='utf-8')
-models = (ROOT / 'flutter/lib/core/models.dart').read_text(encoding='utf-8')
+models = models_path.read_text(encoding='utf-8')
 mobile = (ROOT / 'backend/api/mobile.php').read_text(encoding='utf-8')
 mobile_v53 = (ROOT / 'backend/api/mobile_v53.php').read_text(encoding='utf-8')
 relay = (ROOT / 'backend/api/mobile_realtime_push_v44.php').read_text(encoding='utf-8')
@@ -87,7 +114,7 @@ if 'm.delivered ? Icons.done_all_rounded : Icons.check_rounded' not in chat:
     raise RuntimeError('v5.3.1 delivered double-tick rendering missing')
 if 'color: m.read ? const Color(0xFF75E9FF) : Colors.white70' not in chat:
     raise RuntimeError('v5.3.1 read/delivered tick color semantics missing')
-if 'bool read, delivered;' not in models or "delivered: _bool(j['delivered'])" not in models:
+if 'this.delivered' not in models or "delivered: _bool(j['delivered'])" not in models:
     raise RuntimeError('v5.3.1 delivered message model missing')
 if 'mobile_message_delivery md' not in mobile or "'delivered'=>$mine" not in mobile:
     raise RuntimeError('v5.3.1 delivered status missing from message API')
