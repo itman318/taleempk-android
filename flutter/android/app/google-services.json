@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "230062343990",
+    "project_id": "taleempk-924ad",
+    "storage_bucket": "taleempk-924ad.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:230062343990:android:ac2979a6eca0cabfac9597",
+        "android_client_info": {
+          "package_name": "online.taleempk.studyhub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB2eiIVrkvq3K2ol5rJYN2zqrt_uceHP6g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
