@@ -36,7 +36,7 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Generate final TaleemPK v5.2 source
+      - name: Generate final TaleemPK v5.3 source
         working-directory: .
         run: |
           python3 tools/v31_finalize.py
@@ -91,7 +91,7 @@ jobs:
       - name: Realtime gateway syntax check
         working-directory: .
         run: node --check realtime/server.mjs
-      - name: v5.2 notification regression audit
+      - name: v5.3 notification regression audit
         working-directory: .
         run: |
           python3 - <<'PY'
@@ -109,7 +109,7 @@ jobs:
           assert 'consumeNotificationPayload' in bridge
           assert 'pendingNotificationPayload' in native and 'onNewIntent' in native
           assert '_consumeNotificationTap' in shell
-          print('v5.2 notification regression audit passed')
+          print('v5.3 notification regression audit passed')
           PY
       - name: Build universal APK
         run: |
@@ -117,7 +117,7 @@ jobs:
       - name: Preserve universal APK outside Flutter build outputs
         run: |
           mkdir -p release-artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.2.0-Universal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.3.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - name: Collect and verify all APKs
@@ -125,12 +125,12 @@ jobs:
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-artifacts/
-          test -s release-artifacts/TaleemPK-v5.2.0-Universal.apk
+          test -s release-artifacts/TaleemPK-v5.3.0-Universal.apk
           test -s release-artifacts/app-arm64-v8a-release.apk
           test -s release-artifacts/app-armeabi-v7a-release.apk
           test -s release-artifacts/app-x86_64-release.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v5.2.0-APKs
+          name: TaleemPK-v5.3.0-APKs
           path: flutter/release-artifacts/*.apk
           if-no-files-found: error
