@@ -36,8 +36,9 @@ source = '\n'.join(
 code = compile(source, str(script_path), 'exec')
 exec(code, {'__name__': '__main__', '__file__': str(script_path)})
 
-# Guarantee ChatMessage has the delivered state even if an older generator
-# already changed the constructor shape and made v53d's exact field patch skip.
+# Normalize ChatMessage delivered state. Some earlier chat generators already
+# add a separate final bool delivered field; collapse it into the mutable read
+# state declaration so there is exactly one delivered member and CI can verify it.
 models_path = ROOT / 'flutter/lib/core/models.dart'
 models = models_path.read_text(encoding='utf-8')
 chat_start = models.find('class ChatMessage {')
@@ -50,7 +51,10 @@ if 'this.delivered' not in chunk:
     if marker not in chunk:
         raise RuntimeError('v5.3.1 ChatMessage constructor anchor missing')
     chunk = chunk.replace(marker, '    this.linkPreview,\n    this.delivered = false,\n  });', 1)
-if 'bool delivered;' not in chunk and 'bool read, delivered;' not in chunk:
+
+# Remove a standalone existing delivered declaration before normalizing read.
+chunk = re.sub(r'^\s*(?:final\s+)?bool\s+delivered;\s*\n', '', chunk, flags=re.M)
+if 'bool read, delivered;' not in chunk:
     marker = '  bool read;'
     if marker not in chunk:
         raise RuntimeError('v5.3.1 ChatMessage read field anchor missing')
@@ -114,7 +118,7 @@ if 'm.delivered ? Icons.done_all_rounded : Icons.check_rounded' not in chat:
     raise RuntimeError('v5.3.1 delivered double-tick rendering missing')
 if 'color: m.read ? const Color(0xFF75E9FF) : Colors.white70' not in chat:
     raise RuntimeError('v5.3.1 read/delivered tick color semantics missing')
-if 'this.delivered' not in models or "delivered: _bool(j['delivered'])" not in models:
+if 'bool read, delivered;' not in models or "delivered: _bool(j['delivered'])" not in models:
     raise RuntimeError('v5.3.1 delivered message model missing')
 if 'mobile_message_delivery md' not in mobile or "'delivered'=>$mine" not in mobile:
     raise RuntimeError('v5.3.1 delivered status missing from message API')
