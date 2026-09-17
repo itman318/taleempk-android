@@ -54,7 +54,7 @@ if 'bool delivered;' not in chunk and 'bool read, delivered;' not in chunk:
     marker = '  bool read;'
     if marker not in chunk:
         raise RuntimeError('v5.3.1 ChatMessage read field anchor missing')
-    chunk = chunk.replace(marker, '  bool read;\n  bool delivered;', 1)
+    chunk = chunk.replace(marker, '  bool read, delivered;', 1)
 if "delivered: _bool(j['delivered'])" not in chunk:
     marker = "    read: _bool(j['read']),"
     if marker not in chunk:
