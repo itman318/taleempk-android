@@ -36,7 +36,7 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Generate final TaleemPK v4.8 source
+      - name: Generate final TaleemPK v5.1 source
         working-directory: .
         run: |
           python3 tools/v31_finalize.py
@@ -61,6 +61,9 @@ jobs:
           python3 tools/v46b_runner.py
           python3 tools/v47_lifecycle_security_audit.py
           python3 tools/v48_professional_audit.py
+          python3 tools/v49_profile_reliability.py
+          python3 tools/v50_premium_forms.py
+          python3 tools/v51_onboarding_media.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -96,11 +99,21 @@ jobs:
         run: exit 1
       - name: Flutter tests
         run: flutter test
+      - name: Preserve form previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaleemPK-v5.1-Form-Previews
+          path: flutter/build/previews/*.png
+          if-no-files-found: ignore
       - name: PHP syntax check mobile APIs
         working-directory: .
         run: |
           php -l flutter/backend/api/mobile.php
           php -l backend/api/mobile.php
+          php -l backend/api/mobile_email_v51.php
+          php -l backend/api/chat_send.php
+          php tools/v51/email_test.php
           php -l flutter/backend/api/mobile_social_v31.php
           php -l backend/api/mobile_social_v31.php
           php -l backend/api/mobile_e2ee_v32.php
@@ -109,7 +122,7 @@ jobs:
       - name: Realtime gateway syntax check
         working-directory: .
         run: node --check realtime/server.mjs
-      - name: Deep v4.8 regression audit
+      - name: Deep v4.9 regression audit
         working-directory: .
         run: |
           python3 - <<'PY'
@@ -129,7 +142,7 @@ jobs:
           native = Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           manifest = Path('flutter/android/app/src/main/AndroidManifest.xml').read_text()
           pubspec = Path('flutter/pubspec.yaml').read_text()
-          assert 'version: 4.8.0+480' in pubspec
+          assert 'version: 5.1.0+510' in pubspec
           assert '_authRequestWithRetry' in api and '_compatTokenKey' in api
           assert 'suspendedpage.cgi' in api and 'server returned a web page instead of API data' in api
           assert '_recoverBootstrapInBackground' in state
@@ -144,10 +157,10 @@ jobs:
           assert 'createPositionStream(' in chat and 'progressTimer = Timer.periodic' in chat
           assert 'Future<void> _syncAfterSend() async' in chat
           assert 'voicePreviewViewOnce' in chat and '_prepareViewOnceFile' in chat
-          assert "String get _draftKey => 'chat_draft_${widget.conversation.id}'" in chat
+          assert "chat_draft_v49_${_ownerId}_${widget.conversation.id}" in chat
           assert 'sending || widget.conversation.isGroup' in chat
           assert 'voicePreviewViewOnce && !widget.conversation.isGroup' in chat
-          assert "title: 'Create poll'" in chat
+          assert "'Create poll'" in Path('flutter/lib/screens/attachment_sheet.dart').read_text()
           assert 'await remoteRenderer.initialize();\n    if (!mounted) return;' in calls
           assert 'WebSocketChannel.connect' in realtime
           assert 'FirebaseMessaging.instance' in push
@@ -160,11 +173,14 @@ jobs:
           outbox = Path('flutter/lib/core/outbox.dart').read_text()
           shell = Path('flutter/lib/screens/home_shell.dart').read_text()
           gradle = Path('flutter/android/app/build.gradle.kts').read_text()
-          assert 'taleempk_chat_outbox_secure_v4' in outbox
+          assert 'taleempk_chat_outbox_secure_v49_$ownerId' in outbox
+          assert 'ProfileIdentity(' in profile
+          assert 'serial != _activitySerial' in profile
+          assert 'api.token != requestToken' in social
           assert 'SchedulerBinding.instance.lifecycleState' in shell
           assert 'pollBusy = true;' in calls and 'pollBusy = false;' in calls
           assert 'hasReleaseSigning' in gradle and 'signingConfigs.getByName("release")' in gradle
-          print('v4.8 deep regression audit passed')
+          print('v4.9 deep regression audit passed')
           PY
       - name: Build universal APK
         run: |
@@ -176,7 +192,7 @@ jobs:
       - name: Preserve universal APK outside Flutter build outputs
         run: |
           mkdir -p release-artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v4.8.0-Universal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.1.0-Universal.apk
       - name: Build smaller per-ABI APKs
         run: |
           for attempt in 1 2 3; do
@@ -189,12 +205,12 @@ jobs:
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-artifacts/
-          test -s release-artifacts/TaleemPK-v4.8.0-Universal.apk
+          test -s release-artifacts/TaleemPK-v5.1.0-Universal.apk
           test -s release-artifacts/app-arm64-v8a-release.apk
           test -s release-artifacts/app-armeabi-v7a-release.apk
           test -s release-artifacts/app-x86_64-release.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v4.8.0-APKs
+          name: TaleemPK-v5.1.0-APKs
           path: flutter/release-artifacts/*.apk
           if-no-files-found: error

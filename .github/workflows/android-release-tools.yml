@@ -1,0 +1,37 @@
+name: Prepare Android release signing tools
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/android-release-tools.yml'
+permissions:
+  contents: read
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Collect installed Android SDK tools
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, shutil
+          sdk = Path(os.environ['ANDROID_HOME'])
+          jars = sorted((sdk / 'build-tools').glob('*/lib/apksigner.jar'))
+          assert jars, 'Android SDK signing tool is missing'
+          build_tools = jars[-1].parent.parent
+          output = Path('release-tools')
+          output.mkdir()
+          shutil.copy2(jars[-1], output / 'apksigner.jar')
+          for name in ['aapt2', 'zipalign']:
+              shutil.copy2(build_tools / name, output / name)
+          if (build_tools / 'lib64').is_dir():
+              shutil.copytree(build_tools / 'lib64', output / 'lib64')
+          print('Tools version:', build_tools.name)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android-Release-Tools
+          path: release-tools/
+          if-no-files-found: error
+          retention-days: 3
