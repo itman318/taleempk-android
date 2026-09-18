@@ -378,6 +378,8 @@ w(path, text)
 
 path = 'flutter/lib/screens/home_shell.dart'
 text = r(path)
+if "import '../core/realtime_service.dart';" not in text:
+    text = once(text, "import '../core/push_service.dart';\n", "import '../core/push_service.dart';\nimport '../core/realtime_service.dart';\n", 'home realtime import')
 text = text.replace(
     'class _HomeShellState extends State<HomeShell> {',
     'class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {',
@@ -387,7 +389,7 @@ if 'Timer? presenceHeartbeat;' not in text:
     text = once(
         text,
         '  bool notificationBusy = false;\n',
-        '  bool notificationBusy = false;\n  bool foreground = true;\n  Timer? presenceHeartbeat;\n',
+        '  bool notificationBusy = false;\n  bool foreground = true;\n  Timer? presenceHeartbeat;\n  DateTime? lastRealtimeRefresh;\n',
         'home lifecycle fields',
     )
 text = text.replace('      const Duration(seconds: 4),', '      const Duration(seconds: 6),', 1)
@@ -420,6 +422,25 @@ if 'Future<void> _heartbeat() async {' not in text:
       await api.heartbeat();
     } catch (_) {}
     unawaited(PushService.instance.ensureRegistered(api));
+
+    final now = DateTime.now();
+    final realtimeDue = lastRealtimeRefresh == null ||
+        now.difference(lastRealtimeRefresh!) >= const Duration(minutes: 7) ||
+        !RealtimeService.instance.connected;
+    if (!realtimeDue) return;
+    lastRealtimeRefresh = now;
+    try {
+      final config = await api.realtimeConfig();
+      if (config['enabled'] == true) {
+        await RealtimeService.instance.configure(
+          url: '\${config['url'] ?? ''}',
+          ticket: '\${config['ticket'] ?? ''}',
+        );
+      }
+    } catch (_) {
+      /* Existing socket/fallback polling stays usable; retry on next heartbeat. */
+      lastRealtimeRefresh = null;
+    }
   }
 
 '''
@@ -824,6 +845,7 @@ assert 'pushTapSub=PushService.instance.conversationTaps.listen(_openPushedConve
 assert 'final id = int.tryParse(payload.substring(5)) ?? 0;' in shell
 assert 'mountedTabs.contains(1)' in shell and 'mountedTabs.contains(3)' in shell
 assert 'Duration(seconds: 20)' in shell and 'Duration(seconds: 45)' in shell
+assert 'Duration(minutes: 7)' in shell and 'api.realtimeConfig()' in shell
 assert 'ensureRegistered' in push and 'Timer? _retryTimer;' in push
 assert 'firebase-private/firebase-service-account.json' in relay
 assert 'function mobile_v54_fcm_send_users' in relay
