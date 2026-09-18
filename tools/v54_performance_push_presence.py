@@ -411,8 +411,20 @@ text = text.replace(
     '    WidgetsBinding.instance.removeObserver(this);\n    presenceHeartbeat?.cancel();\n    callWatch?.cancel();\n    notificationWatch?.cancel();',
     1,
 )
+marker = '  Future<void> _setupNotificationWatch() async {\n'
+if 'Future<void> _heartbeat() async {' not in text:
+    heartbeat = r'''  Future<void> _heartbeat() async {
+    if (!mounted || !foreground) return;
+    final api = AppScope.of(context).api;
+    try {
+      await api.heartbeat();
+    } catch (_) {}
+    unawaited(PushService.instance.ensureRegistered(api));
+  }
+
+'''
+    text = once(text, marker, heartbeat + marker, 'home heartbeat helper')
 if 'void didChangeAppLifecycleState(AppLifecycleState state)' not in text:
-    marker = '  Future<void> _setupNotificationWatch() async {\n'
     lifecycle = r'''  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     foreground = state == AppLifecycleState.resumed;
@@ -423,17 +435,8 @@ if 'void didChangeAppLifecycleState(AppLifecycleState state)' not in text:
     }
   }
 
-  Future<void> _heartbeat() async {
-    if (!mounted || !foreground) return;
-    final api = AppScope.of(context).api;
-    try {
-      await api.heartbeat();
-    } catch (_) {}
-    unawaited(PushService.instance.ensureRegistered(api));
-  }
-
 '''
-    text = once(text, marker, lifecycle + marker, 'home lifecycle heartbeat')
+    text = once(text, marker, lifecycle + marker, 'home lifecycle callback')
 text = text.replace('    if (!mounted || notificationBusy) return;', '    if (!mounted || !foreground || notificationBusy) return;', 1)
 text = text.replace('    if (!mounted || activeIncomingId != 0) return;', '    if (!mounted || !foreground || activeIncomingId != 0) return;', 1)
 text = text.replace('_tab(2, const ConversationsScreen()),', '_tab(2, ConversationsScreen(active: index == 2)),', 1)
