@@ -442,6 +442,115 @@ text = text.replace('    if (!mounted || activeIncomingId != 0) return;', '    i
 text = text.replace('_tab(2, const ConversationsScreen()),', '_tab(2, ConversationsScreen(active: index == 2)),', 1)
 w(path, text)
 
+# Lazy-mount heavy tabs. IndexedStack keeps every child alive, so the old shell
+# started Feed, Chat and Profile network work together on every app launch.
+path = 'flutter/lib/screens/home_shell.dart'
+text = r(path)
+if 'final Set<int> mountedTabs = <int>{0};' not in text:
+    text = once(
+        text,
+        '  final keys = List.generate(4, (_) => GlobalKey<NavigatorState>());\n',
+        '  final keys = List.generate(4, (_) => GlobalKey<NavigatorState>());\n  final Set<int> mountedTabs = <int>{0};\n',
+        'lazy tab state',
+    )
+text = text.replace('  int pushedConversation=0;\n', '')
+old_push_listener = """    pushTapSub=PushService.instance.conversationTaps.listen((id){ if(!mounted)return; setState((){index=2;pushedConversation=id;}); keys[2].currentState?.pushReplacement(MaterialPageRoute(builder:(_)=>ConversationsScreen(initialConversationId:id))); });
+"""
+if old_push_listener in text:
+    text = text.replace(
+        old_push_listener,
+        "    pushTapSub=PushService.instance.conversationTaps.listen(_openPushedConversation);\n",
+        1,
+    )
+if 'void _openPushedConversation(int id)' not in text:
+    marker = '  Future<void> _setupNotificationWatch() async {\n'
+    helper = r'''  void _openPushedConversation(int id) {
+    if (!mounted || id <= 0) return;
+    setState(() {
+      mountedTabs.add(2);
+      index = 2;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final navigator = keys[2].currentState;
+      if (navigator == null) return;
+      navigator.pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => ConversationsScreen(
+            initialConversationId: id,
+            active: true,
+          ),
+        ),
+      );
+    });
+  }
+
+'''
+    text = once(text, marker, helper + marker, 'push target helper')
+
+# Native foreground notifications carry the same chat:<conversation> payload.
+# Route them to the exact conversation instead of only switching to the Chat tab.
+if '  Future<void> _consumeNotificationTap() async {' in text:
+    replacement = r'''  Future<void> _consumeNotificationTap() async {
+    if (!mounted) return;
+    final payload = await NativeBridge.consumeNotificationPayload();
+    if (!mounted || payload == null || payload.isEmpty) return;
+    if (payload.startsWith('chat:')) {
+      final id = int.tryParse(payload.substring(5)) ?? 0;
+      if (id > 0) {
+        _openPushedConversation(id);
+      } else {
+        setState(() {
+          mountedTabs.add(2);
+          index = 2;
+        });
+      }
+      return;
+    }
+    if (payload.startsWith('notification:')) {
+      setState(() {
+        mountedTabs.add(0);
+        index = 0;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        keys[0].currentState?.push(
+          MaterialPageRoute<void>(
+            builder: (_) => const ModuleScreen(module: 'notifications'),
+          ),
+        );
+      });
+    }
+  }'''
+    text = replace_function(text, '  Future<void> _consumeNotificationTap() async {', replacement)
+
+text = text.replace(
+    """            _tab(0, const HomeScreen()),
+            _tab(1, const FeedScreen()),
+            _tab(2, ConversationsScreen(active: index == 2)),
+            _tab(3, const ProfileScreen()),""",
+    """            _tab(0, const HomeScreen()),
+            mountedTabs.contains(1)
+                ? _tab(1, const FeedScreen())
+                : const SizedBox.shrink(),
+            mountedTabs.contains(2)
+                ? _tab(2, ConversationsScreen(active: index == 2))
+                : const SizedBox.shrink(),
+            mountedTabs.contains(3)
+                ? _tab(3, const ProfileScreen())
+                : const SizedBox.shrink(),""",
+    1,
+)
+text = text.replace(
+    '          onDestinationSelected: (value) => setState(() => index = value),',
+    """          onDestinationSelected: (value) => setState(() {
+            mountedTabs.add(value);
+            index = value;
+          }),""",
+    1,
+)
+w(path, text)
+
 
 # ---------------------------------------------------------------------------
 # 4) Server-side FCM: work for web-origin messages too, with secure service
@@ -708,6 +817,10 @@ assert 'RealtimeService.instance.connected ? 10000 : 2500' in chat
 assert 'pollTicks % 12 == 0' in chat
 assert 'this.active=true' in inbox and 'Duration(seconds: 10)' in inbox
 assert 'ConversationsScreen(active: index == 2)' in shell
+assert 'final Set<int> mountedTabs = <int>{0};' in shell
+assert 'pushTapSub=PushService.instance.conversationTaps.listen(_openPushedConversation);' in shell
+assert 'final id = int.tryParse(payload.substring(5)) ?? 0;' in shell
+assert 'mountedTabs.contains(1)' in shell and 'mountedTabs.contains(3)' in shell
 assert 'Duration(seconds: 20)' in shell and 'Duration(seconds: 45)' in shell
 assert 'ensureRegistered' in push and 'Timer? _retryTimer;' in push
 assert 'firebase-private/firebase-service-account.json' in relay
