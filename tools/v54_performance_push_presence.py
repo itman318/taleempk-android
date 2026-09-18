@@ -172,6 +172,7 @@ conversation_block = r'''if ($action === 'conversations') {
 
 for path in ('backend/api/mobile.php', 'flutter/backend/api/mobile.php'):
     text = r(path)
+    text = text.replace("SELECT u.* FROM mobile_sessions s JOIN users u ON u.id=s.user_id", "SELECT u.*,s.last_seen mobile_session_last_seen FROM mobile_sessions s JOIN users u ON u.id=s.user_id", 1)
     old_last_seen = r'''    /* A chatty phone must not turn every API read into a database write. */
     q('UPDATE mobile_sessions SET last_seen=NOW()
         WHERE token_hash=? AND last_seen<DATE_SUB(NOW(), INTERVAL 5 MINUTE)', [hash('sha256', $token)]);
@@ -180,10 +181,15 @@ for path in ('backend/api/mobile.php', 'flutter/backend/api/mobile.php'):
        writes so chat polling does not hammer the users table. Conversation
        presence reads users.last_seen, not mobile_sessions.last_seen. */
     $tokenHash = hash('sha256', $token);
-    q('UPDATE mobile_sessions SET last_seen=NOW()
-        WHERE token_hash=? AND (last_seen IS NULL OR last_seen<DATE_SUB(NOW(), INTERVAL 2 MINUTE))', [$tokenHash]);
-    q('UPDATE users SET last_seen=NOW()
-        WHERE id=? AND (last_seen IS NULL OR last_seen<DATE_SUB(NOW(), INTERVAL 45 SECOND))', [(int)$row['id']]);
+    $now = time();
+    $sessionSeen = !empty($row['mobile_session_last_seen']) ? strtotime((string)$row['mobile_session_last_seen']) : 0;
+    if (!$sessionSeen || $sessionSeen < $now - 120) {
+        q('UPDATE mobile_sessions SET last_seen=NOW() WHERE token_hash=?', [$tokenHash]);
+    }
+    $publicSeen = !empty($row['last_seen']) ? strtotime((string)$row['last_seen']) : 0;
+    if (!$publicSeen || $publicSeen < $now - 45) {
+        q('UPDATE users SET last_seen=NOW() WHERE id=?', [(int)$row['id']]);
+    }
     return $row;'''
     text = once(text, old_last_seen, new_last_seen, f'{path} public last seen')
     text = replace_between(
@@ -579,6 +585,8 @@ w(path, text)
 # ---------------------------------------------------------------------------
 private_config = r'''function mobile_v44_fcm_private_config(): array
 {
+    static $cached = null;
+    if (is_array($cached)) return $cached;
     $project = mobile_v44_cfg('FIREBASE_PROJECT_ID', 'firebase_project_id');
     $email = mobile_v44_cfg('FIREBASE_CLIENT_EMAIL', 'firebase_client_email');
     $key = mobile_v44_cfg('FIREBASE_PRIVATE_KEY', 'firebase_private_key');
@@ -609,7 +617,7 @@ private_config = r'''function mobile_v44_fcm_private_config(): array
     }
 
     $key = str_replace('\\n', "\n", $key);
-    return [
+    return $cached = [
         'enabled' => $project !== '' && $email !== '' && $key !== '',
         'project_id' => $project,
         'client_email' => $email,
@@ -829,6 +837,7 @@ chat_send = r('backend/api/chat_send.php')
 pubspec = r('flutter/pubspec.yaml')
 
 assert "UPDATE users SET last_seen=NOW()" in mobile
+assert 'mobile_session_last_seen' in mobile and '$publicSeen' in mobile
 assert "if ($action === 'heartbeat')" in mobile
 assert 'LEFT JOIN conversation_members pcm' in mobile
 assert 'SELECT u2.name FROM conversation_members' not in mobile
@@ -848,6 +857,7 @@ assert 'Duration(seconds: 20)' in shell and 'Duration(seconds: 45)' in shell
 assert 'Duration(minutes: 7)' in shell and 'api.realtimeConfig()' in shell
 assert 'ensureRegistered' in push and 'Timer? _retryTimer;' in push
 assert 'firebase-private/firebase-service-account.json' in relay
+assert 'static $cached = null;' in relay
 assert 'function mobile_v54_fcm_send_users' in relay
 assert 'Prefer the local Node relay' in relay and 'Continue with direct FCM below' in relay
 assert 'TaleemPK native FCM after every shared chat send' in chat_send
