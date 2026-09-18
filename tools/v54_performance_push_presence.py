@@ -598,41 +598,42 @@ private_config = r'''function mobile_v44_fcm_private_config(): array
 
 direct_send = r'''function mobile_v44_fcm_send_token(string $token, string $title, string $body, array $data): bool
 {
-    $cfg = mobile_v44_fcm_private_config();
-    if ($cfg['enabled']) {
-        $access = mobile_v44_fcm_access_token();
-        if ($access !== '') {
-            $payload = [
-                'message' => [
-                    'token' => $token,
-                    'notification' => ['title' => $title, 'body' => $body],
-                    'data' => array_map(static fn($v): string => (string)$v, $data),
-                    'android' => [
-                        'priority' => 'high',
-                        'notification' => ['channel_id' => 'taleempk_messages', 'sound' => 'default'],
-                    ],
-                ],
-            ];
-            [$status, $raw] = mobile_v44_http_post(
-                'https://fcm.googleapis.com/v1/projects/' . rawurlencode($cfg['project_id']) . '/messages:send',
-                ['Authorization: Bearer ' . $access, 'Content-Type: application/json'],
-                json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                8
-            );
-            if ($status >= 200 && $status < 300) return true;
-            if ($status === 400 || $status === 404) {
-                $upper = strtoupper($raw);
-                if (str_contains($upper, 'UNREGISTERED') || str_contains($upper, 'REGISTRATION-TOKEN-NOT-REGISTERED')) {
-                    mobile_v44_push_tables();
-                    q('DELETE FROM mobile_push_tokens WHERE token=?', [$token]);
-                }
-            }
-        }
-    }
-
+    /* Prefer the local Node relay: it batches efficiently and keeps Google
+       credential work out of a user-facing PHP request. If it is unavailable,
+       fall back to direct FCM using the private service-account file. */
     if (function_exists('mobile_v44_push_relay_send')) {
         $relay = mobile_v44_push_relay_send($token, $title, $body, $data);
-        if ($relay !== null) return $relay;
+        if ($relay === true) return true;
+    }
+
+    $cfg = mobile_v44_fcm_private_config();
+    if (!$cfg['enabled']) return false;
+    $access = mobile_v44_fcm_access_token();
+    if ($access === '') return false;
+    $payload = [
+        'message' => [
+            'token' => $token,
+            'notification' => ['title' => $title, 'body' => $body],
+            'data' => array_map(static fn($v): string => (string)$v, $data),
+            'android' => [
+                'priority' => 'high',
+                'notification' => ['channel_id' => 'taleempk_messages', 'sound' => 'default'],
+            ],
+        ],
+    ];
+    [$status, $raw] = mobile_v44_http_post(
+        'https://fcm.googleapis.com/v1/projects/' . rawurlencode($cfg['project_id']) . '/messages:send',
+        ['Authorization: Bearer ' . $access, 'Content-Type: application/json'],
+        json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        6
+    );
+    if ($status >= 200 && $status < 300) return true;
+    if ($status === 400 || $status === 404) {
+        $upper = strtoupper($raw);
+        if (str_contains($upper, 'UNREGISTERED') || str_contains($upper, 'REGISTRATION-TOKEN-NOT-REGISTERED')) {
+            mobile_v44_push_tables();
+            q('DELETE FROM mobile_push_tokens WHERE token=?', [$token]);
+        }
     }
     return false;
 }'''
@@ -661,21 +662,22 @@ function mobile_v54_fcm_send_users(array $userIds, string $title, string $body, 
     $tokens = array_keys($tokens);
     if (!$tokens) return 0;
 
-    $private = mobile_v44_fcm_private_config();
-    if (!$private['enabled'] && function_exists('mobile_v44_push_relay_config')) {
+    if (function_exists('mobile_v44_push_relay_config')) {
         $relay = mobile_v44_push_relay_config();
         if ($relay['enabled']) {
             [$status, $raw] = mobile_v44_http_post(
                 $relay['url'],
                 ['Authorization: Bearer ' . $relay['secret'], 'Content-Type: application/json'],
                 json_encode(['tokens'=>$tokens,'title'=>$title,'body'=>$body,'data'=>$data], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                8
+                6
             );
             if ($status >= 200 && $status < 300) {
                 $decoded = json_decode($raw, true);
-                return is_array($decoded) ? max(0, (int)($decoded['sent'] ?? 0)) : 0;
+                $sent = is_array($decoded) ? max(0, (int)($decoded['sent'] ?? 0)) : 0;
+                if ($sent > 0) return $sent;
             }
-            return 0;
+            /* A bad/missing relay must not make native notifications disappear.
+               Continue with direct FCM below when private credentials exist. */
         }
     }
 
@@ -825,6 +827,7 @@ assert 'Duration(seconds: 20)' in shell and 'Duration(seconds: 45)' in shell
 assert 'ensureRegistered' in push and 'Timer? _retryTimer;' in push
 assert 'firebase-private/firebase-service-account.json' in relay
 assert 'function mobile_v54_fcm_send_users' in relay
+assert 'Prefer the local Node relay' in relay and 'Continue with direct FCM below' in relay
 assert 'TaleemPK native FCM after every shared chat send' in chat_send
 assert 'version: 5.4.0+540' in pubspec
 print('TaleemPK v5.4 deep performance, push and presence audit fixes applied successfully')
