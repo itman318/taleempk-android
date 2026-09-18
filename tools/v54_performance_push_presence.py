@@ -433,8 +433,8 @@ if 'Future<void> _heartbeat() async {' not in text:
       final config = await api.realtimeConfig();
       if (config['enabled'] == true) {
         await RealtimeService.instance.configure(
-          url: '\${config['url'] ?? ''}',
-          ticket: '\${config['ticket'] ?? ''}',
+          url: '${config['url'] ?? ''}',
+          ticket: '${config['ticket'] ?? ''}',
         );
       }
     } catch (_) {
