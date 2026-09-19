@@ -6,6 +6,13 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'api_client.dart';
 import 'realtime_service.dart';
 
+@pragma('vm:entry-point')
+Future<void> taleemPkFirebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp();
+  }
+}
+
 class PushService {
   PushService._();
   static final PushService instance = PushService._();
@@ -17,35 +24,29 @@ class PushService {
   String? _registeredToken;
   bool _binding = false;
   bool _firebaseReady = false;
+  bool _backgroundHandlerRegistered = false;
 
   Future<void> bind(ApiClient api) async {
     if (_binding) return;
     _binding = true;
     try {
       _api = api;
-      final config = await api.pushConfig();
-      if (config['enabled'] != true) return;
 
       if (!_firebaseReady) {
-        final options = FirebaseOptions(
-          apiKey: '${config['api_key'] ?? ''}',
-          appId: '${config['app_id'] ?? ''}',
-          messagingSenderId: '${config['sender_id'] ?? ''}',
-          projectId: '${config['project_id'] ?? ''}',
-        );
-        if (options.apiKey.isEmpty ||
-            options.appId.isEmpty ||
-            options.messagingSenderId.isEmpty ||
-            options.projectId.isEmpty) {
-          return;
-        }
         if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(options: options);
+          await Firebase.initializeApp();
+        }
+        if (!_backgroundHandlerRegistered) {
+          FirebaseMessaging.onBackgroundMessage(
+            taleemPkFirebaseMessagingBackgroundHandler,
+          );
+          _backgroundHandlerRegistered = true;
         }
         _firebaseReady = true;
       }
 
       final messaging = FirebaseMessaging.instance;
+      await messaging.setAutoInitEnabled(true);
       await messaging.requestPermission(
         alert: true,
         badge: true,
