@@ -103,7 +103,10 @@ new_init = """      _api = api;
 
       final messaging = FirebaseMessaging.instance;
       await messaging.setAutoInitEnabled(true);"""
-text = once(text, old_init, new_init, 'bundled Firebase initialization')
+if old_init in text:
+    text = text.replace(old_init, new_init, 1)
+elif 'await Firebase.initializeApp();' not in text or 'api.pushConfig()' in text:
+    raise RuntimeError('v5.3d bundled Firebase initialization is not active')
 if 'static void installBackgroundHandler()' not in text:
     marker = '  static final PushService instance = PushService._();\n'
     method = """  static void installBackgroundHandler() {
