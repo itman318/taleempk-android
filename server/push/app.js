@@ -73,8 +73,11 @@ async function sendPush(body) {
   )].slice(0, 500);
   if (!tokens.length) return { sent: 0, failed: 0, invalid_tokens: [] };
 
-  const title = String(body.title || 'TaleemPK').slice(0, 120);
-  const text = String(body.body || 'You have a new update.').slice(0, 500);
+  const notification = body.notification && typeof body.notification === 'object'
+    ? body.notification
+    : {};
+  const title = String(notification.title || body.title || 'TaleemPK').slice(0, 120);
+  const text = String(notification.body || body.body || 'You have a new update.').slice(0, 500);
   const data = cleanData(body.data);
 
   const response = await admin.messaging().sendEachForMulticast({
@@ -102,8 +105,11 @@ async function sendPush(body) {
     ) invalid.push(tokens[index]);
   });
   return {
+    success: response.successCount > 0,
     sent: response.successCount,
     failed: response.failureCount,
+    success_count: response.successCount,
+    failure_count: response.failureCount,
     invalid_tokens: invalid,
   };
 }
@@ -129,7 +135,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJson(req);
       const result = await sendPush(body);
-      json(res, 200, { success: true, ...result });
+      json(res, 200, result);
     } catch (error) {
       const message = String(error && error.message || 'push_failed');
       const status = message === 'payload_too_large' ? 413 : message === 'invalid_json' ? 400 : 500;
