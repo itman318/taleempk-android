@@ -72,6 +72,17 @@ function mobile_v44_fcm_private_config(): array
     ];
 }
 
+function mobile_v44_relay_config(): array
+{
+    $url = rtrim(mobile_v44_cfg('TALEEMPK_PUSH_URL', 'push_service_url'), '/');
+    $secret = mobile_v44_cfg('TALEEMPK_PUSH_SECRET', 'push_service_secret');
+    return [
+        'enabled' => $url !== '' && $secret !== '',
+        'url' => $url,
+        'secret' => $secret,
+    ];
+}
+
 function mobile_v44_http_post(string $url, array $headers, string $body, int $timeout = 8): array
 {
     if (!function_exists('curl_init')) return [0, ''];
@@ -142,6 +153,34 @@ function mobile_v44_fcm_access_token(): string
 
 function mobile_v44_fcm_send_token(string $token, string $title, string $body, array $data): bool
 {
+    // Preferred production path: the cPanel Node service owns the Firebase
+    // service-account credential. PHP only sends an authenticated request.
+    $relay = mobile_v44_relay_config();
+    if ($relay['enabled']) {
+        $payload = json_encode([
+            'tokens' => [$token],
+            'notification' => ['title' => $title, 'body' => $body],
+            'data' => array_map(static fn($v): string => (string)$v, $data),
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        [$status, $raw] = mobile_v44_http_post(
+            $relay['url'] . '/send',
+            [
+                'Authorization: Bearer ' . $relay['secret'],
+                'Content-Type: application/json',
+            ],
+            $payload,
+            10
+        );
+        if ($status >= 200 && $status < 300) {
+            $reply = json_decode($raw, true);
+            if (!is_array($reply) || (($reply['success'] ?? true) === true && (int)($reply['success_count'] ?? 1) > 0)) {
+                return true;
+            }
+        }
+    }
+
+    // Backward-compatible direct FCM fallback for installations that already
+    // provide FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY to PHP.
     $cfg = mobile_v44_fcm_private_config();
     if (!$cfg['enabled']) return false;
     $access = mobile_v44_fcm_access_token();
@@ -154,7 +193,10 @@ function mobile_v44_fcm_send_token(string $token, string $title, string $body, a
             'data' => array_map(static fn($v): string => (string)$v, $data),
             'android' => [
                 'priority' => 'high',
-                'notification' => ['sound' => 'default'],
+                'notification' => [
+                    'sound' => 'default',
+                    'channel_id' => 'taleempk_messages',
+                ],
             ],
         ],
     ];
@@ -247,7 +289,8 @@ if ($action === 'unregister_push') {
 
 if ($action === 'push_chat') {
     $cfg = mobile_v44_fcm_private_config();
-    if (!$cfg['enabled']) mobile_out(['enabled'=>false,'sent'=>0]);
+    $relay = mobile_v44_relay_config();
+    if (!$cfg['enabled'] && !$relay['enabled']) mobile_out(['enabled'=>false,'sent'=>0]);
 
     $cid = max(0, (int)($_POST['conversation_id'] ?? 0));
     if (!$cid || !fetch_one('SELECT id FROM conversation_members WHERE conversation_id=? AND user_id=? LIMIT 1', [$cid,$uid])) {
