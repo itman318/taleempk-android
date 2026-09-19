@@ -7,7 +7,7 @@ import 'api_client.dart';
 import 'realtime_service.dart';
 
 @pragma('vm:entry-point')
-Future<void> taleemPkFirebaseMessagingBackgroundHandler(RemoteMessage message) async {
+Future<void> taleemPkFirebaseBackgroundHandler(RemoteMessage message) async {
   if (Firebase.apps.isEmpty) {
     await Firebase.initializeApp();
   }
@@ -17,6 +17,10 @@ class PushService {
   PushService._();
   static final PushService instance = PushService._();
 
+  static void installBackgroundHandler() {
+    FirebaseMessaging.onBackgroundMessage(taleemPkFirebaseBackgroundHandler);
+  }
+
   StreamSubscription<String>? _tokenSub;
   StreamSubscription<RemoteMessage>? _foregroundSub;
   StreamSubscription<RemoteMessage>? _openedSub;
@@ -24,7 +28,6 @@ class PushService {
   String? _registeredToken;
   bool _binding = false;
   bool _firebaseReady = false;
-  bool _backgroundHandlerRegistered = false;
 
   Future<void> bind(ApiClient api) async {
     if (_binding) return;
@@ -35,12 +38,6 @@ class PushService {
       if (!_firebaseReady) {
         if (Firebase.apps.isEmpty) {
           await Firebase.initializeApp();
-        }
-        if (!_backgroundHandlerRegistered) {
-          FirebaseMessaging.onBackgroundMessage(
-            taleemPkFirebaseMessagingBackgroundHandler,
-          );
-          _backgroundHandlerRegistered = true;
         }
         _firebaseReady = true;
       }
