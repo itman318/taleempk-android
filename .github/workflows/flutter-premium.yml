@@ -38,7 +38,7 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Generate final TaleemPK v5.5.0 source
+      - name: Generate final TaleemPK v5.6.0 source
         working-directory: .
         run: |
           python3 tools/v31_finalize.py
@@ -74,6 +74,7 @@ jobs:
           python3 tools/v53d_fix_runner.py
           python3 tools/v54_performance_push_presence.py
           python3 tools/v55_notification_reliability.py
+          python3 tools/v56_closed_delivery.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -103,7 +104,7 @@ jobs:
         run: |
           node --check realtime/server.mjs
           node --check server/push/app.js
-      - name: v5.5.0 deep regression audit
+      - name: v5.6.0 deep regression audit
         working-directory: .
         run: |
           python3 - <<'PY'
@@ -163,12 +164,17 @@ jobs:
           assert 'function mobile_v54_fcm_send_users' in relay
           assert 'TaleemPK native FCM after every shared chat send' in chatsend
           assert 'FirebaseMessaging.onMessage.listen(_handleForegroundMessage)' in push
+          assert 'DartPluginRegistrant.ensureInitialized();' in push
+          assert "event != 'delivery_probe'" in push
+          assert 'await api.acknowledgeDelivered(<int>[messageId]);' in push
           assert 'NativeBridge.showNotification' in push
           assert "if ($action === 'push_self_test')" in relay
           nodepush=Path('server/push/app.js').read_text()
           assert 'sendEachForMulticast' in nodepush and 'timingSafeEqual' in nodepush
-          assert 'version: 5.5.0+550' in pubspec
-          print('v5.5.0 deep performance, push, presence and notification audit passed')
+          assert "data: { ...data, event: 'delivery_probe' }" in nodepush
+          assert 'delivery_probe_sent' in nodepush
+          assert 'version: 5.6.0+560' in pubspec
+          print('v5.6.0 deep performance, push, presence and notification audit passed')
           PY
       - name: Build universal APK
         run: |
@@ -176,9 +182,9 @@ jobs:
       - name: Preserve universal APK outside Flutter build outputs
         run: |
           mkdir -p release-artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.5.0-Universal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.6.0-Universal.apk
           cd ..
-          zip -r flutter/release-artifacts/TaleemPK-v5.5.0-Server-Push.zip             backend/api/mobile.php             backend/api/mobile_realtime_push_v44.php             backend/api/mobile_v53.php             backend/api/chat_send.php             server/push/app.js             server/push/package.json             server/push/README.md
+          zip -r flutter/release-artifacts/TaleemPK-v5.6.0-Server-Push.zip             backend/api/mobile.php             backend/api/mobile_realtime_push_v44.php             backend/api/mobile_v53.php             backend/api/chat_send.php             server/push/app.js             server/push/package.json             server/push/README.md
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - name: Collect and verify all APKs
@@ -186,12 +192,12 @@ jobs:
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-artifacts/
-          test -s release-artifacts/TaleemPK-v5.5.0-Universal.apk
+          test -s release-artifacts/TaleemPK-v5.6.0-Universal.apk
           test -s release-artifacts/app-arm64-v8a-release.apk
           test -s release-artifacts/app-armeabi-v7a-release.apk
           test -s release-artifacts/app-x86_64-release.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v5.5.0-APKs
+          name: TaleemPK-v5.6.0-APKs
           path: flutter/release-artifacts/*
           if-no-files-found: error
