@@ -95,6 +95,24 @@ async function sendPush(body) {
     },
   });
 
+  // A visible notification+data message is handled by Android's system tray
+  // while the app is backgrounded, so Flutter does not get a chance to send a
+  // WhatsApp-style delivery acknowledgement. Send a second high-priority
+  // data-only probe; Flutter's background handler can receive this while the
+  // process is not running and acknowledge the exact message to TaleemPK.
+  let probe = null;
+  const messageId = String(data.message_id || '').trim();
+  if (data.event === 'message' && messageId) {
+    probe = await admin.messaging().sendEachForMulticast({
+      tokens,
+      data: { ...data, event: 'delivery_probe' },
+      android: {
+        priority: 'high',
+        ttl: 30 * 60 * 1000,
+      },
+    });
+  }
+
   const invalid = [];
   response.responses.forEach((item, index) => {
     if (item.success) return;
@@ -110,6 +128,8 @@ async function sendPush(body) {
     failed: response.failureCount,
     success_count: response.successCount,
     failure_count: response.failureCount,
+    delivery_probe_sent: probe ? probe.successCount : 0,
+    delivery_probe_failed: probe ? probe.failureCount : 0,
     invalid_tokens: invalid,
   };
 }
