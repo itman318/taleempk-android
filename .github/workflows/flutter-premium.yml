@@ -167,7 +167,7 @@ jobs:
           assert "if ($action === 'push_self_test')" in relay
           nodepush=Path('server/push/app.js').read_text()
           assert 'sendEachForMulticast' in nodepush and 'timingSafeEqual' in nodepush
-          assert 'version: 5.4.0+540' in pubspec
+          assert 'version: 5.5.0+550' in pubspec
           print('v5.5.0 deep performance, push, presence and notification audit passed')
           PY
       - name: Build universal APK
