@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'core/api_client.dart';
 import 'core/app_state.dart';
+import 'core/push_service.dart';
 import 'core/theme.dart';
 import 'screens/auth_screen.dart';
 import 'screens/home_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  PushService.installBackgroundHandler();
   final state = AppState(ApiClient());
   runApp(
     AppScope(

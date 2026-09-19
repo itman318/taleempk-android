@@ -7,6 +7,7 @@ on:
       - 'flutter/**'
       - 'backend/**'
       - 'realtime/**'
+      - 'server/**'
       - 'render.yaml'
       - 'tools/**'
       - '.github/workflows/flutter-premium.yml'
@@ -16,6 +17,7 @@ on:
       - 'flutter/**'
       - 'backend/**'
       - 'realtime/**'
+      - 'server/**'
       - 'render.yaml'
       - 'tools/**'
       - '.github/workflows/flutter-premium.yml'
@@ -36,7 +38,7 @@ jobs:
         working-directory: flutter
     steps:
       - uses: actions/checkout@v4
-      - name: Generate final TaleemPK v5.2 source
+      - name: Generate final TaleemPK v5.6.0 source
         working-directory: .
         run: |
           python3 tools/v31_finalize.py
@@ -66,6 +68,13 @@ jobs:
           python3 tools/v51_onboarding_media.py
           python3 tools/v52_preflight.py
           python3 tools/v52_notifications.py
+          python3 tools/v53_messaging_search.py
+          python3 tools/v53b_lint_fix.py
+          python3 tools/v53c_php_module_fix.py
+          python3 tools/v53d_fix_runner.py
+          python3 tools/v54_performance_push_presence.py
+          python3 tools/v55_notification_reliability.py
+          python3 tools/v56_closed_delivery.py
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -80,6 +89,8 @@ jobs:
         run: |
           php -l flutter/backend/api/mobile.php
           php -l backend/api/mobile.php
+          php -l flutter/backend/api/mobile_v53.php
+          php -l backend/api/mobile_v53.php
           php -l backend/api/mobile_email_v51.php
           php -l backend/api/chat_send.php
           php tools/v51/email_test.php
@@ -88,28 +99,82 @@ jobs:
           php -l backend/api/mobile_e2ee_v32.php
           php -l flutter/backend/api/mobile_realtime_push_v44.php
           php -l backend/api/mobile_realtime_push_v44.php
-      - name: Realtime gateway syntax check
+      - name: Realtime and push gateway syntax check
         working-directory: .
-        run: node --check realtime/server.mjs
-      - name: v5.2 notification regression audit
+        run: |
+          node --check realtime/server.mjs
+          node --check server/push/app.js
+      - name: v5.6.0 deep regression audit
         working-directory: .
         run: |
           python3 - <<'PY'
           from pathlib import Path
           api=Path('flutter/lib/core/api_client.dart').read_text()
           shell=Path('flutter/lib/screens/home_shell.dart').read_text()
+          home=Path('flutter/lib/screens/home_screen.dart').read_text()
+          search=Path('flutter/lib/screens/global_search_screen.dart').read_text()
+          push=Path('flutter/lib/core/push_service.dart').read_text()
+          main=Path('flutter/lib/main.dart').read_text()
+          chat=Path('flutter/lib/screens/chat_screen.dart').read_text()
+          models=Path('flutter/lib/core/models.dart').read_text()
+          manifest=Path('flutter/android/app/src/main/AndroidManifest.xml').read_text()
+          relay=Path('backend/api/mobile_realtime_push_v44.php').read_text()
           module=Path('flutter/lib/screens/module_screen.dart').read_text()
           native=Path('flutter/android/app/src/main/kotlin/online/taleempk/studyhub/MainActivity.kt').read_text()
           bridge=Path('flutter/lib/core/native_bridge.dart').read_text()
-          backend=Path('backend/api/mobile.php').read_text()
-          assert 'markAllNotificationsRead' in api
-          assert 'read_all_notifications' in backend
-          assert 'target_type,target_id' in backend
-          assert "Text('Read all')" in module
-          assert 'consumeNotificationPayload' in bridge
-          assert 'pendingNotificationPayload' in native and 'onNewIntent' in native
+          backend=Path('backend/api/mobile.php').read_text()+Path('backend/api/mobile_v53.php').read_text()
+          pubspec=Path('flutter/pubspec.yaml').read_text()
+          inbox=Path('flutter/lib/screens/conversations_screen.dart').read_text()
+          chatsend=Path('backend/api/chat_send.php').read_text()
+          mobile53=Path('backend/api/mobile_v53.php').read_text()
+          assert 'markAllNotificationsRead' in api and 'read_all_notifications' in backend
+          assert 'target_type,target_id' in backend and "Text('Read all')" in module
+          assert 'consumeNotificationPayload' in bridge and 'pendingNotificationPayload' in native and 'onNewIntent' in native
           assert '_consumeNotificationTap' in shell
-          print('v5.2 notification regression audit passed')
+          assert 'globalSearch' in api and 'global_search' in backend and 'Search anything on TaleemPK' in search
+          assert 'Search members, groups, pages and posts' not in home and "tooltip: 'Search TaleemPK'" in home
+          assert "tooltip: 'Notifications'" in home
+          assert 'acknowledgeDelivered' in api and 'ack_delivery' in backend and 'mobile_message_delivery' in backend
+          assert 'acknowledgeDelivered(fresh.where((m) => !m.mine)' in chat
+          assert 'm.delivered ? Icons.done_all_rounded : Icons.check_rounded' in chat
+          assert 'color: m.read ? const Color(0xFF75E9FF) : Colors.white70' in chat
+          assert 'bool read, delivered;' in models and "delivered: _bool(j['delivered'])" in models
+          assert 'conversationTaps' in push and 'initialConversationId' in Path('flutter/lib/screens/conversations_screen.dart').read_text()
+          assert 'await Firebase.initializeApp();' in push and 'api.pushConfig()' not in push
+          assert 'taleemPkFirebaseBackgroundHandler' in push and 'PushService.installBackgroundHandler();' in main
+          assert 'com.google.firebase.messaging.default_notification_channel_id' in manifest and 'taleempk_messages' in manifest
+          assert 'mobile_v44_push_relay_send' in relay and 'TALEEMPK_PUSH_SECRET' in relay
+          assert 'viewOnce' in api and 'markViewOnceConsumed' in api
+          assert "if ($action === 'mark_view_once')" in backend and "UPDATE messages SET status='deleted'" in backend
+          assert 'separatorBuilder:(_,__)' not in search
+          assert "UPDATE users SET last_seen=NOW()" in backend
+          assert "if ($action === 'heartbeat')" in backend and "Future<void> heartbeat()" in api
+          assert 'LEFT JOIN conversation_members pcm' in backend
+          assert 'SELECT u2.name FROM conversation_members' not in backend
+          assert "type<>'message'" in backend
+          assert "p.status='active' AND p.content LIKE ?" in mobile53
+          assert "_notifyChat(conversationId)" not in api
+          assert 'RealtimeService.instance.connected ? 10000 : 2500' in chat
+          assert 'pollTicks % 12 == 0' in chat
+          assert 'this.active=true' in inbox and 'Duration(seconds: 10)' in inbox
+          assert 'ConversationsScreen(active: index == 2)' in shell
+          assert 'Duration(seconds: 20)' in shell and 'Duration(seconds: 45)' in shell
+          assert 'ensureRegistered' in push and 'Timer? _retryTimer;' in push
+          assert 'firebase-private/firebase-service-account.json' in relay
+          assert 'function mobile_v54_fcm_send_users' in relay
+          assert 'TaleemPK native FCM after every shared chat send' in chatsend
+          assert 'FirebaseMessaging.onMessage.listen(_handleForegroundMessage)' in push
+          assert 'DartPluginRegistrant.ensureInitialized();' in push
+          assert "event != 'delivery_probe'" in push
+          assert 'await api.acknowledgeDelivered(<int>[messageId]);' in push
+          assert 'NativeBridge.showNotification' in push
+          assert "if ($action === 'push_self_test')" in relay
+          nodepush=Path('server/push/app.js').read_text()
+          assert 'sendEachForMulticast' in nodepush and 'timingSafeEqual' in nodepush
+          assert "data: { ...data, event: 'delivery_probe' }" in nodepush
+          assert 'delivery_probe_sent' in nodepush
+          assert 'version: 5.6.0+560' in pubspec
+          print('v5.6.0 deep performance, push, presence and notification audit passed')
           PY
       - name: Build universal APK
         run: |
@@ -117,7 +182,9 @@ jobs:
       - name: Preserve universal APK outside Flutter build outputs
         run: |
           mkdir -p release-artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.2.0-Universal.apk
+          cp build/app/outputs/flutter-apk/app-release.apk release-artifacts/TaleemPK-v5.6.0-Universal.apk
+          cd ..
+          zip -r flutter/release-artifacts/TaleemPK-v5.6.0-Server-Push.zip             backend/api/mobile.php             backend/api/mobile_realtime_push_v44.php             backend/api/mobile_v53.php             backend/api/chat_send.php             server/push/app.js             server/push/package.json             server/push/README.md
       - name: Build smaller per-ABI APKs
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build/symbols-split
       - name: Collect and verify all APKs
@@ -125,12 +192,12 @@ jobs:
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk release-artifacts/
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk release-artifacts/
-          test -s release-artifacts/TaleemPK-v5.2.0-Universal.apk
+          test -s release-artifacts/TaleemPK-v5.6.0-Universal.apk
           test -s release-artifacts/app-arm64-v8a-release.apk
           test -s release-artifacts/app-armeabi-v7a-release.apk
           test -s release-artifacts/app-x86_64-release.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: TaleemPK-v5.2.0-APKs
-          path: flutter/release-artifacts/*.apk
+          name: TaleemPK-v5.6.0-APKs
+          path: flutter/release-artifacts/*
           if-no-files-found: error
